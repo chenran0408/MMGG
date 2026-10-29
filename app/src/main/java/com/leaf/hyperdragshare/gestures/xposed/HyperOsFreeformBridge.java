@@ -18,7 +18,6 @@ import android.view.WindowManager;
 import android.view.WindowMetrics;
 
 import com.leaf.hyperdragshare.gestures.config.ConfigContract;
-import com.leaf.hyperdragshare.gestures.config.WindowSizePolicy;
 
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -328,7 +327,8 @@ final class HyperOsFreeformBridge {
             }
             Bundle launchOptions = options.toBundle();
             beginPendingMatch(packageName, userId,
-                    launchBounds == null ? null : visualBounds(launchBounds, scale),
+                    launchBounds == null
+                            ? null : FreeformLaunchGeometryPolicy.visualBounds(launchBounds, scale),
                     launchBounds, nativeLaunchBounds,
                     intent, launchOptions, shortcutLaunch);
             notifyLaunchArmed(onLaunchArmed);
@@ -685,7 +685,7 @@ final class HyperOsFreeformBridge {
                                      boolean includeRestore) {
         Rect result = current == null ? null : new Rect(current);
         if (!includeRestore || restore == null || restore.isEmpty()) return result;
-        Rect visualRestore = visualBounds(restore, scale);
+        Rect visualRestore = FreeformLaunchGeometryPolicy.visualBounds(restore, scale);
         if (result == null) return visualRestore;
         result.union(visualRestore);
         return result;
@@ -745,7 +745,8 @@ final class HyperOsFreeformBridge {
                     if (restoreValue instanceof Rect && !((Rect) restoreValue).isEmpty()) {
                         float scale = numberCall(info, "getFreeformScale", 1f);
                         addUniqueVisibleBounds(bounds,
-                                visualBounds((Rect) restoreValue, scale), display);
+                                FreeformLaunchGeometryPolicy.visualBounds(
+                                        (Rect) restoreValue, scale), display);
                     }
                 }
             } catch (Throwable error) {
@@ -1810,59 +1811,13 @@ final class HyperOsFreeformBridge {
         Insets insets = metrics.getWindowInsets().getInsetsIgnoringVisibility(
                 WindowInsets.Type.systemBars() | WindowInsets.Type.displayCutout());
         int edge = Math.round(12 * context.getResources().getDisplayMetrics().density);
-        Rect safe = new Rect(display.left + insets.left + edge,
-                display.top + insets.top + edge,
-                display.right - insets.right - edge,
-                display.bottom - insets.bottom - edge);
-        if (safe.width() <= 0 || safe.height() <= 0) safe.set(display);
-        boolean landscape = display.width() > display.height();
-
-        // In landscape the system-bar insets take a much larger share of the short edge.
-        // Using the inset-safe rectangle as the percentage reference made the configured
-        // window look wider and shorter than the settings preview. Keep the safe rectangle
-        // for placement, but interpret landscape width/height as percentages of the physical
-        // display, exactly as the preview presents them. Portrait behavior stays unchanged.
-        Rect sizeReference = landscape ? display : safe;
-        Rect placement = landscape
-                ? new Rect(display.left + edge, display.top + edge,
-                display.right - edge, display.bottom - edge)
-                : safe;
-        int visualWidth;
-        int visualHeight;
-        int logicalWidth;
-        int logicalHeight;
-        if (config.nativeWindowScalingEnabled(landscape)) {
-            if (nativeLaunchBounds == null || nativeLaunchBounds.isEmpty()) {
-                Log.i("Preserved HyperOS native freeform bounds because launch bounds"
-                        + " are unavailable landscape=" + landscape);
-                return null;
-            }
-            int[] logicalSize = WindowSizePolicy.scaleNativeLogicalPixels(
-                    nativeLaunchBounds.width(), nativeLaunchBounds.height(),
-                    placement.width(), placement.height(), scale,
-                    config.nativeWindowScalePercent(landscape));
-            logicalWidth = logicalSize[0];
-            logicalHeight = logicalSize[1];
-            visualWidth = Math.max(1, Math.round(logicalWidth * scale));
-            visualHeight = Math.max(1, Math.round(logicalHeight * scale));
-        } else {
-            visualWidth = Math.max(1,
-                    Math.round(sizeReference.width()
-                            * config.windowWidthPercent(landscape) / 100f));
-            visualHeight = Math.max(1,
-                    Math.round(sizeReference.height()
-                            * config.windowHeightPercent(landscape) / 100f));
-            logicalWidth = Math.max(1, Math.round(visualWidth / scale));
-            logicalHeight = Math.max(1, Math.round(visualHeight / scale));
+        FreeformLaunchGeometryPolicy.Result result = FreeformLaunchGeometryPolicy.calculate(
+                config, display, insets, edge, scale, nativeLaunchBounds);
+        if (result.logicalBounds == null) {
+            Log.i("Preserved HyperOS native freeform bounds because launch bounds"
+                    + " are unavailable landscape=" + (display.width() > display.height()));
         }
-        int visualLeft = placement.left
-                + Math.round((placement.width() - visualWidth)
-                * config.windowPositionX(landscape) / 100f);
-        int visualTop = placement.top
-                + Math.round((placement.height() - visualHeight)
-                * config.windowPositionY(landscape) / 100f);
-        return new Rect(visualLeft, visualTop,
-                visualLeft + logicalWidth, visualTop + logicalHeight);
+        return result.logicalBounds;
     }
 
     private boolean customWindowBoundsEnabledForCurrentDisplay() {
@@ -1955,12 +1910,6 @@ final class HyperOsFreeformBridge {
         } catch (Throwable ignored) {
             return null;
         }
-    }
-
-    private static Rect visualBounds(Rect logicalBounds, float scale) {
-        return new Rect(logicalBounds.left, logicalBounds.top,
-                logicalBounds.left + Math.round(logicalBounds.width() * scale),
-                logicalBounds.top + Math.round(logicalBounds.height() * scale));
     }
 
     private static boolean booleanCall(Object target, String method, boolean fallback) {
