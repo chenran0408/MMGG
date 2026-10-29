@@ -64,6 +64,7 @@ final class HyperOsFreeformBridge {
     private volatile String pendingPackage;
     private volatile int pendingUserId;
     private volatile long pendingSince;
+    private volatile long pendingLaunchGeneration;
     private volatile Rect pendingLaunchVisualBounds;
     private volatile Rect pendingNativeLaunchBounds;
     private volatile long launchInputProtectionUntil;
@@ -96,7 +97,8 @@ final class HyperOsFreeformBridge {
     private volatile Intent queuedExternalIntent;
     private volatile GestureConfig queuedExternalConfig;
     private volatile Runnable queuedExternalCallback;
-    private int queuedLaunchRetries;
+    private final FreeformLaunchQueuePolicy queuedLaunchPolicy =
+            new FreeformLaunchQueuePolicy();
 
     HyperOsFreeformBridge(Context context, ClassLoader classLoader, Handler mainHandler) {
         this.context = context;
@@ -150,8 +152,8 @@ final class HyperOsFreeformBridge {
             queuedExternalConfig = config;
             queuedExternalCallback = onLaunchArmed;
             queuedAfterSuspendTaskId = taskId;
-            queuedLaunchRetries = 0;
-            generation = ++queuedLaunchGeneration;
+            generation = queuedLaunchPolicy.begin(taskId);
+            queuedLaunchGeneration = generation;
         }
         if (!miniTask(taskId, info)) {
             clearQueuedExternalLaunch(generation);
@@ -181,25 +183,31 @@ final class HyperOsFreeformBridge {
         }
         Object info = taskInfo(taskId);
         if (info == null || !booleanCall(info, "isMiniState", false)) {
-            if (queuedLaunchRetries >= 6) {
-                clearQueuedExternalLaunch(generation);
+            int retry;
+            synchronized (taskLock) {
+                retry = queuedLaunchPolicy.nextRetry(generation, taskId);
+                if (retry < 0 && queuedLaunchPolicy.isCurrent(generation, taskId)) {
+                    clearQueuedExternalLaunch(generation);
+                }
+            }
+            if (retry < 0) {
                 Log.i("Queued external freeform abandoned after retries task=" + taskId);
                 return;
             }
-            queuedLaunchRetries++;
             mainHandler.postDelayed(() -> runQueuedExternalLaunchAfterSuspend(taskId,
-                    generation, "suspend retry " + queuedLaunchRetries), 300L);
+                    generation, "suspend retry " + retry), 300L);
             return;
         }
         synchronized (taskLock) {
             if (generation != queuedLaunchGeneration
-                    || taskId != queuedAfterSuspendTaskId || queuedExternalPackage == null) return;
+                    || taskId != queuedAfterSuspendTaskId || queuedExternalPackage == null
+                    || !queuedLaunchPolicy.consume(generation, taskId)) return;
             queuedExternalPackage = null;
             queuedExternalIntent = null;
             queuedExternalConfig = null;
             queuedExternalCallback = null;
             queuedAfterSuspendTaskId = -1;
-            queuedLaunchRetries = 0;
+            queuedLaunchGeneration++;
         }
         Log.i("Starting queued external freeform reason=" + reason
                 + " target=" + packageName);
@@ -209,12 +217,13 @@ final class HyperOsFreeformBridge {
     private void clearQueuedExternalLaunch(long generation) {
         synchronized (taskLock) {
             if (generation != queuedLaunchGeneration) return;
+            queuedLaunchPolicy.clear(generation);
             queuedExternalPackage = null;
             queuedExternalIntent = null;
             queuedExternalConfig = null;
             queuedExternalCallback = null;
             queuedAfterSuspendTaskId = -1;
-            queuedLaunchRetries = 0;
+            queuedLaunchGeneration++;
         }
     }
 
@@ -240,8 +249,8 @@ final class HyperOsFreeformBridge {
             queuedExternalIntent = null;
             queuedExternalConfig = null;
             queuedExternalCallback = null;
-            queuedLaunchRetries = 0;
-            generation = ++queuedLaunchGeneration;
+            generation = queuedLaunchPolicy.begin(taskId);
+            queuedLaunchGeneration = generation;
         }
         if (!miniTask(taskId, info)) {
             clearQueuedLaunch(generation);
@@ -326,7 +335,7 @@ final class HyperOsFreeformBridge {
                 }
             }
             Bundle launchOptions = options.toBundle();
-            beginPendingMatch(packageName, userId,
+            long pendingGeneration = beginPendingMatch(packageName, userId,
                     launchBounds == null
                             ? null : FreeformLaunchGeometryPolicy.visualBounds(launchBounds, scale),
                     launchBounds, nativeLaunchBounds,
@@ -359,7 +368,7 @@ final class HyperOsFreeformBridge {
                     + " scale=" + scale
                     + " nativeBounds=" + nativeLaunchBounds
                     + " nativeLandscape=" + nativeLandscapeLaunch);
-            scheduleScans();
+            scheduleScans(pendingGeneration);
             return true;
         } catch (Throwable error) {
             clearPendingMatch();
@@ -995,19 +1004,25 @@ final class HyperOsFreeformBridge {
         }
         Object info = taskInfo(taskId);
         if (info == null || !booleanCall(info, "isMiniState", false)) {
-            if (queuedLaunchRetries >= 6) {
-                clearQueuedLaunch(generation);
+            int retry;
+            synchronized (taskLock) {
+                retry = queuedLaunchPolicy.nextRetry(generation, taskId);
+                if (retry < 0 && queuedLaunchPolicy.isCurrent(generation, taskId)) {
+                    clearQueuedLaunch(generation);
+                }
+            }
+            if (retry < 0) {
                 Log.i("Queued second freeform abandoned after retries task=" + taskId);
                 return;
             }
-            queuedLaunchRetries++;
             mainHandler.postDelayed(() -> runQueuedLaunchAfterSuspend(taskId, generation,
-                    "suspend retry " + queuedLaunchRetries), 300L);
+                    "suspend retry " + retry), 300L);
             return;
         }
         synchronized (taskLock) {
             if (generation != queuedLaunchGeneration
-                    || taskId != queuedAfterSuspendTaskId || queuedLaunchTarget == null) return;
+                    || taskId != queuedAfterSuspendTaskId || queuedLaunchTarget == null
+                    || !queuedLaunchPolicy.consume(generation, taskId)) return;
             queuedLaunchTarget = null;
             queuedLaunchConfig = null;
             queuedLaunchArmedCallback = null;
@@ -1016,7 +1031,7 @@ final class HyperOsFreeformBridge {
             queuedExternalConfig = null;
             queuedExternalCallback = null;
             queuedAfterSuspendTaskId = -1;
-            queuedLaunchRetries = 0;
+            queuedLaunchGeneration++;
         }
         Log.i("Starting queued second freeform reason=" + reason
                 + " target=" + target.packageName);
@@ -1026,6 +1041,7 @@ final class HyperOsFreeformBridge {
     private void clearQueuedLaunch(long generation) {
         synchronized (taskLock) {
             if (generation != queuedLaunchGeneration) return;
+            queuedLaunchPolicy.clear(generation);
             queuedLaunchTarget = null;
             queuedLaunchConfig = null;
             queuedLaunchArmedCallback = null;
@@ -1034,7 +1050,7 @@ final class HyperOsFreeformBridge {
             queuedExternalConfig = null;
             queuedExternalCallback = null;
             queuedAfterSuspendTaskId = -1;
-            queuedLaunchRetries = 0;
+            queuedLaunchGeneration++;
         }
     }
 
@@ -1413,11 +1429,12 @@ final class HyperOsFreeformBridge {
         }
     }
 
-    private void beginPendingMatch(String packageName, int userId, Rect visualBounds,
+    private long beginPendingMatch(String packageName, int userId, Rect visualBounds,
                                    Rect launchBounds, Rect nativeLaunchBounds,
                                    Intent intent, Bundle options,
                                    boolean shortcutLaunch) {
         synchronized (taskLock) {
+            long generation = ++pendingLaunchGeneration;
             pendingPackage = packageName;
             pendingUserId = userId;
             pendingSince = SystemClock.elapsedRealtime();
@@ -1453,6 +1470,7 @@ final class HyperOsFreeformBridge {
                 recentShortcutLaunchBounds = launchBounds == null
                         ? null : new Rect(launchBounds);
             }
+            return generation;
         }
     }
 
@@ -1504,24 +1522,30 @@ final class HyperOsFreeformBridge {
         }
     }
 
-    private void scheduleScans() {
-        mainHandler.postDelayed(this::scanPendingTasks, 40);
-        mainHandler.postDelayed(this::scanPendingTasks, 120);
-        mainHandler.postDelayed(this::scanPendingTasks, 250);
-        mainHandler.postDelayed(this::scanPendingTasks, 900);
-        mainHandler.postDelayed(this::scanPendingTasks, 2200);
+    private void scheduleScans(long generation) {
+        mainHandler.postDelayed(() -> scanPendingTasks(generation), 40);
+        mainHandler.postDelayed(() -> scanPendingTasks(generation), 120);
+        mainHandler.postDelayed(() -> scanPendingTasks(generation), 250);
+        mainHandler.postDelayed(() -> scanPendingTasks(generation), 900);
+        mainHandler.postDelayed(() -> scanPendingTasks(generation), 2200);
         mainHandler.postDelayed(() -> {
-            if (pendingPackage != null
-                    && SystemClock.elapsedRealtime() - pendingSince >= MATCH_WINDOW_MS) {
+            synchronized (taskLock) {
+                if (generation != pendingLaunchGeneration || pendingPackage == null
+                        || SystemClock.elapsedRealtime() - pendingSince < MATCH_WINDOW_MS) {
+                    return;
+                }
                 Log.i("No matching freeform task appeared for " + pendingPackage);
-                clearPendingMatch();
+                clearPendingMatchLocked();
             }
         }, MATCH_WINDOW_MS + 100);
     }
 
     @SuppressWarnings("unchecked")
-    private void scanPendingTasks() {
-        if (pendingPackage == null || controller == null) return;
+    private void scanPendingTasks(long generation) {
+        synchronized (taskLock) {
+            if (generation != pendingLaunchGeneration || pendingPackage == null) return;
+        }
+        if (controller == null) return;
         try {
             Object repository = XposedHelpers.getObjectField(controller,
                     "mMultiTaskingTaskRepository");
@@ -1531,7 +1555,9 @@ final class HyperOsFreeformBridge {
                 if (item instanceof Number) {
                     Object info = taskInfo(((Number) item).intValue());
                     if (info != null) onTaskInfo(info);
-                    if (pendingPackage == null) return;
+                    synchronized (taskLock) {
+                        if (generation != pendingLaunchGeneration || pendingPackage == null) return;
+                    }
                 }
             }
             retryNonResizableTaskIfNeeded();
