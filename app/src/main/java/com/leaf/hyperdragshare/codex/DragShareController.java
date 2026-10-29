@@ -976,11 +976,7 @@ final class DragShareController {
             previewHeight = dp(sizeDp);
             if (!payload.isImage()) {
                 TextView text = new TextView(context);
-                CharSequence previewText = payload.text;
-                if (previewText != null && previewText.length() > 40) {
-                    previewText = previewText.subSequence(0, 40);
-                }
-                text.setText(previewText);
+                text.setText(payload.text);
                 text.setTextColor(palette.primaryText);
                 text.setTextSize(TypedValue.COMPLEX_UNIT_SP, 14);
                 text.setGravity(Gravity.CENTER);
@@ -993,7 +989,7 @@ final class DragShareController {
             } else {
                 ImageView image = new ImageView(context);
                 image.setImageBitmap(payload.bitmap);
-                image.setScaleType(ImageView.ScaleType.CENTER_CROP);
+                image.setScaleType(ImageView.ScaleType.FIT_CENTER);
                 image.setPadding(dp(3), dp(3), dp(3), dp(3));
                 standardPreviewView.addView(image, new FrameLayout.LayoutParams(
                         ViewGroup.LayoutParams.MATCH_PARENT,

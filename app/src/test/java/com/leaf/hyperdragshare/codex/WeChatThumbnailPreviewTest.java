@@ -4,6 +4,7 @@ import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertTrue;
+import static org.junit.Assert.assertSame;
 
 import android.graphics.Bitmap;
 import android.graphics.Rect;
@@ -11,7 +12,10 @@ import android.view.View;
 import android.view.ViewGroup;
 import android.view.WindowManager;
 import android.widget.FrameLayout;
+import android.widget.ImageView;
 import android.widget.TextView;
+import android.graphics.drawable.BitmapDrawable;
+import android.text.TextUtils;
 
 import org.junit.Test;
 import org.junit.runner.RunWith;
@@ -157,6 +161,55 @@ public final class WeChatThumbnailPreviewTest {
             controller.destroy();
             ShadowLooper.shadowMainLooper().idle();
             if (!bitmap.isRecycled()) bitmap.recycle();
+        }
+    }
+
+    @Test public void compactImagePreviewsFitPortraitAndLandscapeWithoutChangingTheSource()
+            throws Exception {
+        for (int style : new int[]{DragShareSettings.STYLE_PORTAL, DragShareSettings.STYLE_CIRCLE}) {
+            for (int[] size : new int[][]{{240, 40}, {40, 240}}) {
+                DragShareController controller = controller(style);
+                Bitmap bitmap = Bitmap.createBitmap(size[0], size[1], Bitmap.Config.ARGB_8888);
+                try {
+                    CapturedContent content = CapturedContent.portalMediaImage(bitmap, "test.app", null);
+                    createPreview(controller, content);
+                    FrameLayout preview = (FrameLayout) get(controller, "previewView");
+                    ImageView image = (ImageView) preview.getChildAt(0);
+                    assertEquals(ImageView.ScaleType.FIT_CENTER, image.getScaleType());
+                    assertSame(bitmap, ((BitmapDrawable) image.getDrawable()).getBitmap());
+                    assertSame(bitmap, content.bitmap);
+                    WindowManager.LayoutParams params =
+                            (WindowManager.LayoutParams) get(controller, "previewParams");
+                    assertTrue((params.flags & WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE) != 0);
+                    assertEquals(params.width, params.height);
+                } finally {
+                    controller.destroy();
+                    ShadowLooper.shadowMainLooper().idle();
+                    assertFalse(bitmap.isRecycled());
+                    bitmap.recycle();
+                }
+            }
+        }
+    }
+
+    @Test public void compactTextPreviewsKeepFullEmojiTextAndLetLayoutEllipsize() throws Exception {
+        // A UTF-16 substring at 40 would split the emoji's surrogate pair.
+        String original = "甲".repeat(39) + "😀" + "长文字".repeat(40);
+        for (int style : new int[]{DragShareSettings.STYLE_PORTAL, DragShareSettings.STYLE_CIRCLE}) {
+            DragShareController controller = controller(style);
+            try {
+                CapturedContent content = CapturedContent.text(original, "test.app", null);
+                createPreview(controller, content);
+                FrameLayout preview = (FrameLayout) get(controller, "previewView");
+                TextView text = (TextView) preview.getChildAt(0);
+                assertEquals(original, text.getText().toString());
+                assertEquals(original, content.text);
+                assertEquals(4, text.getMaxLines());
+                assertEquals(TextUtils.TruncateAt.END, text.getEllipsize());
+            } finally {
+                controller.destroy();
+                ShadowLooper.shadowMainLooper().idle();
+            }
         }
     }
 
