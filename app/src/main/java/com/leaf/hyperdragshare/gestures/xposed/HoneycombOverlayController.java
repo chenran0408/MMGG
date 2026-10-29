@@ -24,9 +24,6 @@ final class HoneycombOverlayController {
     private final Object moveLock = new Object();
     private HoneycombOverlayView view;
     private HoneycombOverlayContainer windowView;
-    private WindowManager.LayoutParams windowParams;
-    private boolean liveBlurRequested;
-    private boolean liveBlurApplied;
     private boolean attached;
     private int windowTop;
     private HoneycombOverlayView pendingMoveView;
@@ -94,9 +91,6 @@ final class HoneycombOverlayController {
                 listener.onSelectionChanged(target);
             }
 
-            @Override public void onInteractionChanged(boolean active) {
-                setLiveBlurSuppressed(active);
-            }
         });
         if (requireMoveBeforeSelection) {
             foreground.requireMoveBeforeSelection(toLocalX(anchorX), toLocalY(anchorY));
@@ -144,9 +138,6 @@ final class HoneycombOverlayController {
             }
             view = foreground;
             windowView = next;
-            windowParams = params;
-            liveBlurRequested = blurRequested;
-            liveBlurApplied = blurRequested;
             attached = true;
             if (config.honeycombAppBackgroundEnabled) {
                 ForegroundAppBackgroundResolver.request(context, color -> next.post(() -> {
@@ -160,9 +151,6 @@ final class HoneycombOverlayController {
             next.releaseResources();
             view = null;
             windowView = null;
-            windowParams = null;
-            liveBlurRequested = false;
-            liveBlurApplied = false;
             attached = false;
             return false;
         }
@@ -230,29 +218,12 @@ final class HoneycombOverlayController {
         runOnViewThread(current, () -> current.playDismissal());
     }
 
-    private void setLiveBlurSuppressed(boolean suppressed) {
-        if (!attached || !liveBlurRequested || windowView == null || windowParams == null) return;
-        boolean shouldApply = !suppressed;
-        if (liveBlurApplied == shouldApply) return;
-        if (shouldApply) windowParams.flags |= WindowManager.LayoutParams.FLAG_BLUR_BEHIND;
-        else windowParams.flags &= ~WindowManager.LayoutParams.FLAG_BLUR_BEHIND;
-        try {
-            windowManager.updateViewLayout(windowView, windowParams);
-            liveBlurApplied = shouldApply;
-        } catch (Throwable error) {
-            Log.e("Cannot toggle honeycomb live blur during interaction", error);
-        }
-    }
-
     void removeNow() {
         HoneycombOverlayView current = view;
         HoneycombOverlayContainer currentWindow = windowView;
         cancelPendingMove(current);
         view = null;
         windowView = null;
-        windowParams = null;
-        liveBlurRequested = false;
-        liveBlurApplied = false;
         if (!attached || current == null || currentWindow == null || windowManager == null) {
             attached = false;
             return;
