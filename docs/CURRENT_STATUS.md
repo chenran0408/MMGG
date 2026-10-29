@@ -1,5 +1,15 @@
 # MMGG 当前状态与接手
 
+## 2026-10-30 UX polish round（当前增量）
+
+开发线 `beta` 在既有 `18100fd` 之后完成三项局部交互整理，稳定线 `repair-from-189` 未修改：
+
+- `d90a17e`：蜂巢窗口交互期间不再主动清除 `FLAG_BLUR_BEHIND`；首次添加模糊失败仍按原逻辑回退到无模糊，输入、命中区域、窗口释放和模糊半径未改变。用户设备现象本轮未复现，代码缺陷已由替身测试确认，真实 ROM 表现待验证。
+- `6b49754`：分词选中操作固定在面板底部两排，使用短标签和至少 48dp 点击区域；删除随选区滚动的浮动锚点，保留搜索、词典、拆分、分享、复制及“更多”中的合并、翻译、直达、中转站等入口。窄屏/大字体只做测量级回归，尚无设备视觉验收。
+- `2497a3e`：文本拖拽预览交由 `TextView` 的最大行数和省略策略控制，避免 UTF-16 截断 Emoji；图片预览改为 `FIT_CENTER`，避免长图/竖图被裁边。拖拽载荷、Root 输入权威、Bitmap 所有权和释放时机未改变。
+
+本轮验证：定向 32 项通过；全量 `testDebugUnitTest` 796 项通过；`lintDebug` 0 errors/181 warnings；`assembleDebug` 成功。未运行 `assembleBeta`，没有新增安装包、设备安装或发布。下一轮若交付 Beta，应先递增版本并执行 Beta/R8，随后补做窄屏/大字体和蜂巢模糊实机回归。
+
 核对日期：2026-10-30。唯一当前状态入口。GitHub 用户仓库已更名为 [`chenran0408/MMGG`](https://github.com/chenran0408/MMGG)，origin 只保留正式维护线 `repair-from-189` 与测试线 `beta`，默认分支为正式线。Candidate A 仍冻结于 Phase 1A baseline `080c30c`。Candidate B 为 **1.7.219-beta.29 / 271**，源码`e49f48de9746254e1ca2922e7f02253c4c61f572`，APK SHA-256 `B920A46BDAC355C5CE1802F0344ACC5E04CD2330EE4D2B9E5D53F85564B17011`；设备验证结论是 **DEVICE NO-GO**：系统双指模式下单指仍触发MMGG面板。该结论供后续输入根因调查使用；Beta29及其NO-GO证据保持冻结，见`D:/CODEX/Tasks/2026-10-26/mmgg-candidate-b/outputs/`和`D:/CODEX/Tasks/2026-10-26/mmgg-beta29-device-validation/outputs/DEVICE_EVIDENCE.md`。
 
 ## 最新 Beta 包（未做设备验收）
