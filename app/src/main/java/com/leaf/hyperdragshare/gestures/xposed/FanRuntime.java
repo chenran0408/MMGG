@@ -2392,14 +2392,11 @@ final class FanRuntime {
     private void reloadConfig() {
         configReloadPending = false;
         try {
-            Bundle bundle = context.getContentResolver().call(ConfigContract.URI, "get", null, null);
-            com.leaf.hyperdragshare.codex.GestureDiagnostics.configure(bundle);
-            GestureConfig next = GestureConfig.from(bundle);
-            FanRuntimeTargetResolver.ResolvedTargets resolved =
-                    new FanRuntimeTargetResolver(context).resolve(next);
-            List<RuntimeTarget> nextTargets = resolved.targets;
-            List<RuntimeTarget> nextHoneycombTargets = resolved.honeycombTargets;
-            List<RuntimeTarget> nextSideTargets = resolved.sideTargets;
+            FanRuntimeConfigLoader.LoadedConfig loaded = new FanRuntimeConfigLoader(context).load();
+            GestureConfig next = loaded.config;
+            List<RuntimeTarget> nextTargets = loaded.targets;
+            List<RuntimeTarget> nextHoneycombTargets = loaded.honeycombTargets;
+            List<RuntimeTarget> nextSideTargets = loaded.sideTargets;
             configRetryCount = 0;
             configRetryScheduled = false;
             mainHandler.post(() -> {
