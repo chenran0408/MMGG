@@ -332,3 +332,12 @@ Beta24/266源码bdd6bdf，tag `delivered/mmgg-1.7.219-beta.24`；APK在 `D:/CODE
 - `c9d6372` 将 `DragShareController` 的手势追踪摘要提取为 `GestureTraceRecorder`。Controller 保留事件接收时机、状态判定和结束条件；记录器只负责有界字段、MOVE 计数、最大位移和摘要格式，不拥有输入会话或窗口资源。
 - 定向测试串行通过；最终全量单测808项通过，Lint 0 errors/181 warnings，Debug构建成功。无 Root 输入、双指资格、UP/CANCEL、载荷、URI/Bitmap、窗口生命周期或协议行为变化。
 - 第一次并发 Gradle 测试因共享结果目录发生 in-progress 文件冲突，停止并发后已串行重跑通过；后续代理不应同时运行 Gradle。
+
+## 2026-10-30 architecture iterations 8-9
+
+Beta 线继续完成两轮局部职责整理，稳定线内容已恢复为原状态：
+
+- `f55437a`：为 `DragShareController` 增加轻量 `DragShareLifecycle` owner token。会话、图片 staging、目标查询和预览退出回调都绑定当前代次；控制器仍负责 Root 输入、UP/CANCEL、窗口和资源释放。已接受的旧动作继续使用原载荷和 URI 完成，不改变分享协议。
+- `b288f9c`：为 `HyperOsFreeformBridge` 增加 `FreeformLaunchQueuePolicy`。队列启动、重试、消费和清理按 generation/task 绑定；迟到的挂起回调、旧任务扫描和过期重试不会启动新目标。HyperOS 私有接口、超时和重试次数保持不变。
+
+两轮未改变 Root 输入权威、双指资格、真实 UP/CANCEL、拖拽载荷、Bitmap/URI/文件释放、设置协议或稳定线产品行为。定向测试 32 项、全量单测 814 项均串行通过（0 failures/errors/skipped）；Lint 0 errors/181 warnings；Debug 与 Beta/R8 成功。验证 APK SHA-256：`90B16C17030DC41F2C71F0ACA74F8EC11E10AF3F6B796DE6ADD642F9E7B77A17`。未安装、未发布、未 push，真实设备/云端 CI 未覆盖。
