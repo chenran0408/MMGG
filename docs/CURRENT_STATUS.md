@@ -1,3 +1,16 @@
+## 2026-10-30 architecture iteration 2-6（当前增量）
+
+Beta 线完成六轮低风险架构整理，稳定线 `repair-from-189` 未修改：
+
+- `f739f8c`：FanRuntime 目标解析、缓存和列表裁剪独立为 `FanRuntimeTargetResolver`。
+- `384664e`：ContentResolver 配置读取、诊断配置、GestureConfig 解析和目标解析独立为 `FanRuntimeConfigLoader`。
+- `ae228ce`：HyperOS freeform safe/placement/visual/logical 几何计算独立为 `FreeformLaunchGeometryPolicy`；`8b6a737` 修正其非原生比例覆盖测试。
+- `a10ef0c`：设置分组索引、focus 定位、手势分类导航和滚动位置 key 独立为纯决策函数。
+- `e51272c`：设置保存后的生效范围分类独立为 `SettingsEffectNotice` 策略，保存协议、文案、顺序和提示时机保持不变。
+
+六轮均未修改 Root 输入权威、双指资格、真实 UP/CANCEL、Portal/AICR 接口、URI/Bitmap 生命周期、稳定线或设备配置。全量 `testDebugUnitTest` 806 项通过（0 失败/错误/跳过）；`lintDebug` 0 errors/181 warnings；`assembleDebug` 成功。未执行 Beta/R8、实机或云端 CI。
+
+本轮任务记录：`D:/CODEX/Tasks/2026-10-30/mmgg-architecture-iteration-1/`。
 # MMGG 当前状态与接手
 
 ## 2026-10-30 architecture iteration 1（当前增量）
