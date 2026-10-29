@@ -132,6 +132,16 @@ public class SwipeSelectViewTest {
         assertNull(dragged);
         assertEquals(new TreeSet<>(List.of(2)), page.mBoomActionHandler.mSelectedId);
     }
+
+    @Test public void closingPageCancelsPendingLongPressDrag() {
+        open();
+        touch(MotionEvent.ACTION_DOWN, 0);
+        page.close();
+        ShadowLooper.shadowMainLooper().idleFor(Duration.ofMillis(ViewConfiguration.getLongPressTimeout()));
+        assertNull(dragged);
+        assertFalse(words.isSelectionGestureActive());
+    }
+
     @Test public void verticalMotionDoesNotSelectWordsOrStartGlobalDrag() {
         open();
         page.restoreSelectionNow(new TreeSet<>(List.of(2)));

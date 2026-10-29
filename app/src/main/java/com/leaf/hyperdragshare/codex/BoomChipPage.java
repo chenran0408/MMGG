@@ -54,6 +54,8 @@ public class BoomChipPage {
     private final int mSelectionRegionExpand;
     private int mPresentedTopRow = Integer.MIN_VALUE;
     private int mPresentedBottomRow = Integer.MIN_VALUE;
+    private boolean mClosed;
+    private final View.OnLayoutChangeListener mContentLayoutChangeListener;
 
     Serializable mSavedData;
     private OnAdjacentRequestListener mOnAdjacentRequestListener;
@@ -67,6 +69,7 @@ public class BoomChipPage {
     OnGlobalLayoutListener mDoBoomAnimation = new OnGlobalLayoutListener() {
         @Override
         public void onGlobalLayout() {
+            if (mClosed) return;
             mBoomConent.getViewTreeObserver().removeOnGlobalLayoutListener(mDoBoomAnimation);
             if (mEnableLegacyMask && mScroller.canScrollVertically(1)) {
                 mMask.setVisibility(View.VISIBLE);
@@ -169,12 +172,15 @@ public class BoomChipPage {
                 if (hasSelection()) notifySelectionChanged();
             }
         });
-        mBoomConent.addOnLayoutChangeListener(new View.OnLayoutChangeListener() {
+        mContentLayoutChangeListener = new View.OnLayoutChangeListener() {
             @Override
             public void onLayoutChange(View view, int left, int top, int right, int bottom,
                     int oldLeft, int oldTop, int oldRight, int oldBottom) {
+                if (mClosed) return;
                 final int availableWidth = right - left;
-                if (hasSelection()) mBoomConent.post(() -> notifySelectionChanged());
+                if (hasSelection()) mBoomConent.post(() -> {
+                    if (!mClosed) notifySelectionChanged();
+                });
                 if (availableWidth == oldRight - oldLeft || availableWidth <= 0
                         || mLayout.getWordCount() == 0) {
                     return;
@@ -182,9 +188,12 @@ public class BoomChipPage {
                 // This callback runs after this view's layout. Rebuilding children here
                 // would leave the replacement chips unmeasured until another traversal,
                 // making hit testing fail during the same frame.
-                mBoomConent.post(() -> relayoutForAvailableWidth(availableWidth));
+                mBoomConent.post(() -> {
+                    if (!mClosed) relayoutForAvailableWidth(availableWidth);
+                });
             }
-        });
+        };
+        mBoomConent.addOnLayoutChangeListener(mContentLayoutChangeListener);
         mScroller.setOnEdgeDragListener(new CustomScrollView.OnEdgeDragListener() {
             @Override
             public void onEdgeDrag(float offset) {
@@ -232,6 +241,7 @@ public class BoomChipPage {
     }
 
     void notifySelectionChanged() {
+        if (mClosed) return;
         updateSelectionPresentation();
         if (mOnSelectionChanged != null) mOnSelectionChanged.run();
     }
@@ -478,6 +488,34 @@ public class BoomChipPage {
         mSavedData = savedState;
     }
 
+    public void close() {
+        if (mClosed) return;
+        mBoomConent.cancelCurrentGesture();
+        mClosed = true;
+        mBoomConent.getViewTreeObserver().removeOnGlobalLayoutListener(mDoBoomAnimation);
+        mBoomConent.removeOnLayoutChangeListener(mContentLayoutChangeListener);
+        mBoomConent.animate().cancel();
+        mBoomTable.animate().cancel();
+        for (int i = 0; i < mBoomConent.getChildCount(); i++) {
+            mBoomConent.getChildAt(i).animate().cancel();
+        }
+        mScroller.animate().cancel();
+        mBoomPage.setOnClickListener(null);
+        mBoomTable.setOnClickListener(null);
+        mScroller.setOnClickListener(null);
+        mBoomConent.setOnClickListener(null);
+        mCancel.setOnClickListener(null);
+        mScroller.setOnScrollChangeListener(null);
+        mScroller.setOnEdgeDragListener(null);
+        mOnSelectionChanged = null;
+        mOnChipsChanged = null;
+        mOnAdjacentRequestListener = null;
+    }
+
+    boolean isClosed() {
+        return mClosed;
+    }
+
     public String getOriginalText() {
         return mLayout.getOriText();
     }
@@ -548,6 +586,7 @@ public class BoomChipPage {
         mScroller.post(new Runnable() {
             @Override
             public void run() {
+                if (mClosed) return;
                 final int row = mLayout.getRowForIndex(touchedIndex);
                 final View rowView = mBoomConent.getChildAt(row);
                 if (rowView == null) {
@@ -654,6 +693,7 @@ public class BoomChipPage {
         mScroller.post(new Runnable() {
             @Override
             public void run() {
+                if (mClosed) return;
                 mScroller.scrollTo(0, getRowTop(mLayout.getRowForIndex(wordIndex)));
             }
         });

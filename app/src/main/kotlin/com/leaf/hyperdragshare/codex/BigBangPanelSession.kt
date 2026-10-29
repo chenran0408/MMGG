@@ -279,7 +279,9 @@ internal class BigBangPanelSession(private val context: Context, private val act
     }
 
     fun close() {
+        if (closed) return
         closed = true
+        boomChipPage?.close()
         main.removeCallbacks(clearCopyFeedback)
         if (selectionSummaryFrameScheduled) {
             Choreographer.getInstance().removeFrameCallback(selectionSummaryFrameCallback)

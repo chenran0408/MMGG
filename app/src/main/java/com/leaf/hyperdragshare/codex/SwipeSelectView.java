@@ -38,7 +38,7 @@ public class SwipeSelectView extends LinearLayout {
     private float mLastRawY;
     private TreeSet<Integer> mSelectionBeforeGesture = new TreeSet<>();
     private final Runnable mStartDrag = () -> {
-        if (mGesture != Gesture.PENDING || mStartIndex < 0) return;
+        if (mBoomPage.isClosed() || mGesture != Gesture.PENDING || mStartIndex < 0) return;
         if (mIsSelected) {
             performSelect(true);
         }
@@ -84,6 +84,7 @@ public class SwipeSelectView extends LinearLayout {
 
     @Override
     public boolean onTouchEvent(MotionEvent ev) {
+        if (mBoomPage.isClosed()) return false;
         final float x = ev.getX();
         final float y = ev.getY();
         mLastRawX = ev.getRawX();
@@ -212,6 +213,13 @@ public class SwipeSelectView extends LinearLayout {
         removeCallbacks(mStartDrag);
         removeCallbacks(mAutoScroll);
         if (wasSelecting) mBoomPage.notifySelectionChanged();
+    }
+
+    void cancelCurrentGesture() {
+        if (mGesture == Gesture.PENDING || mGesture == Gesture.SELECTING) {
+            mBoomPage.restoreSelectionNow(mSelectionBeforeGesture);
+        }
+        finishTouch();
     }
 
     boolean isSelectionGestureActive() {
