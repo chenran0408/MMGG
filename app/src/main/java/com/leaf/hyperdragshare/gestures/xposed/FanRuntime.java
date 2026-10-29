@@ -1894,14 +1894,20 @@ final class FanRuntime {
     }
 
     private boolean canStartBottom() {
-        return runtimeReady() && !imeVisible && targets.size() >= 3
-                && config.bottomEnabledFor(isLandscape())
-                && (config.bottomLeftEnabled || config.bottomRightEnabled);
+        return FanRuntimePolicy.canStartBottom(
+                runtimeReady(),
+                imeVisible,
+                targets.size(),
+                config.bottomEnabledFor(isLandscape()),
+                config.bottomLeftEnabled,
+                config.bottomRightEnabled);
     }
 
     private boolean canStartSide() {
-        return runtimeReady() && config.sideHasTargetsFor(isLandscape(),
-                sideTargets.size(), honeycombTargets.size());
+        return FanRuntimePolicy.canStartSide(
+                runtimeReady(),
+                config.sideHasTargetsFor(isLandscape(),
+                        sideTargets.size(), honeycombTargets.size()));
     }
 
     private int currentSideLayoutMode() {
@@ -2167,7 +2173,7 @@ final class FanRuntime {
     }
 
     static boolean shouldCaptureOutsideWithIme(boolean imeVisible, Rect imeBounds) {
-        return !imeVisible || imeBounds != null;
+        return FanRuntimePolicy.shouldCaptureOutsideWithIme(imeVisible, imeBounds);
     }
 
     private void syncImeGestureProtection(boolean visible) {
