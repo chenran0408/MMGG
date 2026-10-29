@@ -9,8 +9,6 @@ import android.content.Context;
 import android.content.Intent;
 import android.content.IntentFilter;
 import android.content.res.Configuration;
-import android.content.pm.ActivityInfo;
-import android.content.pm.PackageManager;
 import android.database.ContentObserver;
 import android.graphics.Insets;
 import android.graphics.Rect;
@@ -31,13 +29,9 @@ import android.view.WindowMetrics;
 import com.leaf.hyperdragshare.gestures.config.ConfigContract;
 import com.leaf.hyperdragshare.gestures.config.OverlayTouchRegions;
 import com.leaf.hyperdragshare.codex.NativeSidebarState;
-import com.leaf.hyperdragshare.gestures.config.AppTarget;
-import com.leaf.hyperdragshare.gestures.config.ShortcutIconLoader;
 import java.util.ArrayList;
 import java.util.Collections;
-import java.util.HashMap;
 import java.util.List;
-import java.util.Map;
 import de.robv.android.xposed.XposedHelpers;
 
 final class FanRuntime {
@@ -2401,50 +2395,11 @@ final class FanRuntime {
             Bundle bundle = context.getContentResolver().call(ConfigContract.URI, "get", null, null);
             com.leaf.hyperdragshare.codex.GestureDiagnostics.configure(bundle);
             GestureConfig next = GestureConfig.from(bundle);
-            ArrayList<RuntimeTarget> resolved = new ArrayList<>();
-            ArrayList<RuntimeTarget> resolvedHoneycomb = new ArrayList<>();
-            ArrayList<RuntimeTarget> resolvedSide = new ArrayList<>();
-            PackageManager packageManager = context.getPackageManager();
-            Map<String, RuntimeTarget> targetCache = new HashMap<>();
-            for (GestureConfig.TargetSpec target : next.targets) {
-                try {
-                    RuntimeTarget runtimeTarget = resolveTarget(packageManager, target, targetCache);
-                    if (runtimeTarget != null)
-                        resolved.add(runtimeTarget);
-                } catch (Throwable error) {
-                    Log.e("Configured target is unavailable", error);
-                }
-            }
-            for (GestureConfig.TargetSpec target : next.honeycombTargets) {
-                try {
-                    RuntimeTarget runtimeTarget = resolveTarget(packageManager, target, targetCache);
-                    if (runtimeTarget != null)
-                        resolvedHoneycomb.add(runtimeTarget);
-                } catch (Throwable error) {
-                    Log.e("Configured honeycomb target is unavailable", error);
-                }
-            }
-            for (GestureConfig.TargetSpec target : next.sideTargets) {
-                try {
-                    RuntimeTarget runtimeTarget = resolveTarget(packageManager, target, targetCache);
-                    if (runtimeTarget != null)
-                        resolvedSide.add(runtimeTarget);
-                } catch (Throwable error) {
-                    Log.e("Configured side target is unavailable", error);
-                }
-            }
-            if (resolved.size() > next.fanMaxTargets) {
-                resolved.subList(next.fanMaxTargets, resolved.size()).clear();
-            }
-            if (resolvedHoneycomb.size() > next.honeycombMaxTargets) {
-                resolvedHoneycomb.subList(next.honeycombMaxTargets, resolvedHoneycomb.size()).clear();
-            }
-            if (resolvedSide.size() > next.sideMaxTargets) {
-                resolvedSide.subList(next.sideMaxTargets, resolvedSide.size()).clear();
-            }
-            List<RuntimeTarget> nextTargets = Collections.unmodifiableList(resolved);
-            List<RuntimeTarget> nextHoneycombTargets = Collections.unmodifiableList(resolvedHoneycomb);
-            List<RuntimeTarget> nextSideTargets = Collections.unmodifiableList(resolvedSide);
+            FanRuntimeTargetResolver.ResolvedTargets resolved =
+                    new FanRuntimeTargetResolver(context).resolve(next);
+            List<RuntimeTarget> nextTargets = resolved.targets;
+            List<RuntimeTarget> nextHoneycombTargets = resolved.honeycombTargets;
+            List<RuntimeTarget> nextSideTargets = resolved.sideTargets;
             configRetryCount = 0;
             configRetryScheduled = false;
             mainHandler.post(() -> {
@@ -2497,50 +2452,6 @@ final class FanRuntime {
         }
         configLoadQueued = true;
         configHandler.post(this::reloadConfig);
-    }
-
-    private RuntimeTarget resolveTarget(PackageManager packageManager, GestureConfig.TargetSpec target) throws Exception {
-        if (target.isShortcut()) {
-            return new RuntimeTarget(target.packageName, target.shortcutId, target.shortcutIntentUri, target.shortcutLabel.isEmpty() ? target.shortcutId : target.shortcutLabel, ShortcutIconLoader.load(context, target.packageName, target.shortcutId, target.userId), target.userId);
-        }
-        ComponentName component = ComponentName.unflattenFromString(target.component);
-        if (component == null)
-            return null;
-        ActivityInfo info = packageManager.getActivityInfo(component, 0);
-        CharSequence label = info.loadLabel(packageManager);
-        return new RuntimeTarget(component, label == null ? component.getPackageName() : label.toString(), info.loadIcon(packageManager), target.userId);
-    }
-
-    private RuntimeTarget resolveTarget(PackageManager packageManager, GestureConfig.TargetSpec target, Map<String, RuntimeTarget> cache) throws Exception {
-        String key = target.component + '\u0000' + target.packageName + '\u0000' + target.shortcutId + '\u0000' + target.shortcutIntentUri + '\u0000' + target.userId;
-        RuntimeTarget cached = cache.get(key);
-        if (cached != null)
-            return cached;
-        RuntimeTarget resolved = resolveTarget(packageManager, target);
-        if (resolved != null)
-            cache.put(key, resolved);
-        return resolved;
-    }
-
-    private RuntimeTarget resolveAppTarget(PackageManager packageManager, AppTarget target, Map<String, RuntimeTarget> cache) throws Exception {
-        String key = target.component + '\u0000' + target.shortcutPackage + '\u0000' + target.shortcutId + '\u0000' + target.shortcutIntentUri + '\u0000' + target.userId;
-        RuntimeTarget cached = cache.get(key);
-        if (cached != null)
-            return cached;
-        RuntimeTarget resolved;
-        if (target.isShortcut()) {
-            resolved = new RuntimeTarget(target.shortcutPackage, target.shortcutId, target.shortcutIntentUri, target.shortcutLabel == null || target.shortcutLabel.isEmpty() ? target.shortcutId : target.shortcutLabel, ShortcutIconLoader.load(context, target.shortcutPackage, target.shortcutId, target.userId), target.userId);
-        } else {
-            ComponentName component = target.componentName();
-            if (component == null)
-                return null;
-            ActivityInfo info = packageManager.getActivityInfo(component, 0);
-            CharSequence label = info.loadLabel(packageManager);
-            resolved = new RuntimeTarget(component, label == null ? component.getPackageName() : label.toString(), info.loadIcon(packageManager), target.userId);
-        }
-        if (resolved != null)
-            cache.put(key, resolved);
-        return resolved;
     }
 
     private void scheduleConfigRetry() {
