@@ -74,6 +74,7 @@ final class DragShareController {
     private final OverlayWindowPolicy windowPolicy;
     private final Handler mainHandler = new Handler(Looper.getMainLooper());
     private final DragShareToast dragShareToast;
+    private final DragShareLifecycle lifecycle = new DragShareLifecycle();
     private final Runnable edgeScrollRunnable = new Runnable() {
         @Override
         public void run() {
@@ -188,7 +189,6 @@ final class DragShareController {
     private boolean modernPreviewEnterStarted;
     // Keep an exiting preview addressable until its animation completes so a new drag can
     // tear it down immediately instead of briefly stacking two overlay windows.
-    private int previewExitGeneration;
     private View exitingPreviewView;
     private ModernPreviewOverlayView exitingModernPreviewView;
     private ModernOverlayWindow exitingModernPreviewWindow;
@@ -405,7 +405,12 @@ final class DragShareController {
 
     void onHostTaskCancelled() {
         // Give the queued 257/control callback a chance to finish the drag first.
+        final long expectedVersion = lifecycle.version();
+        final Session expectedSession = session;
         mainHandler.postDelayed(() -> {
+            if (!lifecycle.isVersionCurrent(expectedVersion) || session != expectedSession) {
+                return;
+            }
             if (active) {
                 cancelGestureOnMain();
             } else {
@@ -419,6 +424,7 @@ final class DragShareController {
 
     void destroy() {
         destroyed = true;
+        lifecycle.destroy();
         rootDownTime = -1L;
         pressHandoffTime = -1L;
         pressPipelineDownTime = -1L;
@@ -479,6 +485,7 @@ final class DragShareController {
         removeGestureViews();
 
         if (!settings.isSharingEnabled(payload.isImage())) {
+            lifecycle.invalidateSession();
             pendingPortalHostFloatWindowSuppression = false;
             log("sharing disabled kind=" + payload.kind);
             return;
@@ -486,7 +493,8 @@ final class DragShareController {
 
         try {
             refreshDisplayGeometry();
-            session = new Session(payload, downTime);
+            DragShareLifecycle.SessionToken sessionToken = lifecycle.beginSession();
+            session = new Session(payload, downTime, sessionToken);
             createPreview(payload);
             createGlow();
             if (glowView != null && glowParams != null) {
@@ -523,7 +531,8 @@ final class DragShareController {
                 @Override
                 public void onStaged(Uri uri) {
                     mainHandler.post(() -> {
-                        if (destroyed || stagedSession.cancelled) {
+                        if (stagedSession.cancelled
+                                || !lifecycle.isCurrent(stagedSession.lifecycleToken)) {
                             return;
                         }
                         stagedSession.stagedUri = uri;
@@ -536,7 +545,8 @@ final class DragShareController {
                 @Override
                 public void onFailure(Throwable error) {
                     mainHandler.post(() -> {
-                        if (!destroyed && !stagedSession.cancelled) {
+                        if (!stagedSession.cancelled
+                                && lifecycle.isCurrent(stagedSession.lifecycleToken)) {
                             log("image staging failed", error);
                             if (stagedSession.pendingTarget != null) {
                                 showToast("图片准备失败");
@@ -635,7 +645,8 @@ final class DragShareController {
                 queried = queryTargets(payload);
             } catch (RuntimeException error) {
                 mainHandler.post(() -> {
-                    if (!destroyed && active && session == capturedSession) {
+                    if (active && session == capturedSession
+                            && lifecycle.isCurrent(capturedSession.lifecycleToken)) {
                         failOverlay("分享目标读取失败", error);
                     }
                 });
@@ -643,7 +654,8 @@ final class DragShareController {
             }
             long elapsedMs = SystemClock.elapsedRealtime() - started;
             mainHandler.post(() -> {
-                if (destroyed || !active || session != capturedSession) {
+                if (!active || session != capturedSession
+                        || !lifecycle.isCurrent(capturedSession.lifecycleToken)) {
                     return;
                 }
                 shareTargets = queried;
@@ -2080,7 +2092,7 @@ final class DragShareController {
             ModernPreviewOverlayView modernPreviewToFade,
             ModernOverlayWindow modernWindowToFade) {
         removePendingPreviewExitImmediately();
-        final int generation = ++previewExitGeneration;
+        final DragShareLifecycle.PreviewExitToken exitToken = lifecycle.beginPreviewExit();
         exitingPreviewView = previewToFade;
         exitingModernPreviewView = modernPreviewToFade;
         exitingModernPreviewWindow = modernWindowToFade;
@@ -2089,7 +2101,7 @@ final class DragShareController {
             modernWindowToFade.hideAnimated(
                     MODERN_OVERLAY_EXIT_DURATION_MS,
                     () -> finishPreviewExit(
-                            generation,
+                            exitToken,
                             previewToFade,
                             modernPreviewToFade,
                             modernWindowToFade));
@@ -2099,7 +2111,7 @@ final class DragShareController {
             modernPreviewToFade.hideAnimated();
             mainHandler.postDelayed(
                     () -> finishPreviewExit(
-                            generation,
+                            exitToken,
                             previewToFade,
                             modernPreviewToFade,
                             null),
@@ -2115,7 +2127,7 @@ final class DragShareController {
                 .setDuration(PREVIEW_EXIT_DURATION_MS)
                 .setInterpolator(new DecelerateInterpolator(1.5f))
                 .withEndAction(() -> finishPreviewExit(
-                        generation,
+                        exitToken,
                         previewToFade,
                         null,
                         null))
@@ -2123,11 +2135,11 @@ final class DragShareController {
     }
 
     private void finishPreviewExit(
-            int generation,
+            DragShareLifecycle.PreviewExitToken exitToken,
             View previewToRemove,
             ModernPreviewOverlayView modernPreviewToRemove,
             ModernOverlayWindow modernWindowToRemove) {
-        if (generation != previewExitGeneration
+        if (!lifecycle.isCurrent(exitToken)
                 || exitingPreviewView != previewToRemove
                 || exitingModernPreviewView != modernPreviewToRemove
                 || exitingModernPreviewWindow != modernWindowToRemove) {
@@ -2144,7 +2156,7 @@ final class DragShareController {
     }
 
     private void removePendingPreviewExitImmediately() {
-        previewExitGeneration++;
+        lifecycle.cancelPreviewExit();
         View previewToRemove = exitingPreviewView;
         ModernPreviewOverlayView modernPreviewToRemove = exitingModernPreviewView;
         ModernOverlayWindow modernWindowToRemove = exitingModernPreviewWindow;
@@ -2367,13 +2379,22 @@ final class DragShareController {
     private static final class Session {
         final CapturedContent payload;
         final long rootDownTime;
+        final DragShareLifecycle.SessionToken lifecycleToken;
         Uri stagedUri;
         ShareTarget pendingTarget;
         boolean cancelled;
 
-        Session(CapturedContent payload, long rootDownTime) {
+        Session(
+                CapturedContent payload,
+                long rootDownTime,
+                DragShareLifecycle.SessionToken lifecycleToken) {
             this.payload = payload;
             this.rootDownTime = rootDownTime;
+            this.lifecycleToken = lifecycleToken;
+        }
+
+        Session(CapturedContent payload, long rootDownTime) {
+            this(payload, rootDownTime, null);
         }
     }
 
