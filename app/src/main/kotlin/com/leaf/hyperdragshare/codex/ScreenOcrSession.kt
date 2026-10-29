@@ -70,6 +70,14 @@ import java.io.IOException
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
 
+internal data class ScreenOcrResultSummary(
+    val lineCount: Int,
+    val allText: String,
+)
+
+internal fun screenOcrResultSummary(lines: List<String>): ScreenOcrResultSummary =
+    ScreenOcrResultSummary(lines.size, lines.joinToString("\n"))
+
 /** One explicit capture, region/result UI and AICR request lifetime, independent of an Activity. */
 internal class ScreenOcrSession(
     private val context: Context,
@@ -394,7 +402,8 @@ internal class ScreenOcrSession(
         onCopy: (String) -> Unit,
         onShare: (String) -> Unit,
     ) {
-        val allText = lines.joinToString("\n")
+        val summary = screenOcrResultSummary(lines)
+        val allText = summary.allText
         LazyColumn(
             modifier = Modifier
                 .fillMaxSize()
@@ -466,7 +475,13 @@ internal class ScreenOcrSession(
                     ) {
                         Column(modifier = Modifier.padding(12.dp)) {
                             Text(
-                                text = stringResource(R.string.screen_ocr_result_count, lines.size),
+                                text = "识别结果",
+                                color = MiuixTheme.colorScheme.onSurface,
+                                fontSize = 16.sp,
+                                fontWeight = FontWeight.SemiBold,
+                            )
+                            Text(
+                                text = stringResource(R.string.screen_ocr_result_count, summary.lineCount),
                                 color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
                             )
                             Text(
@@ -504,24 +519,28 @@ internal class ScreenOcrSession(
                             color = MiuixTheme.colorScheme.surfaceContainer,
                         ),
                     ) {
-                        Row(
-                            modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                        ) {
+                        Column(modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)) {
                             Text(
                                 text = line,
                                 color = MiuixTheme.colorScheme.onSurface,
-                                fontSize = 16.sp,
-                                modifier = Modifier.weight(1f)
+                                fontSize = 17.sp,
+                                modifier = Modifier
+                                    .fillMaxWidth()
                                     .clickable(role = Role.Button) { onSegment(line) }
-                                    .padding(vertical = 12.dp),
+                                    .padding(vertical = 8.dp),
                             )
-                            OverlayIconAction(MiuixIcons.Copy, MiuixTheme.colorScheme.onSurface,
-                                enabled = !copying, onClick = { onCopy(line) },
-                                contentDescription = stringResource(R.string.screen_ocr_copy_line))
-                            OverlayIconAction(MiuixIcons.Share, MiuixTheme.colorScheme.onSurface,
-                                onClick = { onShare(line) },
-                                contentDescription = stringResource(R.string.screen_ocr_share_line))
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.End,
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                OverlayIconAction(MiuixIcons.Copy, MiuixTheme.colorScheme.onSurface,
+                                    enabled = !copying, onClick = { onCopy(line) },
+                                    contentDescription = stringResource(R.string.screen_ocr_copy_line))
+                                OverlayIconAction(MiuixIcons.Share, MiuixTheme.colorScheme.onSurface,
+                                    onClick = { onShare(line) },
+                                    contentDescription = stringResource(R.string.screen_ocr_share_line))
+                            }
                         }
                     }
                 }
