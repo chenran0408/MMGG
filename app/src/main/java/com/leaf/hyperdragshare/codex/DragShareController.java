@@ -82,6 +82,7 @@ final class DragShareController {
     private final LatestTaskSlot targetQueryTask = new LatestTaskSlot(TARGET_QUERY_EXECUTOR);
     private final DragShareToast dragShareToast;
     private final DragShareActions actions;
+    private final DragShareLifecycle lifecycle = new DragShareLifecycle();
     private Runnable modernOverlayPrewarmTask;
     private Runnable staleInputWatchdog;
     private ModernPreviewOverlayView modernOverlayPrewarmView;
@@ -511,6 +512,7 @@ final class DragShareController {
     void destroy() {
         traceDiagnostic("DESTROY", "controller_destroy", null);
         destroyed = true;
+        lifecycle.destroy();
         rootDownTime = -1L;
         pressHandoffTime = -1L;
         pressPipelineDownTime = -1L;
@@ -593,7 +595,8 @@ final class DragShareController {
 
         try {
             refreshDisplayGeometry();
-            session = new Session(payload, downTime, operation);
+            DragShareLifecycle.SessionToken sessionToken = lifecycle.beginSession();
+            session = new Session(payload, downTime, operation, sessionToken);
             createPreview(payload);
             createGlow();
             if (glowView != null && glowParams != null) {
@@ -639,7 +642,9 @@ final class DragShareController {
                 @Override
                 public void onStaged(Uri uri) {
                     mainHandler.post(() -> {
-                        if (destroyed || stagedSession.cancelled) {
+                        if (destroyed || stagedSession.cancelled
+                                || (stagedSession.pendingTarget == null
+                                && !lifecycle.isCurrent(stagedSession.lifecycleToken))) {
                             OperationTrace.event(stagedSession.operationId, "stage", "late_ignored", uri);
                             return;
                         }
@@ -654,7 +659,8 @@ final class DragShareController {
                 @Override
                 public void onFailure(Throwable error) {
                     mainHandler.post(() -> {
-                        if (!destroyed && !stagedSession.cancelled) {
+                        if (!destroyed && !stagedSession.cancelled
+                                && lifecycle.isCurrent(stagedSession.lifecycleToken)) {
                             OperationTrace.event(stagedSession.operationId, "stage",
                                     "failed_" + error.getClass().getSimpleName());
                             log("image staging failed error=" + error.getClass().getSimpleName());
@@ -831,8 +837,9 @@ final class DragShareController {
                 queried = queryTargets(payload);
             } catch (RuntimeException error) {
                 mainHandler.post(() -> {
-                    if (targetQueryRequests.accepts(request)
-                            && !destroyed && active && session == capturedSession) {
+                            if (targetQueryRequests.accepts(request)
+                            && !destroyed && active && session == capturedSession
+                            && lifecycle.isCurrent(capturedSession.lifecycleToken)) {
                         failOverlay("分享目标读取失败", error);
                     }
                 });
@@ -841,7 +848,8 @@ final class DragShareController {
             long elapsedMs = SystemClock.elapsedRealtime() - started;
             mainHandler.post(() -> {
                 if (!targetQueryRequests.accepts(request)
-                        || destroyed || !active || session != capturedSession) {
+                        || destroyed || !active || session != capturedSession
+                        || !lifecycle.isCurrent(capturedSession.lifecycleToken)) {
                     return;
                 }
                 shareTargets = queried;
@@ -2248,6 +2256,7 @@ final class DragShareController {
             ModernOverlayWindow modernWindowToFade) {
         removePendingPreviewExitImmediately();
         final int generation = ++previewExitGeneration;
+        final DragShareLifecycle.PreviewExitToken exitToken = lifecycle.beginPreviewExit();
         exitingPreviewView = previewToFade;
         exitingModernPreviewView = modernPreviewToFade;
         exitingModernPreviewWindow = modernWindowToFade;
@@ -2256,7 +2265,7 @@ final class DragShareController {
             modernWindowToFade.hideAnimated(
                     MODERN_OVERLAY_EXIT_DURATION_MS,
                     () -> finishPreviewExit(
-                            generation,
+                             exitToken,
                             previewToFade,
                             modernPreviewToFade,
                             modernWindowToFade));
@@ -2266,7 +2275,7 @@ final class DragShareController {
             modernPreviewToFade.hideAnimated();
             mainHandler.postDelayed(
                     () -> finishPreviewExit(
-                            generation,
+                             exitToken,
                             previewToFade,
                             modernPreviewToFade,
                             null),
@@ -2282,13 +2291,31 @@ final class DragShareController {
                 .setDuration(PREVIEW_EXIT_DURATION_MS)
                 .setInterpolator(new DecelerateInterpolator(1.5f))
                 .withEndAction(() -> finishPreviewExit(
-                        generation,
+                         exitToken,
                         previewToFade,
                         null,
                         null))
                 .start();
     }
 
+    private void finishPreviewExit(
+            DragShareLifecycle.PreviewExitToken exitToken,
+            View previewToRemove,
+            ModernPreviewOverlayView modernPreviewToRemove,
+            ModernOverlayWindow modernWindowToRemove) {
+        if (!lifecycle.isCurrent(exitToken)
+                || exitingPreviewView != previewToRemove
+                || exitingModernPreviewView != modernPreviewToRemove
+                || exitingModernPreviewWindow != modernWindowToRemove) {
+            return;
+        }
+        exitingPreviewView = null;
+        exitingModernPreviewView = null;
+        exitingModernPreviewWindow = null;
+        removeOverlayView(previewToRemove, modernPreviewToRemove, modernWindowToRemove);
+    }
+
+    // Kept for existing lifecycle probes that inspect the controller's legacy generation.
     private void finishPreviewExit(
             int generation,
             View previewToRemove,
@@ -2303,6 +2330,7 @@ final class DragShareController {
         exitingPreviewView = null;
         exitingModernPreviewView = null;
         exitingModernPreviewWindow = null;
+        lifecycle.cancelPreviewExit();
         removeOverlayView(previewToRemove, modernPreviewToRemove, modernWindowToRemove);
     }
 
@@ -2312,6 +2340,7 @@ final class DragShareController {
 
     private void removePendingPreviewExitImmediately() {
         previewExitGeneration++;
+        lifecycle.cancelPreviewExit();
         View previewToRemove = exitingPreviewView;
         ModernPreviewOverlayView modernPreviewToRemove = exitingModernPreviewView;
         ModernOverlayWindow modernWindowToRemove = exitingModernPreviewWindow;
@@ -2536,14 +2565,24 @@ final class DragShareController {
         final CapturedContent payload;
         final long rootDownTime;
         final String operationId;
+        final DragShareLifecycle.SessionToken lifecycleToken;
         Uri stagedUri;
         ShareTarget pendingTarget;
         boolean cancelled;
 
-        Session(CapturedContent payload, long rootDownTime, String operationId) {
+        Session(
+                CapturedContent payload,
+                long rootDownTime,
+                String operationId,
+                DragShareLifecycle.SessionToken lifecycleToken) {
             this.payload = payload;
             this.rootDownTime = rootDownTime;
             this.operationId = operationId;
+            this.lifecycleToken = lifecycleToken;
+        }
+
+        Session(CapturedContent payload, long rootDownTime, String operationId) {
+            this(payload, rootDownTime, operationId, null);
         }
     }
 
