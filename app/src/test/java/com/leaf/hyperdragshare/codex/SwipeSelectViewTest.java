@@ -86,6 +86,39 @@ public class SwipeSelectViewTest {
         assertEquals(new TreeSet<>(List.of(0, 1)), page.mBoomActionHandler.mSelectedId);
     }
 
+    @Test public void splitAndMergedSelectionDragsTheSameTextIncludingEmoji() {
+        open();
+        page.prepareForReinit();
+        assertTrue(page.initWords(new int[]{0, 0, 1, 4, 5, 5, -1},
+                "前中文😀后", -1, -1, -1));
+        layoutWords();
+        page.restoreSelectionNow(new TreeSet<>(List.of(1)));
+        assertTrue(page.splitSelectedWordsToChars());
+        layoutWords();
+        assertEquals("中文😀", page.selectedTextOrOriginal());
+        cancelDuringDrag = true;
+        touch(MotionEvent.ACTION_DOWN, 1);
+        ShadowLooper.shadowMainLooper().idleFor(Duration.ofMillis(ViewConfiguration.getLongPressTimeout()));
+        assertEquals("中文😀", dragged);
+        assertEquals(new TreeSet<>(List.of(1, 2, 3)), page.mBoomActionHandler.mSelectedId);
+
+        assertTrue(page.mergeSelectedWords());
+        layoutWords();
+        assertEquals("中文😀", page.selectedTextOrOriginal());
+        dragged = null;
+        touch(MotionEvent.ACTION_DOWN, 1);
+        ShadowLooper.shadowMainLooper().idleFor(Duration.ofMillis(ViewConfiguration.getLongPressTimeout()));
+        assertEquals("中文😀", dragged);
+        assertEquals(new TreeSet<>(List.of(1)), page.mBoomActionHandler.mSelectedId);
+    }
+
+    private void layoutWords() {
+        root.measure(View.MeasureSpec.makeMeasureSpec(1080, View.MeasureSpec.EXACTLY),
+                View.MeasureSpec.makeMeasureSpec(800, View.MeasureSpec.EXACTLY));
+        root.layout(0, 0, 1080, 800);
+        root.getViewTreeObserver().dispatchOnGlobalLayout();
+    }
+
     @Test public void selectedCharacterCountMatchesSelectedTextAcrossEmojiAndGaps() {
         open();
         page.prepareForReinit();

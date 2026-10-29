@@ -43,13 +43,13 @@ class BigBangMeasuredLayoutMatrixTest {
 
     @Test
     @Config(sdk = [35], application = Application::class,
-        fontScale = 1.7f, qualifiers = "w360dp-h760dp-port")
+        fontScale = 1.7f, qualifiers = "w280dp-h760dp-port")
     fun realChipsWrapChineseLongUrlAndEmojiOnNarrowPortraitWithLargeSystemFont() {
         val context = RuntimeEnvironment.getApplication()
         val original = Configuration(context.resources.configuration)
         val originalMetrics = DisplayMetrics().apply { setTo(context.resources.displayMetrics) }
         try {
-            val fixture = openFixture(widthDp = 360, viewportHeightDp = 760)
+            val fixture = openFixture(widthDp = 280, viewportHeightDp = 760)
             try {
                 val chinese = (0 until 42).joinToString(" ") { "中文长段布局检查第${it}行" }
                 val url = "https://example.com/" + "路径segment123".repeat(36)
@@ -58,7 +58,7 @@ class BigBangMeasuredLayoutMatrixTest {
                 val segments = wordSegments(text)
 
                 assertTrue(fixture.page.initWords(segments, text, -1, -1, -1))
-                measure(fixture.root, 360, fixture)
+                measure(fixture.root, 280, fixture)
 
                 val words = fixture.root.findViewById<SwipeSelectView>(R.id.boom_content)
                 val chips = allChipViews(words)
@@ -103,12 +103,12 @@ class BigBangMeasuredLayoutMatrixTest {
 
                 fixture.page.mScroller.scrollTo(0, 0)
                 fixture.page.restoreSelectionNow(TreeSet(setOf(0)))
-                assertToolbarAboveSelection(fixture, 0)
+                assertSelectedRowIsMeasuredAndScrollable(fixture, words, 0)
                 fixture.page.mScroller.scrollTo(0, words.height)
                 measure(fixture.root, 360, fixture)
                 val lastWord = fixture.page.mLayout.wordCount - 1
                 fixture.page.restoreSelectionNow(TreeSet(setOf(lastWord)))
-                assertToolbarAboveSelection(fixture, lastWord)
+                assertSelectedRowIsMeasuredAndScrollable(fixture, words, lastWord)
             } finally {
                 fixture.close()
             }
@@ -120,7 +120,7 @@ class BigBangMeasuredLayoutMatrixTest {
     @Test
     @Config(sdk = [35], application = Application::class,
         fontScale = 1.0f, qualifiers = "w800dp-h360dp-land")
-    fun realScrollableRowsKeepSelectionToolbarClearForFirstAndLastWordsInLandscape() {
+    fun realScrollableRowsKeepFirstAndLastSelectionsInsideTheChipViewportInLandscape() {
         val context = RuntimeEnvironment.getApplication()
         val original = Configuration(context.resources.configuration)
         val originalMetrics = DisplayMetrics().apply { setTo(context.resources.displayMetrics) }
@@ -138,13 +138,15 @@ class BigBangMeasuredLayoutMatrixTest {
 
                 fixture.page.mScroller.scrollTo(0, 0)
                 fixture.page.restoreSelectionNow(TreeSet(setOf(0)))
-                assertToolbarAboveSelection(fixture, 0)
+                assertSelectedRowIsMeasuredAndScrollable(fixture, words, 0)
 
                 fixture.page.mScroller.scrollTo(0, words.height)
                 measure(fixture.root, 800, fixture)
                 ShadowLooper.shadowMainLooper().idle()
                 fixture.page.restoreSelectionNow(TreeSet(setOf(fixture.page.mLayout.wordCount - 1)))
-                assertToolbarAboveSelection(fixture, fixture.page.mLayout.wordCount - 1)
+                assertSelectedRowIsMeasuredAndScrollable(
+                    fixture, words, fixture.page.mLayout.wordCount - 1,
+                )
                 assertTrue(fixture.page.mScroller.canScrollVertically(-1))
             } finally {
                 fixture.close()
@@ -333,27 +335,15 @@ class BigBangMeasuredLayoutMatrixTest {
         }
     }
 
-    private fun assertToolbarAboveSelection(fixture: Fixture, wordIndex: Int) {
-        val anchorY = fixture.page.selectionActionAnchorY()
-        assertTrue("selected row should have a measured anchor", anchorY >= 0)
-        val density = fixture.root.resources.displayMetrics.density
-        val toolbarHeight = (48f * density).roundToInt()
-        val gap = (8f * density).roundToInt()
-        val toolbarTop = selectionToolbarTopY(
-            anchorYpx = anchorY,
-            pageTopInsetPx = fixture.reserveTopPx,
-            toolbarHeightPx = toolbarHeight,
-            gapPx = gap,
-            viewportHeightPx = fixture.viewportHeightPx,
-        )
+    private fun assertSelectedRowIsMeasuredAndScrollable(
+        fixture: Fixture,
+        words: SwipeSelectView,
+        wordIndex: Int,
+    ) {
         val rowIndex = fixture.page.mLayout.getRowForIndex(wordIndex)
-        val row = fixture.root.findViewById<SwipeSelectView>(R.id.boom_content).getChildAt(rowIndex)
-        val actualRowTop = fixture.reserveTopPx + anchorY
-
-        assertTrue("toolbar must remain within the measured panel", toolbarTop >= 0)
-        assertTrue(toolbarTop + toolbarHeight <= fixture.viewportHeightPx)
-        assertTrue("toolbar must leave the configured gap above the selected row",
-            toolbarTop + toolbarHeight + gap <= actualRowTop)
+        val row = words.getChildAt(rowIndex)
         assertTrue("selected row should have an actual measured height", row.height > 0)
+        assertTrue("chip content should remain scrollable", fixture.page.mScroller.canScrollVertically(1)
+            || fixture.page.mScroller.canScrollVertically(-1))
     }
 }
