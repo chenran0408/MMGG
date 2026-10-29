@@ -7,6 +7,73 @@ import com.leaf.hyperdragshare.gestures.config.ConfigStore
 internal typealias DragShareSettingsMutation =
     DragShareSettings.Builder.(current: DragShareSettings) -> Unit
 
+/**
+ * Pure descriptions of when saved settings take effect and which consumers read
+ * them. Keep the order aligned with the user-facing notice order below.
+ */
+internal enum class SettingsEffectNotice(
+    val message: String,
+) {
+    THEME("已保存：应用主题立即更新，新建的浮窗也会使用该主题。无需重启。"),
+    LOGGING("已保存：日志等级和保存位置已即时应用。无需重启。"),
+    GESTURE_EXCLUSIONS(
+        "已保存：传送门下次读取避让名单；系统界面（SystemUI）在后续手势读取更新后的名单。无需重启。",
+    ),
+    ROOT_INPUT("已保存：根输入（Root）会在下一次按压确认时读取双指长按设置。"),
+    PORTAL_SESSION("已保存：传送门在下一次取词或选图时读取；当前操作不变。无需重启作用域。"),
+}
+
+/** Classifies settings changes without saving, rendering, or consulting Android APIs. */
+internal fun classifySettingsEffectNotices(
+    previous: DragShareSettings,
+    next: DragShareSettings,
+): List<SettingsEffectNotice> = buildList {
+    if (previous.colorMode != next.colorMode) add(SettingsEffectNotice.THEME)
+
+    if (previous.logLevel != next.logLevel
+        || previous.logDestination != next.logDestination
+    ) {
+        add(SettingsEffectNotice.LOGGING)
+    }
+
+    if (previous.pauseAutomaticInGames != next.pauseAutomaticInGames
+        || previous.manualGamePackages != next.manualGamePackages
+        || previous.accessibilityBlacklistedPackages != next.accessibilityBlacklistedPackages
+    ) {
+        add(SettingsEffectNotice.GESTURE_EXCLUSIONS)
+    }
+
+    if (previous.twoFingerLongPressEnabled != next.twoFingerLongPressEnabled
+        || previous.twoFingerLongPressTimeoutMillis != next.twoFingerLongPressTimeoutMillis
+    ) {
+        add(SettingsEffectNotice.ROOT_INPUT)
+    }
+
+    if (previous.contentCaptureMode != next.contentCaptureMode
+        || previous.uiStyle != next.uiStyle
+        || previous.edgeTriggerDp != next.edgeTriggerDp
+        || previous.scrollSpeedDpPerSecond != next.scrollSpeedDpPerSecond
+        || previous.blockBackgroundScroll != next.blockBackgroundScroll
+        || previous.textSharingEnabled != next.textSharingEnabled
+        || previous.imageSharingEnabled != next.imageSharingEnabled
+        || previous.simpleMenuPosition != next.simpleMenuPosition
+        || previous.simpleMenuOpacityPercent != next.simpleMenuOpacityPercent
+        || previous.simpleMenuCornerRadiusDp != next.simpleMenuCornerRadiusDp
+        || previous.simpleMenuEdgeDistanceDp != next.simpleMenuEdgeDistanceDp
+        || previous.iconOpacityPercent != next.iconOpacityPercent
+        || previous.modernBlurRadiusDp != next.modernBlurRadiusDp
+        || previous.modernGlassOpacityPercent != next.modernGlassOpacityPercent
+        || previous.closeMenuWhenPointerLeaves != next.closeMenuWhenPointerLeaves
+        || previous.hiddenTargetKeys != next.hiddenTargetKeys
+        || previous.targetOrder != next.targetOrder
+        || previous.accessibilityLandscapeRecognitionEnabled != next.accessibilityLandscapeRecognitionEnabled
+        || previous.accessibilityLongPressTimeoutMillis != next.accessibilityLongPressTimeoutMillis
+        || previous.accessibilityRecognitionSensitivityPercent != next.accessibilityRecognitionSensitivityPercent
+    ) {
+        add(SettingsEffectNotice.PORTAL_SESSION)
+    }
+}
+
 internal fun updateDragShareSettingsWithNotice(
     context: Context,
     current: DragShareSettings,
@@ -27,46 +94,11 @@ internal fun saveDragShareSettingsWithNotice(
 ) {
     next.saveLocal(context)
 
-    val themeChanged = previous.colorMode != next.colorMode
-    val loggingChanged = previous.logLevel != next.logLevel
-            || previous.logDestination != next.logDestination
-    val gestureExclusionsChanged = previous.pauseAutomaticInGames != next.pauseAutomaticInGames
-            || previous.manualGamePackages != next.manualGamePackages
-            || previous.accessibilityBlacklistedPackages != next.accessibilityBlacklistedPackages
-    val rootInputChanged = previous.twoFingerLongPressEnabled != next.twoFingerLongPressEnabled
-            || previous.twoFingerLongPressTimeoutMillis != next.twoFingerLongPressTimeoutMillis
-    val portalSessionChanged = previous.contentCaptureMode != next.contentCaptureMode
-            || previous.uiStyle != next.uiStyle
-            || previous.edgeTriggerDp != next.edgeTriggerDp
-            || previous.scrollSpeedDpPerSecond != next.scrollSpeedDpPerSecond
-            || previous.blockBackgroundScroll != next.blockBackgroundScroll
-            || previous.textSharingEnabled != next.textSharingEnabled
-            || previous.imageSharingEnabled != next.imageSharingEnabled
-            || previous.simpleMenuPosition != next.simpleMenuPosition
-            || previous.simpleMenuOpacityPercent != next.simpleMenuOpacityPercent
-            || previous.simpleMenuCornerRadiusDp != next.simpleMenuCornerRadiusDp
-            || previous.simpleMenuEdgeDistanceDp != next.simpleMenuEdgeDistanceDp
-            || previous.iconOpacityPercent != next.iconOpacityPercent
-            || previous.modernBlurRadiusDp != next.modernBlurRadiusDp
-            || previous.modernGlassOpacityPercent != next.modernGlassOpacityPercent
-            || previous.closeMenuWhenPointerLeaves != next.closeMenuWhenPointerLeaves
-            || previous.hiddenTargetKeys != next.hiddenTargetKeys
-            || previous.targetOrder != next.targetOrder
-            || previous.accessibilityLandscapeRecognitionEnabled != next.accessibilityLandscapeRecognitionEnabled
-            || previous.accessibilityLongPressTimeoutMillis != next.accessibilityLongPressTimeoutMillis
-            || previous.accessibilityRecognitionSensitivityPercent != next.accessibilityRecognitionSensitivityPercent
-
-    val messages = buildList {
-        if (themeChanged) add("已保存：应用主题立即更新，新建的浮窗也会使用该主题。无需重启。")
-        if (loggingChanged) add("已保存：日志等级和保存位置已即时应用。无需重启。")
-        if (gestureExclusionsChanged) {
-            add("已保存：传送门下次读取避让名单；系统界面（SystemUI）在后续手势读取更新后的名单。无需重启。")
-        }
-        if (rootInputChanged) add("已保存：根输入（Root）会在下一次按压确认时读取双指长按设置。")
-        if (portalSessionChanged) {
-            add("已保存：传送门在下一次取词或选图时读取；当前操作不变。无需重启作用域。")
-        }
-        if (isEmpty()) add("设置已保存。")
+    val notices = classifySettingsEffectNotices(previous, next)
+    val messages = if (notices.isEmpty()) {
+        listOf("设置已保存。")
+    } else {
+        notices.map(SettingsEffectNotice::message)
     }
     Toast.makeText(
         context,
