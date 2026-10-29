@@ -326,3 +326,9 @@ Beta24/266源码bdd6bdf，tag `delivered/mmgg-1.7.219-beta.24`；APK在 `D:/CODE
 1. 读根AGENTS、本页和DECISIONS，再读完整任务原文；核对beta真实HEAD/状态与其他写入者。
 2. 后续按用户指示推进最小控制器拆分或N03/N06/N05功能缺口，不把记录当自动执行授权。系统指针监听仍只是候选，未采用，不叠加到Root会话。
 3. 受影响检查/集中回归命令见[AGENTS](../AGENTS.md)；Beta交付与远程/CI后续建议见[RELEASE_CHANNELS](RELEASE_CHANNELS.md)和[BRANCHES](BRANCHES.md)。
+
+## 2026-10-30 architecture follow-up
+
+- `c9d6372` 将 `DragShareController` 的手势追踪摘要提取为 `GestureTraceRecorder`。Controller 保留事件接收时机、状态判定和结束条件；记录器只负责有界字段、MOVE 计数、最大位移和摘要格式，不拥有输入会话或窗口资源。
+- 定向测试串行通过；最终全量单测808项通过，Lint 0 errors/181 warnings，Debug构建成功。无 Root 输入、双指资格、UP/CANCEL、载荷、URI/Bitmap、窗口生命周期或协议行为变化。
+- 第一次并发 Gradle 测试因共享结果目录发生 in-progress 文件冲突，停止并发后已串行重跑通过；后续代理不应同时运行 Gradle。
