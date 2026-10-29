@@ -1,5 +1,16 @@
 # MMGG 当前状态与接手
 
+## 2026-10-30 architecture iteration 1（当前增量）
+
+Beta 线完成第一批低风险边界整理，稳定线 `repair-from-189` 未修改：
+
+- `ee51224` 将 FanRuntime 的底角启动资格、侧滑启动资格和 IME 外部拦截资格抽到无副作用的 `FanRuntimePolicy`。
+- 运行时仍负责读取实际配置、显示状态、目标列表和窗口状态；策略类只接收已解析值，不持有 `Context`、`WindowManager` 或可变会话。
+- 保留现有语义，包括底角至少三个目标、IME 可见时不启动底角、侧滑目标存在条件，以及 IME 边界未知时的原有处理。
+- 新增 `FanRuntimePolicyTest`，覆盖正负条件；没有修改 Root 输入、双指资格、UP/CANCEL、窗口生命周期或宿主适配。
+
+本轮定向测试 32 项通过；全量单测 799 项通过；Lint 0 errors/181 warnings/2 hints；Debug 构建通过。下一批候选是先为 `FanRuntime` 的配置重载与目标解析建立独立边界，再评估 `FanRuntime`/`HyperOsFreeformBridge` 的拆分；输入状态机暂不作为第一批重构对象。
+
 ## 2026-10-30 UX polish round（当前增量）
 
 开发线 `beta` 在既有 `18100fd` 之后完成三项局部交互整理，稳定线 `repair-from-189` 未修改：
