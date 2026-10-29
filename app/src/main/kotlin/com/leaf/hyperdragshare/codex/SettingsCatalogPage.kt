@@ -142,19 +142,21 @@ private fun StandardSettingsModulePage(
     scrollPositions: SettingsScrollPositionStore,
     onBack: () -> Unit,
 ) {
-    val listState = rememberSettingsListState(scrollPositions, "module:${module.name}")
+    val listState = rememberSettingsListState(scrollPositions, settingsModuleListKey(module))
     val scrollBehavior = MiuixScrollBehavior()
     // Keep inactive parameters out of the normal page; search can still reveal one
     // with its prerequisite instead of enabling the feature on the user's behalf.
-    val groups = entries.filter { it.enabled || it.prerequisite == null || it.id == focusId }.groupBy { it.group }
+    val visibleEntries = entries.filter { it.enabled || it.prerequisite == null || it.id == focusId }
+    val groups = visibleEntries.groupBy { it.group }
     // Headers and rows share the same flattened order used by LazyColumn.
-    val rowKeys = groups.flatMap { (group, rows) -> listOf("group:$group") + rows.map { it.id } }
+    val rowKeys = settingEntryListKeys(visibleEntries)
+    val focusTarget = settingsFocusTarget(rowKeys, focusId)
     var focusHandled by rememberSaveable(module, focusId) { mutableStateOf(false) }
     var highlighted by rememberSaveable(module, focusId) { mutableStateOf(focusId) }
     LaunchedEffect(focusId) {
         if (focusId != null && !focusHandled) {
-            val index = rowKeys.indexOf(focusId)
-            check(index >= 0) { "Setting is no longer registered: $focusId" }
+            val index = focusTarget.index
+                ?: error("Setting is no longer registered: $focusId")
             listState.scrollToItem(index)
             focusHandled = true
             delay(1800)
@@ -213,14 +215,12 @@ private fun GestureSettingsModulePage(
     onBack: () -> Unit,
 ) {
     val categories = GESTURE_SETTING_CATEGORIES
-    val focusedCategory = remember(entries, focusId) {
-        entries.firstOrNull { it.id == focusId }?.let(::gestureCategoryFor)?.id
-    }
+    val focusedCategory = remember(entries, focusId) { gestureFocusCategoryId(entries, focusId) }
     var selectedCategoryId by rememberSaveable(focusId) { mutableStateOf(focusedCategory) }
     var focusHandled by rememberSaveable(focusId) { mutableStateOf(false) }
     var highlighted by rememberSaveable(focusId) { mutableStateOf(focusId) }
     val stateHolder = rememberSaveableStateHolder()
-    val rootListState = rememberSettingsListState(scrollPositions, "module:GESTURES:categories")
+    val rootListState = rememberSettingsListState(scrollPositions, GESTURE_CATEGORIES_LIST_KEY)
     val category = categories.firstOrNull { it.id == selectedCategoryId }
     val scrollBehavior = MiuixScrollBehavior()
 
@@ -270,7 +270,7 @@ private fun GestureSettingsModulePage(
             val categoryEntries = entriesForGestureCategory(entries, category)
                 .filter { it.enabled || it.prerequisite == null || it.id == focusId }
             stateHolder.SaveableStateProvider(category.id) {
-                val listState = rememberSettingsListState(scrollPositions, "module:GESTURES:category:${category.id}")
+                val listState = rememberSettingsListState(scrollPositions, gestureCategoryListKey(category.id))
                 LaunchedEffect(focusId, category.id) {
                     if (!focusHandled && focusId != null) {
                         val index = settingEntryListIndex(categoryEntries, focusId)

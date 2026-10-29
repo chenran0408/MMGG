@@ -47,7 +47,16 @@ class SettingsCatalogNavigationTest {
         assertTrue(entries.any { it.matches("底角斜滑") })
         val visibleCategoryRows = entriesForGestureCategory(entries, GESTURE_SETTING_CATEGORIES.first { it.id == "side" })
             .filter { it.enabled || it.prerequisite == null || it.id == sideEntry.id }
-        assertNotNull(settingEntryListIndex(visibleCategoryRows, sideEntry.id))
+        val sideIndex = settingEntryListIndex(visibleCategoryRows, sideEntry.id)
+        assertNotNull(sideIndex)
+        assertEquals(sideIndex, settingEntryListKeys(visibleCategoryRows).indexOf(sideEntry.id))
+        assertEquals(
+            SettingsFocusTarget(sideEntry.id, sideIndex),
+            settingsFocusTarget(settingEntryListKeys(visibleCategoryRows), sideEntry.id),
+        )
+        assertEquals("side", gestureFocusCategoryId(entries, sideEntry.id))
+        assertEquals("module:GESTURES", settingsModuleListKey(SettingModule.GESTURES))
+        assertEquals("module:GESTURES:category:side", gestureCategoryListKey("side"))
     }
 
     @Test

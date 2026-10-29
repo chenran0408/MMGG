@@ -69,17 +69,35 @@ internal fun entriesForGestureCategory(
     category: SettingGroupCategory,
 ): List<SettingEntry> = entries.filter { gestureCategoryFor(it)?.id == category.id }
 
+internal fun gestureFocusCategoryId(
+    entries: List<SettingEntry>,
+    focusId: String?,
+): String? = focusId?.let { id ->
+    entries.firstOrNull { it.id == id }?.let(::gestureCategoryFor)?.id
+}
+
+/** Keys in the order emitted by a grouped settings LazyColumn. */
+internal fun settingEntryListKeys(entries: List<SettingEntry>): List<String> =
+    entries.groupBy { it.group }.flatMap { (group, rows) ->
+        listOf("group:$group") + rows.map { it.id }
+    }
+
 /** LazyColumn index including one group header before each contiguous group. */
 internal fun settingEntryListIndex(entries: List<SettingEntry>, entryId: String): Int? {
-    var index = 0
-    entries.groupBy { it.group }.forEach { (_, rows) ->
-        index++
-        val rowIndex = rows.indexOfFirst { it.id == entryId }
-        if (rowIndex >= 0) return index + rowIndex
-        index += rows.size
-    }
-    return null
+    return settingEntryListKeys(entries).indexOf(entryId).takeIf { it >= 0 }
 }
+
+internal data class SettingsFocusTarget(val id: String?, val index: Int?)
+
+internal fun settingsFocusTarget(rowKeys: List<String>, focusId: String?): SettingsFocusTarget =
+    SettingsFocusTarget(focusId, focusId?.let(rowKeys::indexOf)?.takeIf { it >= 0 })
+
+internal fun settingsModuleListKey(module: SettingModule): String = "module:${module.name}"
+
+internal const val GESTURE_CATEGORIES_LIST_KEY = "module:GESTURES:categories"
+
+internal fun gestureCategoryListKey(categoryId: String): String =
+    "module:GESTURES:category:$categoryId"
 
 internal data class SettingsListPosition(val index: Int, val offset: Int)
 
