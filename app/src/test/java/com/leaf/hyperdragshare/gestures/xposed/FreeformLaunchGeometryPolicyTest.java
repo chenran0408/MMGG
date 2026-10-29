@@ -43,6 +43,7 @@ public final class FreeformLaunchGeometryPolicyTest {
         config.landscapePositionX = 0;
         config.landscapePositionY = 0;
         config.landscapeProportionalSizeEnabled = false;
+        config.portraitProportionalSizeEnabled = false;
 
         FreeformLaunchGeometryPolicy.Result result =
                 FreeformLaunchGeometryPolicy.calculate(config,
@@ -51,8 +52,8 @@ public final class FreeformLaunchGeometryPolicyTest {
 
         assertRect(new Rect(12, 12, 2388, 1068), result.safeBounds);
         assertRect(new Rect(12, 12, 2388, 1068), result.placementBounds);
-        assertNull(result.visualBounds);
-        assertNull(result.logicalBounds);
+        assertRect(new Rect(12, 12, 1212, 552), result.visualBounds);
+        assertRect(new Rect(12, 12, 2412, 1092), result.logicalBounds);
     }
 
     @Test
