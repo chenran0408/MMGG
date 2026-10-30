@@ -65,6 +65,7 @@ final class HyperOsFreeformBridge {
     private volatile int pendingUserId;
     private volatile long pendingSince;
     private volatile long pendingLaunchGeneration;
+    private volatile long pendingEvidenceGeneration;
     private volatile Rect pendingLaunchVisualBounds;
     private volatile Rect pendingNativeLaunchBounds;
     private volatile long launchInputProtectionUntil;
@@ -99,6 +100,9 @@ final class HyperOsFreeformBridge {
     private volatile Runnable queuedExternalCallback;
     private final FreeformLaunchQueuePolicy queuedLaunchPolicy =
             new FreeformLaunchQueuePolicy();
+    private final FreeformLaunchEvidencePolicy launchEvidencePolicy =
+            new FreeformLaunchEvidencePolicy();
+    private volatile long queuedEvidenceGeneration;
 
     HyperOsFreeformBridge(Context context, ClassLoader classLoader, Handler mainHandler) {
         this.context = context;
@@ -154,6 +158,7 @@ final class HyperOsFreeformBridge {
             queuedAfterSuspendTaskId = taskId;
             generation = queuedLaunchPolicy.begin(taskId);
             queuedLaunchGeneration = generation;
+            queuedEvidenceGeneration = launchEvidencePolicy.queued();
         }
         if (!miniTask(taskId, info)) {
             clearQueuedExternalLaunch(generation);
@@ -218,6 +223,7 @@ final class HyperOsFreeformBridge {
         synchronized (taskLock) {
             if (generation != queuedLaunchGeneration) return;
             queuedLaunchPolicy.clear(generation);
+            launchEvidencePolicy.unknown(queuedEvidenceGeneration);
             queuedExternalPackage = null;
             queuedExternalIntent = null;
             queuedExternalConfig = null;
@@ -251,6 +257,7 @@ final class HyperOsFreeformBridge {
             queuedExternalCallback = null;
             generation = queuedLaunchPolicy.begin(taskId);
             queuedLaunchGeneration = generation;
+            queuedEvidenceGeneration = launchEvidencePolicy.queued();
         }
         if (!miniTask(taskId, info)) {
             clearQueuedLaunch(generation);
@@ -280,6 +287,7 @@ final class HyperOsFreeformBridge {
     private boolean launchIntentNow(String packageName, Intent intent, GestureConfig config,
                                     Runnable onLaunchArmed, boolean shortcutLaunch,
                                     RuntimeTarget shortcutTarget) {
+        long evidenceGeneration = launchEvidencePolicy.requested();
         try {
             Class<?> manager = XposedHelpers.findClass("miui.app.MiuiFreeFormManager", classLoader);
             Object result = XposedHelpers.callStaticMethod(manager, "getActivityOptions",
@@ -339,7 +347,7 @@ final class HyperOsFreeformBridge {
                     launchBounds == null
                             ? null : FreeformLaunchGeometryPolicy.visualBounds(launchBounds, scale),
                     launchBounds, nativeLaunchBounds,
-                    intent, launchOptions, shortcutLaunch);
+                    intent, launchOptions, shortcutLaunch, evidenceGeneration);
             notifyLaunchArmed(onLaunchArmed);
             if (shortcutLaunch) {
                 if (!HyperOsProfile.CURRENT.directShortcutLaunch
@@ -371,7 +379,8 @@ final class HyperOsFreeformBridge {
             scheduleScans(pendingGeneration);
             return true;
         } catch (Throwable error) {
-            clearPendingMatch();
+            launchEvidencePolicy.unknown(evidenceGeneration);
+            clearPendingMatch(evidenceGeneration);
             Log.e("Native freeform launch failed", error);
             return false;
         }
@@ -537,6 +546,7 @@ final class HyperOsFreeformBridge {
                     && recentShortcutPackage.equals(actual)
                     && recentShortcutUserId == userId(info);
             if (matchesPending && pendingLaunchDismissRequested && (normal || mini)) {
+                launchEvidencePolicy.observed(pendingEvidenceGeneration);
                 tasks.put(taskId, actual, normal
                         ? FreeformTaskRegistry.State.NORMAL
                         : FreeformTaskRegistry.State.SUSPENDED);
@@ -566,12 +576,14 @@ final class HyperOsFreeformBridge {
 
                 if (matchesPending) {
                     if (mini) {
+                        launchEvidencePolicy.observed(pendingEvidenceGeneration);
                         rememberPendingNativeBoundsLocked(taskId);
                         tasks.put(taskId, actual, FreeformTaskRegistry.State.SUSPENDED);
                         trackedTaskId = -1;
                         finishPendingMatchLocked();
                         Log.i("Fan-selected task remains in native mini state task=" + taskId);
                     } else if (normal) {
+                        launchEvidencePolicy.observed(pendingEvidenceGeneration);
                         rememberPendingNativeBoundsLocked(taskId);
                         alignShortcutTask = pendingShortcutLaunch || matchesRecentShortcut;
                         tasks.put(taskId, actual, FreeformTaskRegistry.State.NORMAL);
@@ -1042,6 +1054,7 @@ final class HyperOsFreeformBridge {
         synchronized (taskLock) {
             if (generation != queuedLaunchGeneration) return;
             queuedLaunchPolicy.clear(generation);
+            launchEvidencePolicy.unknown(queuedEvidenceGeneration);
             queuedLaunchTarget = null;
             queuedLaunchConfig = null;
             queuedLaunchArmedCallback = null;
@@ -1432,9 +1445,10 @@ final class HyperOsFreeformBridge {
     private long beginPendingMatch(String packageName, int userId, Rect visualBounds,
                                    Rect launchBounds, Rect nativeLaunchBounds,
                                    Intent intent, Bundle options,
-                                   boolean shortcutLaunch) {
+                                   boolean shortcutLaunch, long evidenceGeneration) {
         synchronized (taskLock) {
             long generation = ++pendingLaunchGeneration;
+            pendingEvidenceGeneration = evidenceGeneration;
             pendingPackage = packageName;
             pendingUserId = userId;
             pendingSince = SystemClock.elapsedRealtime();
@@ -1483,8 +1497,9 @@ final class HyperOsFreeformBridge {
         }
     }
 
-    private void clearPendingMatch() {
+    private void clearPendingMatch(long evidenceGeneration) {
         synchronized (taskLock) {
+            if (pendingEvidenceGeneration != evidenceGeneration) return;
             clearPendingMatchLocked();
         }
     }
@@ -1535,6 +1550,7 @@ final class HyperOsFreeformBridge {
                     return;
                 }
                 Log.i("No matching freeform task appeared for " + pendingPackage);
+                launchEvidencePolicy.unknown(pendingEvidenceGeneration);
                 clearPendingMatchLocked();
             }
         }, MATCH_WINDOW_MS + 100);
