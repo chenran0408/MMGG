@@ -48,6 +48,13 @@
 
 ## 历史索引
 
+## 2026-10-30 HyperFreeformX 参考增量
+
+- 提交 `7d4ca1e` 为窗外长按动作的最小增量：新增 `outside_long_action` 配置，默认无操作；启用后复用已有关闭、迷你、全屏、贴边路径。
+- 长按在移动超过触控阈值、取消或输入法显示时不会执行；原窗外单击/双击行为和旧配置键保持不变。
+- 该增量只针对小米 ROM Root 路径，不引入 Flyme/AOSP 通用小窗 fallback；通知栏小窗、媒体控件、全局限制修改仍待独立契约审查。
+- 定向 `ImeFreeformLifecycleTest`、配置兼容测试：32 项通过。完整回归和 Beta 构建待本轮收口；当前 ADB 无设备，实机安装与 OS4 行为验证未完成。
+
 - 分支与归档决策：`docs/BRANCHES.md`、`docs/DECISIONS.md`。
 - 动作与资源：`docs/DRAG_ACTIONS.md`。
 - 退出与销毁：`docs/EXIT_LIFECYCLE.md`。
