@@ -38,4 +38,29 @@ public class FreeformLaunchQueuePolicyTest {
         assertFalse(policy.isCurrent(generation, 41));
         assertFalse(policy.consume(generation, 41));
     }
+
+    @Test
+    public void retryBudgetAllowsExactlyConfiguredAttempts() {
+        FreeformLaunchQueuePolicy policy = new FreeformLaunchQueuePolicy();
+        long generation = policy.begin(41);
+
+        for (int retry = 1; retry <= FreeformLaunchQueuePolicy.MAX_RETRIES; retry++) {
+            assertEquals(retry, policy.nextRetry(generation, 41));
+        }
+
+        assertEquals(-1, policy.nextRetry(generation, 41));
+        assertTrue(policy.isCurrent(generation, 41));
+    }
+
+    @Test
+    public void clearingStaleGenerationCannotClearReplacementWithSameTaskId() {
+        FreeformLaunchQueuePolicy policy = new FreeformLaunchQueuePolicy();
+        long first = policy.begin(41);
+        long replacement = policy.begin(41);
+
+        policy.clear(first);
+
+        assertTrue(policy.isCurrent(replacement, 41));
+        assertEquals(1, policy.nextRetry(replacement, 41));
+    }
 }

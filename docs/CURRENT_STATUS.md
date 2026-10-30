@@ -1,3 +1,12 @@
+## 2026-10-30 offline stability follow-up（当前增量）
+
+本轮只做无需设备的生命周期审计和 Freeform 队列测试补强，稳定线 `repair-from-189`、Candidate A/B、设备和远程仓库均未操作。
+
+- `DragShareController` 退出路径已按调用图复核：`destroy` 会先失效 `DragShareLifecycle` 的 session/preview-exit token；staging、目标查询、预热窗口、退出动画、watchdog 和菜单延迟回调均有当前会话或当前对象检查。
+- 现有 `DragShareExitLifecycleTest` 已覆盖销毁前后预热回调、退出动画迟到回调、替换预览和重复清理。本轮没有发现可由源码和替身稳定复现的缺失 owner 检查，因此没有进行猜测性生产重构。
+- `FreeformLaunchQueuePolicyTest` 新增精确重试预算和同任务新 generation 不能被旧清理回调清除的覆盖；生产队列、超时、重试和 HyperOS 私有接口未改变。
+- 定向回归：32 项通过。真实 HyperOS 窗口时序、宿主 App 触摸流、跨进程最终接收和设备视觉仍未覆盖。
+
 ## 2026-10-30 architecture iteration 2-6（当前增量）
 
 Beta 线完成六轮低风险架构整理，稳定线 `repair-from-189` 未修改：
