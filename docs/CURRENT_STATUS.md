@@ -341,3 +341,14 @@ Beta 线继续完成两轮局部职责整理，稳定线内容已恢复为原状
 - `b288f9c`：为 `HyperOsFreeformBridge` 增加 `FreeformLaunchQueuePolicy`。队列启动、重试、消费和清理按 generation/task 绑定；迟到的挂起回调、旧任务扫描和过期重试不会启动新目标。HyperOS 私有接口、超时和重试次数保持不变。
 
 两轮未改变 Root 输入权威、双指资格、真实 UP/CANCEL、拖拽载荷、Bitmap/URI/文件释放、设置协议或稳定线产品行为。定向测试 32 项、全量单测 814 项均串行通过（0 failures/errors/skipped）；Lint 0 errors/181 warnings；Debug 与 Beta/R8 成功。验证 APK SHA-256：`90B16C17030DC41F2C71F0ACA74F8EC11E10AF3F6B796DE6ADD642F9E7B77A17`。未安装、未发布、未 push，真实设备/云端 CI 未覆盖。
+
+## 2026-10-30 architecture iterations 10-13
+
+在第 8、9 轮后继续完成四轮局部优化：
+
+- `36047d2`、`ab9ee86`：Big Bang 分词面板的布局恢复、相邻段动画和选区帧回调绑定 `BigBangCallbackOwner`。关闭页面、替换内容或重复重建后，旧监听器不会恢复已失效选区；关闭时主动移除待处理的 layout listener。未改变选区输入、拖拽载荷和资源释放。
+- `8225a9f`、`797767e`：Freeform 请求增加 `queued/requested/observed/unknown` 阶段证据。任务出现只记录为 observed，不表示最终启动或发送成功；迟到证据按 generation 丢弃，unknown 日志标记为 `outcome=unconfirmed`。不记录 Intent、正文或 URI。
+- `f0b381e`、`ef1c63a`、`6f007db`：首页状态卡和诊断页共用 `ActivationPresentation`。五态、功能依赖和 UNKNOWN 保持原语义；未知不会显示为权限缺失或必须重载。`6f007db` 修正了测试对关闭缩略图触发后的依赖预期，未改生产行为。
+- R13：整理接手记录、任务清单和当前状态，补齐本轮实际提交与验证证据。
+
+本轮串行验证：全量 `testDebugUnitTest` 827 项通过（0 failures/errors/skipped）；`lintDebug` 0 errors/181 warnings；`assembleDebug` 与 `assembleBeta`（R8）成功。Beta APK SHA-256：`1E6B065D99234D7AD4419E8BE16EF923731393977AC8A3E349FD1E0BDE78CABC`，大小 4,980,261 bytes。未安装、未发布、未 push；真实设备、云端 CI 和完整 Miuix 视觉仍未覆盖。
