@@ -348,7 +348,16 @@ final class FanRuntime {
         NativeSidebarState.observe(context, configHandler,
                 () -> mainHandler.post(this::refreshOutsideCapture));
         freeform = new HyperOsFreeformBridge(context, classLoader, mainHandler);
-        outsideGestures = new OutsideGestureRecognizer(mainHandler, viewConfiguration, density, this::performOutsideAction);
+        outsideGestures = new OutsideGestureRecognizer(mainHandler, viewConfiguration, density,
+                new OutsideGestureRecognizer.Listener() {
+                    @Override public void onOutsideAction(boolean doubleTap) {
+                        performOutsideAction(doubleTap);
+                    }
+
+                    @Override public void onOutsideLongPress() {
+                        performOutsideLongAction();
+                    }
+                });
         requestConfigReload();
         context.getContentResolver().registerContentObserver(ConfigContract.RUNTIME_URI, false, new ContentObserver(mainHandler) {
 
@@ -2320,6 +2329,46 @@ final class FanRuntime {
         if (handled) {
             outsideGestures.clearAll();
             suspendOutsideCaptureForWindowTransition("outside action=" + action);
+        }
+    }
+
+    private void performOutsideLongAction() {
+        if (!outsideEnabledForCurrentDisplay() || systemPanelInputBlocked()) {
+            outsideGestures.clearAll();
+            return;
+        }
+        if (freeform.hasInteractiveFreeform() && inputMethodActive()) {
+            syncImeGestureProtection(true);
+            outsideGestures.clearAll();
+            Log.i("Ignored outside long press while input method is visible");
+            return;
+        }
+        int action = config.outsideLongAction;
+        if (action == ConfigContract.ACTION_NONE) {
+            Log.i("Outside long press: no action");
+            return;
+        }
+        boolean handled;
+        switch (action) {
+            case ConfigContract.ACTION_CLOSE:
+                handled = freeform.dismissTrackedOrPendingLaunch();
+                break;
+            case ConfigContract.ACTION_PIN:
+                handled = freeform.miniTrackedOrPendingLaunch();
+                break;
+            case ConfigContract.ACTION_FULLSCREEN:
+                handled = freeform.fullscreenTrackedOrPendingLaunch();
+                break;
+            case ConfigContract.ACTION_EDGE_PIN:
+                handled = freeform.edgePinTrackedOrPendingLaunch();
+                break;
+            default:
+                handled = false;
+        }
+        Log.i("Outside long press action=" + action + " handled=" + handled);
+        if (handled) {
+            outsideGestures.clearAll();
+            suspendOutsideCaptureForWindowTransition("outside long action=" + action);
         }
     }
 

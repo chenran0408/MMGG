@@ -412,6 +412,7 @@ public final class ConfigProvider extends ContentProvider {
                             ConfigContract.DEFAULT_LANDSCAPE_POSITION_Y)));
             out.putInt(ConfigContract.KEY_OUTSIDE_SINGLE_ACTION, prefs.getInt(ConfigContract.KEY_OUTSIDE_SINGLE_ACTION, ConfigContract.DEFAULT_OUTSIDE_SINGLE_ACTION));
             out.putInt(ConfigContract.KEY_OUTSIDE_DOUBLE_ACTION, prefs.getInt(ConfigContract.KEY_OUTSIDE_DOUBLE_ACTION, ConfigContract.DEFAULT_OUTSIDE_DOUBLE_ACTION));
+            out.putInt(ConfigContract.KEY_OUTSIDE_LONG_ACTION, prefs.getInt(ConfigContract.KEY_OUTSIDE_LONG_ACTION, ConfigContract.DEFAULT_OUTSIDE_LONG_ACTION));
             out.putInt(ConfigContract.KEY_OUTSIDE_TAP_WINDOW_MS, clamp(prefs.getInt(
                     ConfigContract.KEY_OUTSIDE_TAP_WINDOW_MS,
                     ConfigContract.DEFAULT_OUTSIDE_TAP_WINDOW_MS),

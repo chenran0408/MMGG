@@ -92,6 +92,49 @@ public final class ImeFreeformLifecycleTest {
         assertTrue(FanRuntime.shouldCaptureOutsideWithIme(false, null));
     }
 
+    @Test
+    public void longPressIsOptInAndMovementOrCancelSuppressesIt() {
+        int[] longPresses = {0};
+        OutsideGestureRecognizer recognizer = new OutsideGestureRecognizer(
+                new Handler(Looper.getMainLooper()),
+                ViewConfiguration.get(RuntimeEnvironment.getApplication()), 1f,
+                new OutsideGestureRecognizer.Listener() {
+                    @Override public void onOutsideAction(boolean doubleTap) { }
+                    @Override public void onOutsideLongPress() { longPresses[0]++; }
+                });
+        Rect window = new Rect(200, 300, 800, 900);
+        assertTrue(recognizer.onDown(50, 50, window, 1200, 0, 0, 7000));
+        ShadowLooper.shadowMainLooper().idleFor(600, TimeUnit.MILLISECONDS);
+        assertEquals(1, longPresses[0]);
+
+        assertTrue(recognizer.onDown(50, 50, window, 1200, 0, 0, 8000));
+        recognizer.onMove(200, 200);
+        ShadowLooper.shadowMainLooper().idleFor(600, TimeUnit.MILLISECONDS);
+        assertEquals(1, longPresses[0]);
+
+        assertTrue(recognizer.onDown(50, 50, window, 1200, 0, 0, 9000));
+        recognizer.onCancel();
+        ShadowLooper.shadowMainLooper().idleFor(600, TimeUnit.MILLISECONDS);
+        assertEquals(1, longPresses[0]);
+    }
+
+    @Test
+    public void inputMethodTransitionSuppressesOutsideLongPress() {
+        int[] longPresses = {0};
+        OutsideGestureRecognizer recognizer = new OutsideGestureRecognizer(
+                new Handler(Looper.getMainLooper()),
+                ViewConfiguration.get(RuntimeEnvironment.getApplication()), 1f,
+                new OutsideGestureRecognizer.Listener() {
+                    @Override public void onOutsideAction(boolean doubleTap) { }
+                    @Override public void onOutsideLongPress() { longPresses[0]++; }
+                });
+        assertTrue(recognizer.onDown(50, 50, new Rect(200, 300, 800, 900),
+                1200, 0, 0, 10000));
+        recognizer.setInputMethodVisible(true);
+        ShadowLooper.shadowMainLooper().idleFor(600, TimeUnit.MILLISECONDS);
+        assertEquals(0, longPresses[0]);
+    }
+
     private static OutsideGestureRecognizer recognizer(int[] actions) {
         return new OutsideGestureRecognizer(new Handler(Looper.getMainLooper()),
                 ViewConfiguration.get(RuntimeEnvironment.getApplication()), 1f,

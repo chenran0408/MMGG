@@ -8,6 +8,7 @@ final class OutsideGestureRecognizer {
 
     interface Listener {
         void onOutsideAction(boolean doubleTap);
+        default void onOutsideLongPress() { }
     }
 
     private final Handler handler;
@@ -19,6 +20,7 @@ final class OutsideGestureRecognizer {
     private final float doubleTapSlopSquared;
     private long doubleTapTimeout;
     private final long tapTimeout;
+    private final long longPressTimeout;
 
     private boolean active;
     private boolean secondTap;
@@ -34,6 +36,7 @@ final class OutsideGestureRecognizer {
     private float pendingY;
     private long pendingTime;
     private final Runnable singleTapRunnable = this::dispatchPendingSingle;
+    private final Runnable longPressRunnable = this::dispatchLongPress;
 
     OutsideGestureRecognizer(Handler handler, ViewConfiguration configuration,
                              float density, Listener listener) {
@@ -49,6 +52,7 @@ final class OutsideGestureRecognizer {
         this.doubleTapTimeout = com.leaf.hyperdragshare.gestures.config.ConfigContract
                 .DEFAULT_OUTSIDE_TAP_WINDOW_MS;
         this.tapTimeout = ViewConfiguration.getLongPressTimeout();
+        this.longPressTimeout = ViewConfiguration.getLongPressTimeout();
     }
 
     void setDoubleTapTimeout(long timeoutMs) {
@@ -81,6 +85,7 @@ final class OutsideGestureRecognizer {
             return false;
         }
         lastAcceptedDownEventTime = eventTime;
+        handler.removeCallbacks(longPressRunnable);
         active = false;
         secondTap = false;
         sideGestureCandidate = false;
@@ -112,6 +117,8 @@ final class OutsideGestureRecognizer {
         if (sideGestureCandidate) {
             Log.i("Outside side-edge tap armed; movement still reserved for system x="
                     + Math.round(x));
+        } else {
+            handler.postDelayed(longPressRunnable, longPressTimeout);
         }
         return !sideGestureCandidate;
     }
@@ -123,6 +130,7 @@ final class OutsideGestureRecognizer {
                 sideSwipeDecisionDistance, sideTapRetentionDistance)
                 : squaredDistance(x, y, downX, downY) > touchSlopSquared;
         if (movedOutsideTap) {
+            handler.removeCallbacks(longPressRunnable);
             active = false;
             secondTap = false;
             if (sideGestureCandidate) {
@@ -163,6 +171,7 @@ final class OutsideGestureRecognizer {
     }
 
     void onCancel() {
+        handler.removeCallbacks(longPressRunnable);
         active = false;
         secondTap = false;
         sideGestureCandidate = false;
@@ -180,8 +189,18 @@ final class OutsideGestureRecognizer {
         listener.onOutsideAction(false);
     }
 
+    private void dispatchLongPress() {
+        if (!active || inputMethodVisible || sideGestureCandidate) return;
+        active = false;
+        secondTap = false;
+        clearPending();
+        Log.i("Outside long press recognized");
+        listener.onOutsideLongPress();
+    }
+
     private boolean finishTap(float x, float y, long eventTime, Runnable claimInput) {
         if (!active) return false;
+        handler.removeCallbacks(longPressRunnable);
         float allowedMovementSquared = sideGestureCandidate
                 ? sideTapSlopSquared : touchSlopSquared;
         boolean valid = eventTime - downTime <= tapTimeout

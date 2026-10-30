@@ -65,6 +65,7 @@ final class GestureConfig {
     final int positionY;
     final int outsideSingleAction;
     final int outsideDoubleAction;
+    final int outsideLongAction;
     final List<TargetSpec> targets;
     final boolean honeycombEnabled;
     final int honeycombMode;
@@ -219,6 +220,7 @@ final class GestureConfig {
                           int iconSizeDp,
                           int widthPercent, int heightPercent, int positionX,
                           int positionY, int outsideSingleAction, int outsideDoubleAction,
+                          int outsideLongAction,
                           List<TargetSpec> targets, boolean honeycombEnabled,
                           int honeycombMode,
                           int honeycombIconSizeDp, int honeycombSpacingDp,
@@ -281,6 +283,7 @@ final class GestureConfig {
         this.positionY = clamp(positionY, 0, 100);
         this.outsideSingleAction = supportedOutsideAction(outsideSingleAction);
         this.outsideDoubleAction = supportedOutsideAction(outsideDoubleAction);
+        this.outsideLongAction = supportedOutsideAction(outsideLongAction);
         this.targets = Collections.unmodifiableList(targets);
         this.honeycombEnabled = honeycombEnabled;
         this.honeycombMode = clamp(honeycombMode,
@@ -333,6 +336,7 @@ final class GestureConfig {
                 ConfigContract.DEFAULT_WIDTH_PERCENT, ConfigContract.DEFAULT_HEIGHT_PERCENT,
                 ConfigContract.DEFAULT_POSITION_X, ConfigContract.DEFAULT_POSITION_Y,
                 ConfigContract.DEFAULT_OUTSIDE_SINGLE_ACTION, ConfigContract.DEFAULT_OUTSIDE_DOUBLE_ACTION,
+                ConfigContract.DEFAULT_OUTSIDE_LONG_ACTION,
                 new ArrayList<>(), ConfigContract.DEFAULT_HONEYCOMB_ENABLED,
                 ConfigContract.DEFAULT_HONEYCOMB_MODE,
                 ConfigContract.DEFAULT_HONEYCOMB_ICON_SIZE_DP,
@@ -434,6 +438,7 @@ final class GestureConfig {
                 bundle.getInt(ConfigContract.KEY_POSITION_Y, ConfigContract.DEFAULT_POSITION_Y),
                 bundle.getInt(ConfigContract.KEY_OUTSIDE_SINGLE_ACTION, ConfigContract.DEFAULT_OUTSIDE_SINGLE_ACTION),
                 bundle.getInt(ConfigContract.KEY_OUTSIDE_DOUBLE_ACTION, ConfigContract.DEFAULT_OUTSIDE_DOUBLE_ACTION),
+                bundle.getInt(ConfigContract.KEY_OUTSIDE_LONG_ACTION, ConfigContract.DEFAULT_OUTSIDE_LONG_ACTION),
                 targets,
                 bundle.getBoolean(ConfigContract.KEY_HONEYCOMB_ENABLED,
                         ConfigContract.DEFAULT_HONEYCOMB_ENABLED),

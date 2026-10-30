@@ -160,6 +160,7 @@ public final class ConfigContract {
     public static final String EXTRA_DIAGNOSTIC_TEXT = "diagnostic_text";
     public static final String KEY_OUTSIDE_SINGLE_ACTION = "outside_single_action";
     public static final String KEY_OUTSIDE_DOUBLE_ACTION = "outside_double_action";
+    public static final String KEY_OUTSIDE_LONG_ACTION = "outside_long_action";
     public static final String KEY_OUTSIDE_TAP_WINDOW_MS = "outside_tap_window_ms";
     public static final String KEY_OUTSIDE_ENABLED = "outside_enabled";
     public static final String KEY_OUTSIDE_PORTRAIT_ENABLED =
@@ -459,6 +460,7 @@ public final class ConfigContract {
     public static final int DEFAULT_LANDSCAPE_POSITION_Y = 50;
     public static final int DEFAULT_OUTSIDE_SINGLE_ACTION = 1;
     public static final int DEFAULT_OUTSIDE_DOUBLE_ACTION = 2;
+    public static final int DEFAULT_OUTSIDE_LONG_ACTION = 0;
     public static final int DEFAULT_OUTSIDE_TAP_WINDOW_MS = 180;
     public static final boolean DEFAULT_OUTSIDE_ENABLED = true;
     public static final boolean DEFAULT_OUTSIDE_PORTRAIT_ENABLED = true;

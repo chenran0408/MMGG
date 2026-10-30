@@ -752,6 +752,8 @@ public final class ConfigStore {
                         ConfigContract.DEFAULT_OUTSIDE_SINGLE_ACTION)
                 .putInt(ConfigContract.KEY_OUTSIDE_DOUBLE_ACTION,
                         ConfigContract.DEFAULT_OUTSIDE_DOUBLE_ACTION)
+                .putInt(ConfigContract.KEY_OUTSIDE_LONG_ACTION,
+                        ConfigContract.DEFAULT_OUTSIDE_LONG_ACTION)
                 .putInt(ConfigContract.KEY_OUTSIDE_TAP_WINDOW_MS,
                         ConfigContract.DEFAULT_OUTSIDE_TAP_WINDOW_MS)
                 .apply();
@@ -1085,6 +1087,7 @@ public final class ConfigStore {
                         ConfigContract.DEFAULT_LANDSCAPE_POSITION_Y)
                 .putInt(ConfigContract.KEY_OUTSIDE_SINGLE_ACTION, ConfigContract.DEFAULT_OUTSIDE_SINGLE_ACTION)
                 .putInt(ConfigContract.KEY_OUTSIDE_DOUBLE_ACTION, ConfigContract.DEFAULT_OUTSIDE_DOUBLE_ACTION)
+                .putInt(ConfigContract.KEY_OUTSIDE_LONG_ACTION, ConfigContract.DEFAULT_OUTSIDE_LONG_ACTION)
                 .putInt(ConfigContract.KEY_OUTSIDE_TAP_WINDOW_MS,
                         ConfigContract.DEFAULT_OUTSIDE_TAP_WINDOW_MS)
                 .putBoolean(ConfigContract.KEY_OUTSIDE_ENABLED,
@@ -1225,7 +1228,8 @@ public final class ConfigStore {
     static void migrateUnifiedActionsIfNeeded(SharedPreferences preferences) {
         boolean needsSingle = !preferences.contains(ConfigContract.KEY_OUTSIDE_SINGLE_ACTION);
         boolean needsDouble = !preferences.contains(ConfigContract.KEY_OUTSIDE_DOUBLE_ACTION);
-        if (!needsSingle && !needsDouble) return;
+        boolean needsLong = !preferences.contains(ConfigContract.KEY_OUTSIDE_LONG_ACTION);
+        if (!needsSingle && !needsDouble && !needsLong) return;
         SharedPreferences.Editor editor = preferences.edit();
         if (needsSingle) {
             editor.putInt(ConfigContract.KEY_OUTSIDE_SINGLE_ACTION,
@@ -1236,6 +1240,10 @@ public final class ConfigStore {
             editor.putInt(ConfigContract.KEY_OUTSIDE_DOUBLE_ACTION,
                     preferences.getInt("lower_double_action",
                             ConfigContract.DEFAULT_OUTSIDE_DOUBLE_ACTION));
+        }
+        if (needsLong) {
+            editor.putInt(ConfigContract.KEY_OUTSIDE_LONG_ACTION,
+                    ConfigContract.DEFAULT_OUTSIDE_LONG_ACTION);
         }
         editor.commit();
     }

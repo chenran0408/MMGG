@@ -461,6 +461,7 @@ internal fun gestureSettingEntries(
     bool("横屏窗外点击", "横屏时生效", C.KEY_OUTSIDE_LANDSCAPE_ENABLED, C.DEFAULT_OUTSIDE_LANDSCAPE_ENABLED)
     chooser("窗外单击", listOf("无操作", "关闭小窗", "挂起到右上角", "全屏", "小窗贴边"), C.KEY_OUTSIDE_SINGLE_ACTION, C.DEFAULT_OUTSIDE_SINGLE_ACTION)
     chooser("窗外双击", listOf("无操作", "关闭小窗", "挂起到右上角", "全屏", "小窗贴边"), C.KEY_OUTSIDE_DOUBLE_ACTION, C.DEFAULT_OUTSIDE_DOUBLE_ACTION)
+    chooser("窗外长按", listOf("无操作", "关闭小窗", "挂起到右上角", "全屏", "小窗贴边"), C.KEY_OUTSIDE_LONG_ACTION, C.DEFAULT_OUTSIDE_LONG_ACTION)
     slider("单双击判定时间", C.KEY_OUTSIDE_TAP_WINDOW_MS, C.MIN_OUTSIDE_TAP_WINDOW_MS, C.MAX_OUTSIDE_TAP_WINDOW_MS, " ms")
 
     currentModule = SettingModule.GESTURES
