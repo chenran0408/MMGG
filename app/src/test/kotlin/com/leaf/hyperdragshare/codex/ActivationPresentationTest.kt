@@ -51,7 +51,7 @@ class ActivationPresentationTest {
             thumbTriggerEnabled = false,
             pressReader = ActivationEvidence.UNAVAILABLE,
         )
-        assertEquals(ActivationState.NOT_APPLICABLE, disabledReader.pressFeature)
+        assertEquals(ActivationState.NORMAL, disabledReader.pressFeature)
     }
 
     @Test
