@@ -12,29 +12,44 @@ final class FreeformLaunchEvidencePolicy {
     private long generation;
     private Stage stage = Stage.UNKNOWN;
 
-    synchronized long queued() {
-        stage = Stage.QUEUED;
-        return ++generation;
+    synchronized Transition queued() {
+        return transition(Stage.QUEUED, true);
     }
 
-    synchronized long requested() {
-        stage = Stage.REQUESTED;
-        return ++generation;
+    synchronized Transition requested() {
+        return transition(Stage.REQUESTED, true);
     }
 
-    synchronized boolean observed(long requestGeneration) {
-        if (requestGeneration != generation || stage != Stage.REQUESTED) return false;
-        stage = Stage.OBSERVED;
-        return true;
+    synchronized Transition observed(long requestGeneration) {
+        if (requestGeneration != generation || stage != Stage.REQUESTED) return null;
+        return transition(Stage.OBSERVED, false);
     }
 
-    synchronized boolean unknown(long requestGeneration) {
-        if (requestGeneration != generation || stage == Stage.OBSERVED) return false;
-        stage = Stage.UNKNOWN;
-        return true;
+    synchronized Transition unknown(long requestGeneration) {
+        if (requestGeneration != generation || stage == Stage.OBSERVED) return null;
+        return transition(Stage.UNKNOWN, false);
     }
 
     synchronized Stage stage() {
         return stage;
+    }
+
+    private Transition transition(Stage next, boolean newGeneration) {
+        Stage previous = stage;
+        if (newGeneration) generation++;
+        stage = next;
+        return new Transition(generation, previous, next);
+    }
+
+    static final class Transition {
+        final long generation;
+        final Stage previous;
+        final Stage stage;
+
+        Transition(long generation, Stage previous, Stage stage) {
+            this.generation = generation;
+            this.previous = previous;
+            this.stage = stage;
+        }
     }
 }

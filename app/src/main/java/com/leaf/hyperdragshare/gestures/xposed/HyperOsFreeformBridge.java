@@ -158,7 +158,9 @@ final class HyperOsFreeformBridge {
             queuedAfterSuspendTaskId = taskId;
             generation = queuedLaunchPolicy.begin(taskId);
             queuedLaunchGeneration = generation;
-            queuedEvidenceGeneration = launchEvidencePolicy.queued();
+            FreeformLaunchEvidencePolicy.Transition evidence = launchEvidencePolicy.queued();
+            queuedEvidenceGeneration = evidence.generation;
+            logLaunchEvidence(evidence, "queued until suspend");
         }
         if (!miniTask(taskId, info)) {
             clearQueuedExternalLaunch(generation);
@@ -223,7 +225,8 @@ final class HyperOsFreeformBridge {
         synchronized (taskLock) {
             if (generation != queuedLaunchGeneration) return;
             queuedLaunchPolicy.clear(generation);
-            launchEvidencePolicy.unknown(queuedEvidenceGeneration);
+            logLaunchEvidence(launchEvidencePolicy.unknown(queuedEvidenceGeneration),
+                    "queued launch abandoned; no task observed");
             queuedExternalPackage = null;
             queuedExternalIntent = null;
             queuedExternalConfig = null;
@@ -257,7 +260,9 @@ final class HyperOsFreeformBridge {
             queuedExternalCallback = null;
             generation = queuedLaunchPolicy.begin(taskId);
             queuedLaunchGeneration = generation;
-            queuedEvidenceGeneration = launchEvidencePolicy.queued();
+            FreeformLaunchEvidencePolicy.Transition evidence = launchEvidencePolicy.queued();
+            queuedEvidenceGeneration = evidence.generation;
+            logLaunchEvidence(evidence, "queued until suspend");
         }
         if (!miniTask(taskId, info)) {
             clearQueuedLaunch(generation);
@@ -287,7 +292,9 @@ final class HyperOsFreeformBridge {
     private boolean launchIntentNow(String packageName, Intent intent, GestureConfig config,
                                     Runnable onLaunchArmed, boolean shortcutLaunch,
                                     RuntimeTarget shortcutTarget) {
-        long evidenceGeneration = launchEvidencePolicy.requested();
+        FreeformLaunchEvidencePolicy.Transition requested = launchEvidencePolicy.requested();
+        long evidenceGeneration = requested.generation;
+        logLaunchEvidence(requested, "launch request issued");
         try {
             Class<?> manager = XposedHelpers.findClass("miui.app.MiuiFreeFormManager", classLoader);
             Object result = XposedHelpers.callStaticMethod(manager, "getActivityOptions",
@@ -379,7 +386,8 @@ final class HyperOsFreeformBridge {
             scheduleScans(pendingGeneration);
             return true;
         } catch (Throwable error) {
-            launchEvidencePolicy.unknown(evidenceGeneration);
+            logLaunchEvidence(launchEvidencePolicy.unknown(evidenceGeneration),
+                    "request exception; no task observed");
             clearPendingMatch(evidenceGeneration);
             Log.e("Native freeform launch failed", error);
             return false;
@@ -546,7 +554,8 @@ final class HyperOsFreeformBridge {
                     && recentShortcutPackage.equals(actual)
                     && recentShortcutUserId == userId(info);
             if (matchesPending && pendingLaunchDismissRequested && (normal || mini)) {
-                launchEvidencePolicy.observed(pendingEvidenceGeneration);
+                logLaunchEvidence(launchEvidencePolicy.observed(pendingEvidenceGeneration),
+                        "matching task observed before requested close");
                 tasks.put(taskId, actual, normal
                         ? FreeformTaskRegistry.State.NORMAL
                         : FreeformTaskRegistry.State.SUSPENDED);
@@ -576,14 +585,16 @@ final class HyperOsFreeformBridge {
 
                 if (matchesPending) {
                     if (mini) {
-                        launchEvidencePolicy.observed(pendingEvidenceGeneration);
+                        logLaunchEvidence(launchEvidencePolicy.observed(pendingEvidenceGeneration),
+                                "matching mini task observed");
                         rememberPendingNativeBoundsLocked(taskId);
                         tasks.put(taskId, actual, FreeformTaskRegistry.State.SUSPENDED);
                         trackedTaskId = -1;
                         finishPendingMatchLocked();
                         Log.i("Fan-selected task remains in native mini state task=" + taskId);
                     } else if (normal) {
-                        launchEvidencePolicy.observed(pendingEvidenceGeneration);
+                        logLaunchEvidence(launchEvidencePolicy.observed(pendingEvidenceGeneration),
+                                "matching normal task observed");
                         rememberPendingNativeBoundsLocked(taskId);
                         alignShortcutTask = pendingShortcutLaunch || matchesRecentShortcut;
                         tasks.put(taskId, actual, FreeformTaskRegistry.State.NORMAL);
@@ -1054,7 +1065,8 @@ final class HyperOsFreeformBridge {
         synchronized (taskLock) {
             if (generation != queuedLaunchGeneration) return;
             queuedLaunchPolicy.clear(generation);
-            launchEvidencePolicy.unknown(queuedEvidenceGeneration);
+            logLaunchEvidence(launchEvidencePolicy.unknown(queuedEvidenceGeneration),
+                    "queued launch cleared; no task observed");
             queuedLaunchTarget = null;
             queuedLaunchConfig = null;
             queuedLaunchArmedCallback = null;
@@ -1497,9 +1509,25 @@ final class HyperOsFreeformBridge {
         }
     }
 
+    private void logLaunchEvidence(FreeformLaunchEvidencePolicy.Transition transition,
+                                  String reason) {
+        if (transition == null) return;
+        String verdict = transition.stage == FreeformLaunchEvidencePolicy.Stage.UNKNOWN
+                ? " outcome=unconfirmed" : "";
+        Log.i("Freeform launch evidence generation=" + transition.generation
+                + " previous=" + transition.previous + " stage=" + transition.stage
+                + verdict + " reason=" + reason);
+    }
+
+    static boolean shouldClearPendingMatchForEvidence(long pendingGeneration,
+                                                       long failedGeneration) {
+        return pendingGeneration == failedGeneration;
+    }
+
     private void clearPendingMatch(long evidenceGeneration) {
         synchronized (taskLock) {
-            if (pendingEvidenceGeneration != evidenceGeneration) return;
+            if (!shouldClearPendingMatchForEvidence(
+                    pendingEvidenceGeneration, evidenceGeneration)) return;
             clearPendingMatchLocked();
         }
     }
@@ -1550,7 +1578,8 @@ final class HyperOsFreeformBridge {
                     return;
                 }
                 Log.i("No matching freeform task appeared for " + pendingPackage);
-                launchEvidencePolicy.unknown(pendingEvidenceGeneration);
+                logLaunchEvidence(launchEvidencePolicy.unknown(pendingEvidenceGeneration),
+                        "match window expired; no task observed");
                 clearPendingMatchLocked();
             }
         }, MATCH_WINDOW_MS + 100);
