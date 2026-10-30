@@ -58,6 +58,8 @@ public class BoomChipPage {
     private boolean mClosed;
     private final BigBangCallbackOwner mCallbackOwner = new BigBangCallbackOwner();
     private final View.OnLayoutChangeListener mContentLayoutChangeListener;
+    private ViewTreeObserver mPendingSelectionRestoreObserver;
+    private OnGlobalLayoutListener mPendingSelectionRestoreListener;
 
     Serializable mSavedData;
     private OnAdjacentRequestListener mOnAdjacentRequestListener;
@@ -476,6 +478,7 @@ public class BoomChipPage {
         mBoomConent.cancelCurrentGesture();
         mClosed = true;
         mCallbackOwner.close();
+        clearPendingSelectionRestore();
         mBoomConent.getViewTreeObserver().removeOnGlobalLayoutListener(mDoBoomAnimation);
         mBoomConent.removeOnLayoutChangeListener(mContentLayoutChangeListener);
         mBoomConent.animate().cancel();
@@ -616,15 +619,34 @@ public class BoomChipPage {
     }
 
     private void restoreSelectionAfterLayout() {
+        clearPendingSelectionRestore();
         final BigBangCallbackOwner.Token token = mCallbackOwner.token();
         final ViewTreeObserver observer = mBoomConent.getViewTreeObserver();
-        observer.addOnGlobalLayoutListener(new OnGlobalLayoutListener() {
+        final OnGlobalLayoutListener listener = new OnGlobalLayoutListener() {
             @Override
             public void onGlobalLayout() {
                 observer.removeOnGlobalLayoutListener(this);
+                if (mPendingSelectionRestoreListener == this) {
+                    mPendingSelectionRestoreListener = null;
+                    mPendingSelectionRestoreObserver = null;
+                }
                 if (mCallbackOwner.owns(token)) restoreSelectedState();
             }
-        });
+        };
+        mPendingSelectionRestoreObserver = observer;
+        mPendingSelectionRestoreListener = listener;
+        observer.addOnGlobalLayoutListener(listener);
+    }
+
+    private void clearPendingSelectionRestore() {
+        if (mPendingSelectionRestoreObserver != null
+                && mPendingSelectionRestoreListener != null
+                && mPendingSelectionRestoreObserver.isAlive()) {
+            mPendingSelectionRestoreObserver.removeOnGlobalLayoutListener(
+                    mPendingSelectionRestoreListener);
+        }
+        mPendingSelectionRestoreObserver = null;
+        mPendingSelectionRestoreListener = null;
     }
 
     public void setOnAdjacentRequestListener(OnAdjacentRequestListener listener) {

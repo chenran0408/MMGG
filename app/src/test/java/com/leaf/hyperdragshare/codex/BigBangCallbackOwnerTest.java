@@ -25,4 +25,11 @@ public class BigBangCallbackOwnerTest {
         assertFalse(owner.owns(oldCallback));
         assertTrue(owner.owns(currentCallback));
     }
+
+    @Test public void tokenFromAnotherOwnerIsRejected() {
+        BigBangCallbackOwner first = new BigBangCallbackOwner();
+        BigBangCallbackOwner second = new BigBangCallbackOwner();
+
+        assertFalse(second.owns(first.token()));
+    }
 }

@@ -20,6 +20,7 @@ import org.robolectric.RuntimeEnvironment;
 import org.robolectric.annotation.Config;
 import org.robolectric.shadows.ShadowLooper;
 import java.time.Duration;
+import java.lang.reflect.Field;
 import java.util.TreeSet;
 import java.util.List;
 
@@ -185,6 +186,34 @@ public class SwipeSelectViewTest {
         words.getViewTreeObserver().dispatchOnGlobalLayout();
 
         assertTrue(page.mBoomActionHandler.mSelectedId.isEmpty());
+    }
+
+    @Test public void repeatedRebuildKeepsOnlyLatestSelectionRestoreListener() throws Exception {
+        open();
+        page.restoreSelectionNow(new TreeSet<>(List.of(1)));
+        page.setTextSizeSp(BigBangSettings.DEFAULT_TEXT_SIZE_SP + 1f);
+        page.setTextSizeSp(BigBangSettings.DEFAULT_TEXT_SIZE_SP + 2f);
+
+        assertNotNull(pendingSelectionRestoreListener());
+        words.getViewTreeObserver().dispatchOnGlobalLayout();
+        assertNull(pendingSelectionRestoreListener());
+    }
+
+    @Test public void closeRemovesPendingSelectionRestoreListener() throws Exception {
+        open();
+        page.restoreSelectionNow(new TreeSet<>(List.of(1)));
+        page.setTextSizeSp(BigBangSettings.DEFAULT_TEXT_SIZE_SP + 1f);
+        assertNotNull(pendingSelectionRestoreListener());
+
+        page.close();
+
+        assertNull(pendingSelectionRestoreListener());
+    }
+
+    private Object pendingSelectionRestoreListener() throws Exception {
+        Field field = BoomChipPage.class.getDeclaredField("mPendingSelectionRestoreListener");
+        field.setAccessible(true);
+        return field.get(page);
     }
 
     @Test public void verticalMotionDoesNotSelectWordsOrStartGlobalDrag() {
