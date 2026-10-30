@@ -39,13 +39,15 @@ internal class BigBangPanelSession(private val context: Context, private val act
     }
     private val main = Handler(Looper.getMainLooper())
     private var closed = false
+    private val callbackOwner = BigBangCallbackOwner()
+    private var selectionSummaryToken: BigBangCallbackOwner.Token? = null
     private val clearCopyFeedback = Runnable {
         if (!closed) copyFeedback = null
     }
     private var selectionSummaryFrameScheduled = false
     private val selectionSummaryFrameCallback = Choreographer.FrameCallback {
         selectionSummaryFrameScheduled = false
-        if (!closed) updateSelectionSummary()
+        if (selectionSummaryToken?.let(callbackOwner::owns) == true) updateSelectionSummary()
     }
     private var boomChipPage: BoomChipPage? = null
     private lateinit var legacyContentView: View
@@ -103,6 +105,7 @@ internal class BigBangPanelSession(private val context: Context, private val act
     private fun scheduleSelectionSummary() {
         if (closed || selectionSummaryFrameScheduled) return
         selectionSummaryFrameScheduled = true
+        selectionSummaryToken = callbackOwner.token()
         Choreographer.getInstance().postFrameCallback(selectionSummaryFrameCallback)
     }
 
@@ -278,6 +281,7 @@ internal class BigBangPanelSession(private val context: Context, private val act
     fun close() {
         if (closed) return
         closed = true
+        callbackOwner.close()
         boomChipPage?.close()
         main.removeCallbacks(clearCopyFeedback)
         if (selectionSummaryFrameScheduled) {

@@ -175,6 +175,18 @@ public class SwipeSelectViewTest {
         assertFalse(words.isSelectionGestureActive());
     }
 
+    @Test public void closePreventsPendingSelectionRestoreFromTouchingPageState() {
+        open();
+        page.restoreSelectionNow(new TreeSet<>(List.of(1)));
+        page.setTextSizeSp(BigBangSettings.DEFAULT_TEXT_SIZE_SP + 1f);
+        assertTrue(page.mBoomActionHandler.mSelectedId.isEmpty());
+
+        page.close();
+        words.getViewTreeObserver().dispatchOnGlobalLayout();
+
+        assertTrue(page.mBoomActionHandler.mSelectedId.isEmpty());
+    }
+
     @Test public void verticalMotionDoesNotSelectWordsOrStartGlobalDrag() {
         open();
         page.restoreSelectionNow(new TreeSet<>(List.of(2)));

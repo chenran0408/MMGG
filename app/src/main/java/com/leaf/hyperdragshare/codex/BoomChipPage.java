@@ -10,6 +10,7 @@ import android.util.TypedValue;
 import android.view.Gravity;
 import android.view.View;
 import android.view.ViewGroup;
+import android.view.ViewTreeObserver;
 import android.view.ViewTreeObserver.OnGlobalLayoutListener;
 import android.widget.FrameLayout;
 import android.widget.LinearLayout;
@@ -55,6 +56,7 @@ public class BoomChipPage {
     private int mPresentedTopRow = Integer.MIN_VALUE;
     private int mPresentedBottomRow = Integer.MIN_VALUE;
     private boolean mClosed;
+    private final BigBangCallbackOwner mCallbackOwner = new BigBangCallbackOwner();
     private final View.OnLayoutChangeListener mContentLayoutChangeListener;
 
     Serializable mSavedData;
@@ -394,13 +396,7 @@ public class BoomChipPage {
         mBoomConent.removeAllViews();
         initChips(false);
         if (savedSelection != null) {
-            mBoomConent.getViewTreeObserver().addOnGlobalLayoutListener(new OnGlobalLayoutListener() {
-                @Override
-                public void onGlobalLayout() {
-                    mBoomConent.getViewTreeObserver().removeOnGlobalLayoutListener(this);
-                    restoreSelectedState();
-                }
-            });
+            restoreSelectionAfterLayout();
         }
     }
 
@@ -479,6 +475,7 @@ public class BoomChipPage {
         if (mClosed) return;
         mBoomConent.cancelCurrentGesture();
         mClosed = true;
+        mCallbackOwner.close();
         mBoomConent.getViewTreeObserver().removeOnGlobalLayoutListener(mDoBoomAnimation);
         mBoomConent.removeOnLayoutChangeListener(mContentLayoutChangeListener);
         mBoomConent.animate().cancel();
@@ -614,14 +611,20 @@ public class BoomChipPage {
         mSavedData = newSelection;
         mBoomConent.removeAllViews();
         initChips(false);
-        mBoomConent.getViewTreeObserver().addOnGlobalLayoutListener(new OnGlobalLayoutListener() {
+        restoreSelectionAfterLayout();
+        return true;
+    }
+
+    private void restoreSelectionAfterLayout() {
+        final BigBangCallbackOwner.Token token = mCallbackOwner.token();
+        final ViewTreeObserver observer = mBoomConent.getViewTreeObserver();
+        observer.addOnGlobalLayoutListener(new OnGlobalLayoutListener() {
             @Override
             public void onGlobalLayout() {
-                mBoomConent.getViewTreeObserver().removeOnGlobalLayoutListener(this);
-                restoreSelectedState();
+                observer.removeOnGlobalLayoutListener(this);
+                if (mCallbackOwner.owns(token)) restoreSelectedState();
             }
         });
-        return true;
     }
 
     public void setOnAdjacentRequestListener(OnAdjacentRequestListener listener) {
@@ -655,13 +658,7 @@ public class BoomChipPage {
                 }
             }
             mSavedData = ranges;
-            mBoomConent.getViewTreeObserver().addOnGlobalLayoutListener(new OnGlobalLayoutListener() {
-                @Override
-                public void onGlobalLayout() {
-                    mBoomConent.getViewTreeObserver().removeOnGlobalLayoutListener(this);
-                    restoreSelectedState();
-                }
-            });
+            restoreSelectionAfterLayout();
         }
         scrollToWord(targetWordIndex);
         finishAdjacentPull();
@@ -697,6 +694,7 @@ public class BoomChipPage {
     }
 
     private void initChips(boolean animate) {
+        mCallbackOwner.advance();
         mPresentedTopRow = Integer.MIN_VALUE;
         mPresentedBottomRow = Integer.MIN_VALUE;
         for (int i = 0; i < mLayout.getRowCount(); ++i) {
@@ -920,6 +918,7 @@ public class BoomChipPage {
 
     private void animateContentOffset(float offset) {
         mAdjacentOffset = offset;
+        final BigBangCallbackOwner.Token token = mCallbackOwner.token();
         mScroller.animate().cancel();
         mScroller.setTranslationY(0f);
         mBoomTable.animate()
@@ -928,6 +927,7 @@ public class BoomChipPage {
                 .setListener(new AnimatorListenerAdapter() {
                     @Override
                     public void onAnimationEnd(Animator animation) {
+                        if (!mCallbackOwner.owns(token)) return;
                         if (mAdjacentOffset == 0f && !mAdjacentLoading) {
                             hideAdjacentHint(mAdjacentTopHint);
                             hideAdjacentHint(mAdjacentBottomHint);
