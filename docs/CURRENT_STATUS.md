@@ -21,14 +21,14 @@
 
 ## 最新验证
 
-当前源码版本仍为 `1.7.219-beta.33` / versionCode `275`。
+当前源码版本为 `1.7.219-beta.34` / versionCode `276`。
 
-- 全量 `testDebugUnitTest`：829 项通过，0 failures、0 errors、0 skipped。
-- `lintDebug`：0 errors、181 warnings、2 hints。
+- 全量 `testDebugUnitTest`：832 项通过，0 failures、0 errors、0 skipped。
+- `lintDebug`：0 errors、181 warnings。
 - `assembleDebug`：通过。
 - `assembleBeta`（含 R8）：通过。
-- 最近一次验证 APK：`app/build/outputs/apk/beta/app-beta.apk`，SHA-256 `1E6B065D99234D7AD4419E8BE16EF923731393977AC8A3E349FD1E0BDE78CABC`。它是本地验证产物，不代表已发布版本。
-- 已交付的 UX Beta33 包及其哈希仍以任务记录为准：`D:/CODEX/Tasks/2026-10-30/mmgg-ux-polish-round/outputs/DELIVERY.md`。
+- Beta34 APK：`D:/CODEX/Tasks/2026-10-30/mmgg-meizu-freeform/outputs/MMGG-1.7.219-beta.34.apk`，SHA-256 `9473919A2A179C4B7390DB05F0671E9DFCDD70E36FFE845B7D257A3B28943ED0`；包元数据、R8 和签名已核对，使用 Android Debug 签名。
+- Beta34 未安装或实机验收；ADB 当前无设备。
 
 ## 已知未完成
 
@@ -53,7 +53,8 @@
 - 提交 `7d4ca1e` 为窗外长按动作的最小增量：新增 `outside_long_action` 配置，默认无操作；启用后复用已有关闭、迷你、全屏、贴边路径。
 - 长按在移动超过触控阈值、取消或输入法显示时不会执行；原窗外单击/双击行为和旧配置键保持不变。
 - 该增量只针对小米 ROM Root 路径，不引入 Flyme/AOSP 通用小窗 fallback；通知栏小窗、媒体控件、全局限制修改仍待独立契约审查。
-- 定向 `ImeFreeformLifecycleTest`、配置兼容测试：32 项通过。完整回归和 Beta 构建待本轮收口；当前 ADB 无设备，实机安装与 OS4 行为验证未完成。
+- 定向 `ImeFreeformLifecycleTest`、配置兼容测试：32 项通过；全量测试 832 项通过。
+- Beta/R8、Debug、Lint 已通过；当前 ADB 无设备，实机安装与 OS4 行为验证未完成。
 
 - 分支与归档决策：`docs/BRANCHES.md`、`docs/DECISIONS.md`。
 - 动作与资源：`docs/DRAG_ACTIONS.md`。
