@@ -55,6 +55,8 @@ public class ConfigUpgradePreservationTest {
         Map<String, Object> original = new HashMap<>(data);
         SharedPreferences prefs = preferences(data);
         migrate(prefs);
+        assertEquals(ConfigContract.DEFAULT_OUTSIDE_LONG_ACTION,
+                data.get(ConfigContract.KEY_OUTSIDE_LONG_ACTION));
         for (Map.Entry<String, Object> setting : original.entrySet()) {
             assertEquals("Changed stored key " + setting.getKey(), setting.getValue(),
                     data.get(setting.getKey()));

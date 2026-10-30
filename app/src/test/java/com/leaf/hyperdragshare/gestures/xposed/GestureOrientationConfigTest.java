@@ -102,6 +102,21 @@ public final class GestureOrientationConfigTest {
     }
 
     @Test
+    public void outsideLongActionDefaultsToNoOpAndLoadsOnlySupportedActions() {
+        GestureConfig defaults = GestureConfig.from(new Bundle());
+        assertEquals(ConfigContract.ACTION_NONE, defaults.outsideLongAction);
+
+        Bundle values = new Bundle();
+        values.putInt(ConfigContract.KEY_OUTSIDE_LONG_ACTION, ConfigContract.ACTION_EDGE_PIN);
+        assertEquals(ConfigContract.ACTION_EDGE_PIN,
+                GestureConfig.from(values).outsideLongAction);
+
+        values.putInt(ConfigContract.KEY_OUTSIDE_LONG_ACTION, 99);
+        assertEquals(ConfigContract.ACTION_NONE,
+                GestureConfig.from(values).outsideLongAction);
+    }
+
+    @Test
     public void sideEntryRequiresEnabledOrientationAndTargetsForSelectedLayout() {
         Bundle values = new Bundle();
         values.putBoolean(ConfigContract.KEY_SIDE_GESTURE_ENABLED, true);
