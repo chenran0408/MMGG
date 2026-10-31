@@ -1,6 +1,6 @@
 # MMGG 当前状态与接手入口
 
-核对日期：2026-10-30。本文只维护当前事实；历史批次原文已归档到 `docs/archive/2026-10-30/CURRENT_STATUS_2026-10-30_before_compaction.md`，任务级证据仍保留在各任务目录。
+核对日期：2026-10-31。本文只维护当前事实；历史批次原文已归档到 `docs/archive/2026-10-30/CURRENT_STATUS_2026-10-30_before_compaction.md`，任务级证据仍保留在各任务目录。
 
 ## 工作线
 
@@ -8,7 +8,7 @@
 - 稳定线：`repair-from-189`，工作树 `D:/CODEX/Tasks/2026-10-20/new-chat-2/work/HyperDragShare`；本轮未修改，当前稳定工作树干净。
 - 远程维护策略：GitHub 用户仓库只维护 Beta 与正式线；`upstream` 仅作原作者参考，不向其推送。
 - Candidate A/B：继续作为冻结验证证据，不作为当前开发基线。
-- 当前 Beta 分支相对本地 `origin/beta` 超前 33 个提交；本轮没有 push、发布或改远程默认分支。
+- 本轮没有 push、发布或改远程默认分支；与远程的领先数量请按实际 Git 状态读取。
 
 ## 当前代码事实
 
@@ -21,14 +21,23 @@
 
 ## 最新验证
 
-当前源码版本为 `1.7.219-beta.34` / versionCode `276`。
+当前源码版本为 `1.7.219-beta.35` / versionCode `277`，修复源码提交 `adf122c`，版本提交 `d6c4a31`。
 
-- 全量 `testDebugUnitTest`：832 项通过，0 failures、0 errors、0 skipped。
+- 全量 `testDebugUnitTest`：838 项通过，0 failures、0 errors、0 skipped。
 - `lintDebug`：0 errors、181 warnings。
 - `assembleDebug`：通过。
 - `assembleBeta`（含 R8）：通过。
-- Beta34 APK：`D:/CODEX/Tasks/2026-10-30/mmgg-meizu-freeform/outputs/MMGG-1.7.219-beta.34.apk`，SHA-256 `9473919A2A179C4B7390DB05F0671E9DFCDD70E36FFE845B7D257A3B28943ED0`；包元数据、R8 和签名已核对，使用 Android Debug 签名。
-- Beta34 未安装或实机验收；ADB 当前无设备。
+- Beta35 APK：`D:/CODEX/Tasks/2026-10-31/mmgg-portal-root-diagnosis/outputs/MMGG-1.7.219-beta.35.apk`，SHA-256 `814C580982039A63BE5890913FAF4D21190EC88C5643D6262E7F262352AD5214`；包元数据、R8和签名核验通过，与Beta34同一Android Debug签名。
+- 本轮未连接设备、未安装或实机验收；不沿用旧设备连接状态。
+
+## 2026-10-31 传送门 Root 提示调查
+
+- 新反馈包自报Beta33/275；MMGG Root、注入和服务READY，Portal Root/输入UNAVAILABLE；完整运行日志缺失，设备上su失败原因未知。
+- `ModuleActivation`原本将任意非零退出码视为DENIED，现改为UNKNOWN并只记安全退出码；未改变su命令、4秒超时与实际权限边界。
+- 按压设置不再用缓存诊断拦截保存；订阅已有状态报告并在退出页时注销，未知不提示未授权。保存开关不代表输入已经连接。
+- 新增6项测试；定向29项通过，随后本轮全量838项及Lint/Debug/Beta验证通过。
+- 旧版可先分别允许MMGG和传送门Root，再“通用设置→重载模块→热重载”，离开并重进按压设置页；不能保证解决真实Root命令失败，不要求清数据或反复整机重启。
+- 本轮证据与恢复入口：`D:/CODEX/Tasks/2026-10-31/mmgg-portal-root-diagnosis/`。原始私人诊断包未入Git；微信、双指与小窗待办未改。
 
 ## 已知未完成
 
