@@ -37,9 +37,11 @@ public final class DiagnosticBundleExporterTest {
 
     @Before public void setUp() throws Exception {
         directory = Files.createTempDirectory("diagnostic-bundle-test").toFile();
+        OperationTrace.clearForTests();
     }
 
     @After public void tearDown() {
+        OperationTrace.clearForTests();
         deleteRecursively(directory);
     }
 
@@ -73,20 +75,21 @@ public final class DiagnosticBundleExporterTest {
         assertNull(result.missingLogReason);
     }
 
-    @Test public void unavailableRuntimeStillExportsOtherInformationAndExplainsHowToEnableIt() throws Exception {
+    @Test public void unavailableRuntimeStillExportsOtherInformationWithoutRecommendingLogChanges() throws Exception {
         DiagnosticBundleExporter.Result result = DiagnosticBundleExporter.writeBundle(
                 directory, validStateSummary(), validCompatibility(), null, null,
-                "运行日志未启用。可在设置中启用日志后复现问题并重新导出。");
+                "运行日志未启用。");
 
         Map<String, String> entries = readZip(result.file);
         assertTrue(entries.containsKey("summary.txt"));
         assertTrue(entries.containsKey("compatibility.txt"));
         assertFalse(entries.containsKey("runtime-log.txt"));
-        assertEquals("运行日志未启用。可在设置中启用日志后复现问题并重新导出。",
+        assertEquals("运行日志未启用。",
                 result.missingLogReason);
         assertTrue(entries.get("manifest.txt").contains(result.missingLogReason));
-        assertTrue(entries.get("manifest.txt").contains("启用文件日志，复现问题后重新导出"));
+        assertTrue(entries.get("manifest.txt").contains("原始运行日志不可读取"));
         assertTrue(entries.get("manifest.txt").contains("自由文本与异常详情均已过滤"));
+        assertFalse(entries.get("manifest.txt").contains("启用文件日志"));
     }
 
     @Test public void emptyRuntimeIsReportedAsMissingInsteadOfCreatingAnEmptyLogEntry() throws Exception {
@@ -105,9 +108,10 @@ public final class DiagnosticBundleExporterTest {
                 "File log does not exist.");
 
         Map<String, String> entries = readZip(result.file);
-        assertEquals(3, entries.size());
+        assertEquals(4, entries.size());
         assertTrue(entries.get("summary.txt").contains("root=READY"));
         assertTrue(entries.containsKey("root-connection.txt"));
+        assertTrue(entries.containsKey("operation-trace.txt"));
         assertTrue(entries.get("manifest.txt").contains("root-connection.txt: included"));
         assertTrue(entries.get("manifest.txt").contains("compatibility.txt: unavailable"));
         assertTrue(entries.get("manifest.txt").contains("runtime-log.txt: unavailable"));
@@ -147,6 +151,7 @@ public final class DiagnosticBundleExporterTest {
         assertFalse(root.contains("content://"));
         assertFalse(root.contains("token="));
         assertFalse(entries.containsKey("runtime-log.txt"));
+        assertTrue(entries.get("operation-trace.txt").contains("No recent structured operations"));
     }
 
     @Test public void rootStartupCodesMapOnlyToKnownConnectionCategories() throws Exception {
@@ -269,13 +274,17 @@ public final class DiagnosticBundleExporterTest {
                 .putInt("log_destination", DragShareSettings.LOG_DESTINATION_FILE).commit();
         int originalLevel = preferences.getInt("log_level", -1);
         int originalDestination = preferences.getInt("log_destination", -1);
+        OperationTrace.event("press-export-disabled-1", "capture", "returned");
 
         DiagnosticBundleExporter.Result result = DiagnosticBundleExporter.create(
                 context, validStateSummary());
 
-        assertEquals("运行日志未启用。可在设置中启用日志后复现问题并重新导出。",
+        assertEquals("运行日志未启用。",
                 result.missingLogReason);
-        assertTrue(readZip(result.file).containsKey("compatibility.txt"));
+        Map<String, String> entries = readZip(result.file);
+        assertTrue(entries.containsKey("compatibility.txt"));
+        assertTrue(entries.get("operation-trace.txt").contains("press-export-disabled-1"));
+        assertTrue(entries.get("manifest.txt").contains("operation-trace.txt: included"));
         assertEquals(originalLevel, preferences.getInt("log_level", -1));
         assertEquals(originalDestination, preferences.getInt("log_destination", -1));
     }
@@ -290,7 +299,7 @@ public final class DiagnosticBundleExporterTest {
         DiagnosticBundleExporter.Result result = DiagnosticBundleExporter.create(
                 context, validStateSummary());
 
-        assertEquals("运行日志已设为系统日志，无法从应用导出。",
+        assertEquals("运行日志写入系统日志，应用无法读取原始日志。",
                 result.missingLogReason);
         assertEquals(DragShareSettings.LOG_LEVEL_INFO, preferences.getInt("log_level", -1));
         assertEquals(DragShareSettings.LOG_DESTINATION_SYSTEM,
@@ -298,6 +307,7 @@ public final class DiagnosticBundleExporterTest {
         Map<String, String> entries = readZip(result.file);
         assertFalse(entries.containsKey("runtime-log.txt"));
         assertTrue(entries.containsKey("root-connection.txt"));
+        assertTrue(entries.containsKey("operation-trace.txt"));
     }
 
     private static String validStateSummary() {

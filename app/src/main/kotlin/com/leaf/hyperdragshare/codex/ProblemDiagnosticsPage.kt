@@ -36,7 +36,6 @@ import top.yukonga.miuix.kmp.basic.TopAppBar
 import top.yukonga.miuix.kmp.icon.MiuixIcons
 import top.yukonga.miuix.kmp.icon.extended.Help
 import top.yukonga.miuix.kmp.icon.extended.Report
-import top.yukonga.miuix.kmp.icon.extended.Tune
 import top.yukonga.miuix.kmp.preference.ArrowPreference
 import java.io.File
 import java.io.IOException
@@ -116,8 +115,8 @@ internal enum class DiagnosticShareOutcome { CHOOSER_OPENED, SHARE_FAILED, STALE
 
 internal fun diagnosticMissingLogMessage(reason: String?): String? = when (reason) {
     null -> null
-    "运行日志未启用。可在设置中启用日志后复现问题并重新导出。" -> "日志功能已关闭"
-    "运行日志已设为系统日志，无法从应用导出。" -> "日志写入系统日志，无法加入文件"
+    "运行日志未启用。" -> "原始运行日志未启用，已附带可读取的操作摘要"
+    "运行日志写入系统日志，应用无法读取原始日志。" -> "系统限制读取原始日志，已附带可读取的操作摘要"
     "没有可导出的结构化运行诊断记录。" -> "尚无可导出的操作追踪记录"
     else -> "当前无法读取运行日志"
 }
@@ -125,10 +124,8 @@ internal fun diagnosticMissingLogMessage(reason: String?): String? = when (reaso
 @Composable
 internal fun ProblemDiagnosticsPage(
     context: Context,
-    settings: DragShareSettings,
     monitor: ActivationMonitorState,
     onBack: () -> Unit,
-    onOpenLogSettings: () -> Unit,
     onOpenTouchDiagnostics: () -> Unit,
 ) {
     val session = remember { DiagnosticExportSession() }
@@ -157,7 +154,7 @@ internal fun ProblemDiagnosticsPage(
             busy = false
             status = buildString {
                 append("已取消保存，未分享诊断包")
-                missingLogReason?.let { append("；运行日志未包含：").append(it) }
+                missingLogReason?.let { append("；诊断说明：").append(it) }
             }
             return@rememberLauncherForActivityResult
         }
@@ -204,7 +201,7 @@ internal fun ProblemDiagnosticsPage(
                     status = buildString {
                         append(if (outcome == DiagnosticExportOutcome.SAVED_CHOOSER_OPENED) "诊断包已保存" else "诊断包已保存，无法打开分享面板")
                         diagnosticMissingLogMessage(missingLogReason)?.let {
-                            append("；运行日志未包含：").append(it)
+                            append("；诊断说明：").append(it)
                         }
                     }
                 }
@@ -239,7 +236,7 @@ internal fun ProblemDiagnosticsPage(
                     ArrowPreference(
                         title = if (busy) "正在处理诊断包" else "导出诊断 ZIP",
                         summary = if (busy) "请完成保存位置选择；随后可分享同一份文件"
-                        else "合并运行日志、兼容性报告、环境摘要、运行状态与操作追踪",
+                        else "自动收集可用的运行摘要、兼容性报告、环境状态和操作阶段；无需调整日志设置",
                         enabled = !busy,
                         onClick = {
                             val token = session.begin() ?: return@ArrowPreference
@@ -255,7 +252,7 @@ internal fun ProblemDiagnosticsPage(
                                     generatedFile = result.file
                                     missingLogReason = result.missingLogReason
                                     missingLogReason = diagnosticMissingLogMessage(result.missingLogReason)
-                                    status = missingLogReason?.let { "运行日志未包含：$it" }
+                            status = missingLogReason?.let { "诊断包已生成；$it" }
                                         ?: "诊断包已生成，请选择保存位置"
                                     pendingPickerToken = token
                                     saveLauncher.launch(result.file.name)
@@ -271,12 +268,8 @@ internal fun ProblemDiagnosticsPage(
                         },
                     )
                     BasicComponent(
-                        title = "当前日志设置",
-                        summary = if (settings.logLevel == DragShareSettings.LOG_LEVEL_DISABLED) {
-                            "日志当前关闭。需要记录复现过程时，可自行开启后再复现；此页不会更改设置。"
-                        } else {
-                            "日志已开启；诊断包会注明日志是否可读取。"
-                        },
+                        title = "自动收集",
+                        summary = "点击导出即可自动收集可用的诊断信息，不需要调整日志等级；系统限制读取的部分会在报告中说明。",
                         insideMargin = PaddingValues(horizontal = 16.dp, vertical = 10.dp),
                     )
                     status?.let {
@@ -284,14 +277,6 @@ internal fun ProblemDiagnosticsPage(
                             title = "导出状态",
                             summary = it,
                             insideMargin = PaddingValues(horizontal = 16.dp, vertical = 10.dp),
-                        )
-                    }
-                    if (settings.logLevel == DragShareSettings.LOG_LEVEL_DISABLED || missingLogReason != null) {
-                        SettingsNavigationPreference(
-                            title = "开启日志后复现",
-                            summary = "打开日志设置；更改由你确认和保存",
-                            icon = MiuixIcons.Tune,
-                            onClick = onOpenLogSettings,
                         )
                     }
                 }

@@ -7,12 +7,19 @@ import android.os.PersistableBundle;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
+import java.text.SimpleDateFormat;
+import java.util.ArrayDeque;
+import java.util.Date;
+import java.util.Deque;
+import java.util.Locale;
 import java.util.UUID;
 
 /** Optional diagnostics only: never used to authorize, accept, or finish an operation. */
 final class OperationTrace {
     static final String EXTRA = "mmgg_operation_trace";
     private static final String TAG = "DragShare/Operation";
+    private static final int MAX_MEMORY_EVENTS = 160;
+    private static final Deque<String> MEMORY_EVENTS = new ArrayDeque<>();
 
     private OperationTrace() {}
 
@@ -62,19 +69,47 @@ final class OperationTrace {
     static void event(String operation, String stage, String outcome, Uri image) {
         // No state machine, callback, URI grants, or data ownership lives in diagnostics.
         try {
-            DragShareLog.i(TAG, "proc=" + DragShareLog.processInstance() + " op=" + token(operation)
+            String message = "proc="
+                    + DragShareLog.processInstance() + " op=" + token(operation)
                     + " stage=" + token(stage) + " outcome=" + token(outcome)
-                    + " asset=" + asset(image));
+                    + " asset=" + asset(image);
+            remember(timestamp() + " I DragShare/Operation: " + message);
+            DragShareLog.i(TAG, message);
         } catch (RuntimeException ignored) { /* Logging must not change the operation. */ }
     }
 
     static void imageAccess(Uri image, String outcome, int callerUid) {
         try {
-            DragShareLog.i(TAG, "proc=" + DragShareLog.processInstance()
+            String message = "proc=" + DragShareLog.processInstance()
                     + " op=- stage=image_access outcome=" + token(outcome)
                     + " asset=" + asset(image) + " callerUid=" + callerUid
-                    + " read=unknown delivery=unknown");
+                    + " read=unknown delivery=unknown";
+            remember(timestamp() + " I DragShare/Operation: " + message);
+            DragShareLog.i(TAG, message);
         } catch (RuntimeException ignored) { /* The provider's original access rules still decide. */ }
+    }
+
+    /** Returns the latest bounded, privacy-filtered events even when file logging is unavailable. */
+    static synchronized String summary() {
+        if (MEMORY_EVENTS.isEmpty()) return "";
+        StringBuilder result = new StringBuilder("Controlled operation trace (memory, bounded):\n");
+        for (String line : MEMORY_EVENTS) result.append(line).append('\n');
+        return result.toString();
+    }
+
+    static synchronized void clearForTests() {
+        MEMORY_EVENTS.clear();
+    }
+
+    private static synchronized void remember(String line) {
+        if (line == null || line.length() > 512) return;
+        MEMORY_EVENTS.addLast(line);
+        while (MEMORY_EVENTS.size() > MAX_MEMORY_EVENTS) MEMORY_EVENTS.removeFirst();
+    }
+
+    private static String timestamp() {
+        return new SimpleDateFormat("yyyy-MM-dd HH:mm:ss.SSS", Locale.US)
+                .format(new Date());
     }
 
     /** A one-way fingerprint of a random resource address, never the URI/capability or image bytes. */

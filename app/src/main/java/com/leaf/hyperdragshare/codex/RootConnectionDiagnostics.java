@@ -65,7 +65,11 @@ final class RootConnectionDiagnostics {
     static boolean allowedPortalOutcome(String value) {
         return "connect_failed".equals(value) || "lease_ready".equals(value)
                 || "binder_death".equals(value) || "release".equals(value)
-                || "retry_scheduled".equals(value);
+                || "retry_scheduled".equals(value)
+                || "portal_root_probe_started".equals(value)
+                || "portal_root_granted".equals(value)
+                || "portal_root_denied".equals(value)
+                || "portal_root_unknown".equals(value);
     }
 
     private static boolean allowed(String value) {
@@ -76,7 +80,11 @@ final class RootConnectionDiagnostics {
                 || "startup_rejected".equals(value) || "session_release".equals(value)
                 || "lease_ready".equals(value)
                 || "binder_death".equals(value) || "release".equals(value)
-                || "retry_scheduled".equals(value);
+                || "retry_scheduled".equals(value)
+                || "portal_root_probe_started".equals(value)
+                || "portal_root_granted".equals(value)
+                || "portal_root_denied".equals(value)
+                || "portal_root_unknown".equals(value);
     }
 
     /** Keep process identity on the same diagnostic path used by OperationTrace. */

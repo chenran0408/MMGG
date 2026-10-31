@@ -23,9 +23,13 @@ import org.robolectric.shadows.ShadowLog;
 public final class OperationTraceTest {
     @Before public void prepare() {
         DragShareLog.configure(DragShareSettings.defaults());
+        OperationTrace.clearForTests();
         ShadowLog.clear();
     }
-    @After public void restore() { DragShareLog.configure(DragShareSettings.defaults()); }
+    @After public void restore() {
+        OperationTrace.clearForTests();
+        DragShareLog.configure(DragShareSettings.defaults());
+    }
 
     @Test public void legacyBundleWithoutTraceRemainsUnmarked() {
         assertEquals("-", OperationTrace.read((Bundle) null));
@@ -104,6 +108,17 @@ public final class OperationTraceTest {
         assertEquals("payload", clip.getItemAt(0).getText().toString());
         assertEquals("stash-off-1", OperationTrace.read(clip));
         assertTrue(ShadowLog.getLogsForTag("DragShare/Operation").isEmpty());
+    }
+
+    @Test public void controlledSummaryIsAvailableWhenLogLevelIsDisabled() {
+        DragShareLog.configure(DragShareSettings.defaults().toBuilder()
+                .setLogLevel(DragShareSettings.LOG_LEVEL_DISABLED).build());
+        OperationTrace.event("press-summary-1", "capture", "returned");
+        String summary = OperationTrace.summary();
+        assertTrue(summary.contains("Controlled operation trace"));
+        assertTrue(summary.contains("op=press-summary-1"));
+        assertTrue(summary.contains("stage=capture outcome=returned"));
+        assertFalse(summary.contains("content://"));
     }
 
     private static String messages() {

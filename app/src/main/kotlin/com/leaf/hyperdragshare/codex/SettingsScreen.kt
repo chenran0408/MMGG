@@ -244,12 +244,8 @@ fun DragShareSettingsApp(context: Context, openGestures: Boolean = false) {
                 entry(SettingsRoute.ProblemDiagnostics) {
                     ProblemDiagnosticsPage(
                         context = context,
-                        settings = currentSettings.value,
                         monitor = currentActivationMonitor.value,
                         onBack = { if (backStack.size > 1) backStack.removeAt(backStack.lastIndex) },
-                        onOpenLogSettings = {
-                            backStack.add(SettingsRoute.Module(SettingModule.GENERAL, "log.level"))
-                        },
                         onOpenTouchDiagnostics = {
                             context.startActivity(
                                 Intent(context, TouchProbeActivity::class.java)

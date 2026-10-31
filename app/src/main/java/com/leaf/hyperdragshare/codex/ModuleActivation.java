@@ -129,9 +129,11 @@ final class ModuleActivation {
             }
             portalRootProbeInFlight = true;
         }
+        final String attemptId = RootConnectionDiagnostics.newAttempt();
         new Thread(() -> {
             try {
-                reportPortalRootAccess(reportContext, checkRootAccess());
+                reportRootConnectionEvent(reportContext, attemptId, "portal_root_probe_started", -1L);
+                reportPortalRootAccess(reportContext, attemptId, checkRootAccess());
             } finally {
                 synchronized (ModuleActivation.class) {
                     portalRootProbeInFlight = false;
@@ -142,6 +144,7 @@ final class ModuleActivation {
 
     private static boolean reportPortalRootAccess(
             Context portalContext,
+            String attemptId,
             RootAccessOutcome outcome) {
         Bundle extras = new Bundle();
         extras.putLong(EXTRA_VERSION_CODE, BuildConfig.VERSION_CODE);
@@ -149,6 +152,13 @@ final class ModuleActivation {
         extras.putString(EXTRA_PORTAL_ROOT_OUTCOME, outcome.name());
         if (outcome != RootAccessOutcome.UNKNOWN) {
             extras.putBoolean(EXTRA_PORTAL_ROOT_GRANTED, outcome == RootAccessOutcome.GRANTED);
+        }
+        String event = "portal_root_" + outcome.name().toLowerCase(java.util.Locale.ROOT);
+        if (RootConnectionDiagnostics.allowedPortalOutcome(event)) {
+            extras.putString(EXTRA_ROOT_CONNECTION_ATTEMPT, attemptId);
+            extras.putString(EXTRA_ROOT_CONNECTION_PROC, DragShareLog.processInstance());
+            extras.putString(EXTRA_ROOT_CONNECTION_OUTCOME, event);
+            extras.putLong(EXTRA_ROOT_CONNECTION_AT, System.currentTimeMillis());
         }
         return reportPortalStatus(portalContext, extras);
     }

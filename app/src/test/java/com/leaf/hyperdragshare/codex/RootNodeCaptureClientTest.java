@@ -131,6 +131,18 @@ public final class RootNodeCaptureClientTest {
         }
     }
 
+    @Test public void portalRootProbeOutcomesAreIncludedInTheSafeConnectionSummary() {
+        String attempt = RootConnectionDiagnostics.newAttempt();
+        long now = System.currentTimeMillis();
+        RootConnectionDiagnostics.importPortalEvent(attempt, "portal-process", "portal_root_probe_started", -1L, now);
+        RootConnectionDiagnostics.importPortalEvent(attempt, "portal-process", "portal_root_unknown", -1L, now + 1L);
+        String summary = RootConnectionDiagnostics.summary();
+        assertTrue(summary.contains("attempt=" + attempt + " proc=portal-process outcome=portal_root_probe_started"));
+        assertTrue(summary.contains("attempt=" + attempt + " proc=portal-process outcome=portal_root_unknown"));
+        assertFalse(summary.contains("authorization="));
+        assertFalse(summary.contains("su -c"));
+    }
+
     private static void assertStartupFailure(Context context, String attempt,
                                              String response, String expectedMessage) throws Exception {
         try {

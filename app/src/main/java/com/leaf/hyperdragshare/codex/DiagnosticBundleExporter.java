@@ -65,9 +65,9 @@ final class DiagnosticBundleExporter {
         String missingLogReason = null;
         DragShareSettings settings = DragShareSettings.readLocal(app);
         if (settings.logLevel == DragShareSettings.LOG_LEVEL_DISABLED) {
-            missingLogReason = "运行日志未启用。可在设置中启用日志后复现问题并重新导出。";
+            missingLogReason = "运行日志未启用。";
         } else if (settings.logDestination != DragShareSettings.LOG_DESTINATION_FILE) {
-            missingLogReason = "运行日志已设为系统日志，无法从应用导出。";
+            missingLogReason = "运行日志写入系统日志，应用无法读取原始日志。";
         } else {
             try {
                 rawRuntime = File.createTempFile("runtime-log-", ".tmp", directory);
@@ -108,6 +108,11 @@ final class DiagnosticBundleExporter {
         try (ZipOutputStream zip = new ZipOutputStream(new FileOutputStream(output))) {
             addText(zip, "summary.txt", buildSummary(stateSummary));
             addText(zip, "root-connection.txt", RootConnectionDiagnostics.summary());
+            String operationTrace = OperationTrace.summary();
+            addText(zip, "operation-trace.txt", operationTrace.isEmpty()
+                    ? "No recent structured operations were recorded in the MMGG app process.\n"
+                    : "Controlled operation trace (bounded, MMGG app process):\n"
+                            + filterRuntimeText(operationTrace));
             if (compatibility != null) {
                 addText(zip, "compatibility.txt", sanitizeCompatibility(compatibility));
             }
@@ -242,6 +247,7 @@ final class DiagnosticBundleExporter {
         StringBuilder out = new StringBuilder("Diagnostic bundle contents\n");
         out.append("summary.txt: included\n")
                 .append("root-connection.txt: included\n")
+                .append("operation-trace.txt: included (bounded, privacy-filtered, app-process events)\n")
                 .append("compatibility.txt: ")
                 .append(compatibilityAvailable ? "included" : "unavailable")
                 .append('\n')
@@ -255,7 +261,7 @@ final class DiagnosticBundleExporter {
         }
         if (!runtimeAvailable) {
             out.append("Runtime log reason: ").append(logReason).append('\n')
-                    .append("运行日志未收录：可在设置中启用文件日志，复现问题后重新导出。\n");
+                    .append("原始运行日志不可读取；operation-trace.txt与root-connection.txt仍包含当前可取得的受控摘要。\n");
         }
         out.append("运行日志仅保留已知的结构化操作追踪和安全日志头；自由文本与异常详情均已过滤。\n");
         out.append("Privacy: no message body, image bytes, raw URI, or capability token is included.\n");

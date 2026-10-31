@@ -21,7 +21,7 @@
 
 ## 最新验证
 
-当前源码版本为 `1.7.219-beta.37` / versionCode `279`；本轮功能提交 `5bf92fe`、`4b7257a`，版本与状态提交 `886a411`。
+当前开发源码版本为 `1.7.219-beta.38` / versionCode `280`；此前 Beta37 交付的功能提交为 `5bf92fe`、`4b7257a`，Beta38 日志导出增量尚在本轮提交中。
 
 - 全量 `testDebugUnitTest`：877 项通过，0 failures、0 errors、0 skipped。
 - `lintDebug`：0 errors、190 warnings、2 hints。
@@ -29,6 +29,14 @@
 - `assembleBeta`（含 R8）：通过。
 - Beta37 APK：`D:/CODEX/Tasks/2026-10-31/mmgg-long-press-drag-preview-tutorial/outputs/MMGG-1.7.219-beta.37.apk`，SHA-256 `7952285408D044FC596874C320C5832CE552136D2E8F0B00F9685B0551AA2243`；包元数据、R8和Android Debug签名核验通过。
 - 本轮已在本人设备通过 `adb install -r` 安装并启动 MMGG；SystemUI/System Server 未重载，因此新增系统 Hook 的设备命中状态仍未知。
+
+### 2026-10-31 一键诊断导出
+
+- 日志设为关闭或系统日志时，用户仍可直接导出诊断 ZIP；新增 `operation-trace.txt`，保存当前 MMGG 应用进程内最近160条受控阶段摘要。它与跨进程 `root-connection.txt` 分开，不声称是完整原始运行日志。
+- 诊断页不再要求普通用户修改日志等级或目的地；ZIP注明原始系统日志是否不可读，同时照常包含现有安全摘要。配置不会被导出流程修改。
+- 新反馈包 `diagnostic-bundle-20261031-204508-501.zip` 自报 Beta36/278、Xiaomi 2210132C（nuwa）、OS4.0.27.0.XEOCNXM；`portal_root=READY`、`root_input=READY`、整体NORMAL，Root尝试完成到`lease_ready`。这不是两名反馈用户的设备包，不能据此判定其问题已解决。
+- Beta38：879项单测、Lint 0 errors/190 warnings/2 hints、Debug和Beta/R8构建通过。APK哈希和交付记录见本轮任务目录 `D:/CODEX/Tasks/2026-10-31/mmgg-diagnostic-export-simple/outputs/DELIVERY.md`。
+- 未操作设备、未安装、未push。两名用户的Root授权虽已由用户确认，旧包状态仍不足以归因；下次只需直接复现并导出，不需要调整日志设置。
 
 ### 2026-10-31 OS4 小窗接入增量
 
