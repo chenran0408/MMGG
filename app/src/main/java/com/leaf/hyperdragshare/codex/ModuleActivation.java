@@ -305,19 +305,28 @@ final class ModuleActivation {
     }
 
     static RootAccessOutcome checkRootAccess() {
-        java.lang.Process process = null;
         try {
-            process = new ProcessBuilder("su", "-c", "id -u").redirectErrorStream(true).start();
+            return checkRootAccess(new ProcessBuilder("su", "-c", "id -u")
+                    .redirectErrorStream(true).start());
+        } catch (IOException error) {
+            DragShareLog.w("DragShare/Activation", "Root availability check could not start", null);
+            return RootAccessOutcome.UNKNOWN;
+        }
+    }
+
+    /** The caller transfers the short-lived probe process; all outcomes release it here. */
+    static RootAccessOutcome checkRootAccess(java.lang.Process process) {
+        try {
             if (!process.waitFor(ROOT_TIMEOUT_SECONDS, TimeUnit.SECONDS)) {
                 process.destroyForcibly();
                 DragShareLog.w("DragShare/Activation", "Root availability check timed out", null);
                 return RootAccessOutcome.UNKNOWN;
             }
             if (process.exitValue() == 0) return RootAccessOutcome.GRANTED;
-            DragShareLog.w("DragShare/Activation", "Root availability check was rejected", null);
-            return RootAccessOutcome.DENIED;
-        } catch (IOException error) {
-            DragShareLog.w("DragShare/Activation", "Root availability check failed", error);
+            // A failed shell command also covers startup/namespace/SELinux failures;
+            // it is not an explicit authorization response from the Root manager.
+            DragShareLog.w("DragShare/Activation", "Root availability check failed exit="
+                    + process.exitValue() + "; authorization unknown", null);
             return RootAccessOutcome.UNKNOWN;
         } catch (InterruptedException error) {
             Thread.currentThread().interrupt();

@@ -6,6 +6,7 @@ import android.app.StatusBarManager
 import android.graphics.drawable.Icon
 import android.widget.Toast
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -27,20 +28,32 @@ internal fun thumbTriggerEntries(context: Context,
     var duration by remember(settings.accessibilityLongPressTimeoutMillis, thumb.enabled) {
         mutableFloatStateOf(settings.resolvePressConfirmationTimeoutMillis().toFloat())
     }
-    var portalInjected by remember { mutableStateOf(ModuleActivation.isCurrentBuildInjected(context)) }
-    var portalRootGranted by remember { mutableStateOf(ModuleActivation.isCurrentBuildPortalRootGranted(context)) }
+    var portalInjection by remember(context) { mutableStateOf(ModuleActivation.injectionStatus(context)) }
+    var portalRoot by remember(context) { mutableStateOf(ModuleActivation.portalRootStatus(context)) }
+    // Reports may arrive while this page stays visible (for example after a Root prompt).
+    DisposableEffect(context) {
+        val preferences = context.getSharedPreferences(ModuleActivation.PREFS_NAME, Context.MODE_PRIVATE)
+        val listener = android.content.SharedPreferences.OnSharedPreferenceChangeListener { _, _ ->
+            portalInjection = ModuleActivation.injectionStatus(context)
+            portalRoot = ModuleActivation.portalRootStatus(context)
+        }
+        preferences.registerOnSharedPreferenceChangeListener(listener)
+        onDispose { preferences.unregisterOnSharedPreferenceChangeListener(listener) }
+    }
     LifecycleEventEffect(Lifecycle.Event.ON_RESUME) {
         thumb = ThumbTriggerSettings.read(context)
-        portalInjected = ModuleActivation.isCurrentBuildInjected(context)
-        portalRootGranted = ModuleActivation.isCurrentBuildPortalRootGranted(context)
+        portalInjection = ModuleActivation.injectionStatus(context)
+        portalRoot = ModuleActivation.portalRootStatus(context)
     }
     val triggerTitle = "按住取词与识字"
     val durationTitle = "按住确认时间"
     val tileTitle = "添加“点取内容”磁贴"
     val keywords = "按压 长按 evdev 点取 识字"
     val triggerSummary = when {
-        !portalInjected -> "请先重载传送门"
-        !portalRootGranted -> "请先为传送门授予 Root 权限"
+        portalInjection == ModuleActivation.ReportedStatus.UNAVAILABLE -> "传送门需要重载；可先保存开关"
+        portalInjection == ModuleActivation.ReportedStatus.UNKNOWN -> "传送门状态待确认；可先保存开关，再查看运行诊断"
+        portalRoot == ModuleActivation.ReportedStatus.UNAVAILABLE -> "传送门 Root 检查未通过；已授权时请查看运行诊断"
+        portalRoot == ModuleActivation.ReportedStatus.UNKNOWN -> "传送门 Root 暂时无法确认；可先保存开关，再查看运行诊断"
         else -> "静止按住取词，移动取消"
     }
     val durationEnabled = thumb.enabled
@@ -55,11 +68,6 @@ internal fun thumbTriggerEntries(context: Context,
             group = "触发与识别",
             summary = triggerSummary,
             keywords = keywords,
-            prerequisite = when {
-                !portalInjected -> "请先重载传送门"
-                !portalRootGranted -> "请先为传送门授予 Root 权限"
-                else -> null
-            },
             content = { enabled ->
                 SwitchPreference(
                     title = triggerTitle,
@@ -67,19 +75,20 @@ internal fun thumbTriggerEntries(context: Context,
                     enabled = enabled,
                     checked = thumb.enabled,
                     onCheckedChange = { checked ->
-                        if (checked && (!portalInjected || !portalRootGranted)) {
-                            Toast.makeText(context,
-                                if (!portalInjected) "请先重载传送门" else "请先为传送门授予 Root 权限",
-                                Toast.LENGTH_LONG).show()
-                        } else {
-                            ThumbTriggerSettings.setEnabled(context, checked)
-                            thumb = ThumbTriggerSettings.read(context)
-                            Toast.makeText(
-                                context,
-                                "已保存；传送门会在下一次按住取词/识字时读取，无需重启。",
-                                Toast.LENGTH_SHORT,
-                            ).show()
-                        }
+                        // Saving a preference is not a Root grant. The actual Portal
+                        // worker still has to obtain su; a diagnostic must not lock this switch.
+                        ThumbTriggerSettings.setEnabled(context, checked)
+                        thumb = ThumbTriggerSettings.read(context)
+                        Toast.makeText(
+                            context,
+                            if (checked && (portalInjection != ModuleActivation.ReportedStatus.READY
+                                    || portalRoot != ModuleActivation.ReportedStatus.READY)) {
+                                "开关已保存；运行状态待确认，请查看运行诊断。"
+                            } else {
+                                "已保存；传送门会在下一次按住取词/识字时读取，无需重启。"
+                            },
+                            Toast.LENGTH_SHORT,
+                        ).show()
                     },
                 )
             },
