@@ -21,7 +21,7 @@
 
 ## 最新验证
 
-当前源码版本为 `1.7.219-beta.37` / versionCode `279`；本轮版本和功能提交待从当前工作树提交后回填。
+当前源码版本为 `1.7.219-beta.37` / versionCode `279`；本轮功能提交 `5bf92fe`、`4b7257a`，版本与状态提交 `886a411`。
 
 - 全量 `testDebugUnitTest`：877 项通过，0 failures、0 errors、0 skipped。
 - `lintDebug`：0 errors、190 warnings、2 hints。
