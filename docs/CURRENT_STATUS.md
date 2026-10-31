@@ -21,13 +21,13 @@
 
 ## 最新验证
 
-当前源码版本为 `1.7.219-beta.36` / versionCode `278`，小窗扩展提交 `9b0006e`，版本提交 `ed7a2f3`。
+当前源码版本为 `1.7.219-beta.37` / versionCode `279`；本轮版本和功能提交待从当前工作树提交后回填。
 
-- 全量 `testDebugUnitTest`：866 项通过，0 failures、0 errors、0 skipped。
-- `lintDebug`：0 errors、189 warnings、2 hints。
+- 全量 `testDebugUnitTest`：877 项通过，0 failures、0 errors、0 skipped。
+- `lintDebug`：0 errors、190 warnings、2 hints。
 - `assembleDebug`：通过。
 - `assembleBeta`（含 R8）：通过。
-- Beta36 APK：`D:/CODEX/Tasks/2026-10-31/mmgg-os4-freeform-completion/outputs/MMGG-1.7.219-beta.36.apk`，SHA-256 `6BB3FA0622D0D8E75F1C5A4B3251F801ACA8435C6AB70DBAAB311BDA8F07A272`；包元数据、R8和Android Debug签名核验通过。
+- Beta37 APK：`D:/CODEX/Tasks/2026-10-31/mmgg-long-press-drag-preview-tutorial/outputs/MMGG-1.7.219-beta.37.apk`，SHA-256 `7952285408D044FC596874C320C5832CE552136D2E8F0B00F9685B0551AA2243`；包元数据、R8和Android Debug签名核验通过。
 - 本轮已在本人设备通过 `adb install -r` 安装并启动 MMGG；SystemUI/System Server 未重载，因此新增系统 Hook 的设备命中状态仍未知。
 
 ### 2026-10-31 OS4 小窗接入增量
@@ -53,6 +53,16 @@
 - `DragShareController` 和 `HyperOsFreeformBridge` 仍偏重；后续只在存在行为护栏时继续抽取，不做机械拆文件。
 - UI 仍缺少稳定的真实渲染矩阵，尤其是窄屏、大字体、底部安全区、输入法和毛玻璃背景。
 - AICR、Portal 和 HyperOS 私有接口的跨版本行为不能由本地测试完全证明。
+
+### 2026-10-31 松手分流与待拖预览
+
+- 开发仍在 `beta` 基线 `0cd3141` 上进行；稳定线与 Candidate A/B 未改。此增量尚未提交或发布。
+- 按 Root 手势起点至真实松手时间分流：`<T` 不触发；`T.. <2T` 显示原分词/图片操作；`>=2T` 打开待拖预览。单指和双指共用各自已有合法时长配置，不增加第二个设置。双指第一指仍只等待第二指，资格确认后按现有 pointer 语义续行。
+- 文字待拖把手位于分词面板底部，载荷取当前选区；未选词时不可拖全文。移除正文词块的长按直接拖拽，保留滑选。系统拖放取消由现有 BigBang 窗口保留选区。
+- 图片 `>=2T` 使用有界触摸预览；预览窗口只消费自身 View 触摸，Root 仍独占手势判定。第二次按下并超过 touch slop 后进入现有图片拖放；外部轻点需 DOWN/UP 都在预览外且未超 slop。取消/未命中目标返回待拖预览。
+- 设置加入可重看的“操作教程”，演示文字、图片和页面内模拟接收区；没有连接外部 App、Root 或真实剪贴板。
+- 本轮测试：定向 32 项及最终全量 877 项均通过（0 failure/error/skipped）；Lint 0 errors/190 warnings；Debug/Beta(R8) 通过。Beta37 `1.7.219-beta.37` / `279` APK SHA-256 为 `7952285408D044FC596874C320C5832CE552136D2E8F0B00F9685B0551AA2243`，交付记录在 `D:/CODEX/Tasks/2026-10-31/mmgg-long-press-drag-preview-tutorial/outputs/DELIVERY.md`。
+- 设备验证未执行。真实触摸窗口路由、跨应用拖放接受及不同 ROM 的视觉效果待验证；不宣称实机已解决。
 
 ## 继续入口
 
