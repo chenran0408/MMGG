@@ -44,16 +44,17 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.Alignment
-import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.StrokeCap
@@ -69,6 +70,7 @@ import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
@@ -149,6 +151,9 @@ internal fun BigBangOverlayContent(
     totalCharacterCount: Int,
     selectedCharacterCount: Int,
     hasTextSelection: Boolean,
+    dragPreviewEnabled: Boolean,
+    selectedDragText: String,
+    onDragSelectedText: (String) -> Unit,
     selectionToolbarVisible: Boolean,
     allTextSelected: Boolean,
     isSegmenting: Boolean,
@@ -181,7 +186,8 @@ internal fun BigBangOverlayContent(
     val actionReady = !isSegmenting && totalCharacterCount > 0
     val hasSelectionToolbar = actionReady && selectionToolbarVisible
     val naturalPanelHeight = (bodyHeightPx / density).dp + 187.dp +
-        (if (isRecognizing) 88.dp else 0.dp)
+        (if (isRecognizing) 88.dp else 0.dp) +
+        (if (dragPreviewEnabled || hasTextSelection) 48.dp else 0.dp)
     val panelMetrics = if (maximumMetrics.fullScreen) maximumMetrics else maximumMetrics.copy(
         height = minOf(maximumMetrics.height, naturalPanelHeight),
     )
@@ -205,6 +211,8 @@ internal fun BigBangOverlayContent(
     val panelShape = androidx.compose.foundation.shape.RoundedCornerShape(panelMetrics.cornerRadius)
     var panelVisible by remember { mutableStateOf(false) }
     var showMoreMenu by remember { mutableStateOf(false) }
+    var textDragStarted by remember { mutableStateOf(false) }
+    val hapticFeedback = LocalHapticFeedback.current
     var showSelectionMore by remember { mutableStateOf(false) }
     var showEditor by remember { mutableStateOf(false) }
     var editorText by remember { mutableStateOf("") }
@@ -407,6 +415,57 @@ internal fun BigBangOverlayContent(
                                 top = 6.dp, bottom = 6.dp + placedMetrics.bottomSystemInset),
                         verticalArrangement = Arrangement.spacedBy(2.dp),
                     ) {
+                        if (dragPreviewEnabled || hasTextSelection) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth().height(44.dp)
+                                    .background(MiuixTheme.colorScheme.surfaceContainer,
+                                        RoundedCornerShape(10.dp))
+                                    .graphicsLayer {
+                                        val lift = if (textDragStarted) 3.dp.toPx() else 0f
+                                        translationY = -lift
+                                        scaleX = if (textDragStarted) 1.025f else 1f
+                                        scaleY = if (textDragStarted) 1.025f else 1f
+                                        shadowElevation = lift
+                                    }
+                                    .then(if (hasTextSelection) Modifier.pointerInput(
+                                        selectedDragText, hasTextSelection) {
+                                        detectDragGestures(
+                                            onDragStart = {
+                                                if (selectedDragText.isNotBlank()) {
+                                                    textDragStarted = true
+                                                    hapticFeedback.performHapticFeedback(
+                                                        HapticFeedbackType.LongPress)
+                                                    onDragSelectedText(selectedDragText)
+                                                }
+                                            },
+                                            onDragEnd = { textDragStarted = false },
+                                            onDragCancel = { textDragStarted = false },
+                                            onDrag = { change, _ -> change.consume() },
+                                        )
+                                    } else Modifier)
+                                    .semantics {
+                                        contentDescription = if (hasTextSelection) {
+                                            "按住并移动以拖出所选文字"
+                                        } else "先选择词语后拖出"
+                                    }
+                                    .padding(horizontal = 12.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                Text(
+                                    text = if (hasTextSelection) selectedDragText else "先选择词语后拖出",
+                                    modifier = Modifier.weight(1f),
+                                    color = MiuixTheme.colorScheme.onSurface,
+                                    fontSize = 13.sp,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                )
+                                Text(
+                                    text = "按住拖动",
+                                    color = MiuixTheme.colorScheme.primary,
+                                    fontSize = 12.sp,
+                                )
+                            }
+                        }
                         Box(
                             Modifier.fillMaxWidth().height(1.dp)
                                 .background(panelBorder.copy(alpha = panelOpacity)),

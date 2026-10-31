@@ -76,18 +76,17 @@ public class SwipeSelectViewTest {
         event.recycle();
     }
 
-    @Test public void selectedWordsDragAtScrollEdgeAndSurviveSynchronousCancel() {
+    @Test public void selectedWordsDoNotStartGlobalDragFromChipBody() {
         open();
         page.restoreSelectionNow(new TreeSet<>(List.of(0, 1)));
         assertFalse(page.mScroller.canScrollVertically(-1));
-        cancelDuringDrag = true;
         touch(MotionEvent.ACTION_DOWN, 0);
         ShadowLooper.shadowMainLooper().idleFor(Duration.ofMillis(ViewConfiguration.getLongPressTimeout()));
-        assertEquals("甲乙", dragged);
+        assertNull(dragged);
         assertEquals(new TreeSet<>(List.of(0, 1)), page.mBoomActionHandler.mSelectedId);
     }
 
-    @Test public void splitAndMergedSelectionDragsTheSameTextIncludingEmoji() {
+    @Test public void splitAndMergedSelectionRemainSelectableWithoutDraggingFromChipBody() {
         open();
         page.prepareForReinit();
         assertTrue(page.initWords(new int[]{0, 0, 1, 4, 5, 5, -1},
@@ -97,10 +96,9 @@ public class SwipeSelectViewTest {
         assertTrue(page.splitSelectedWordsToChars());
         layoutWords();
         assertEquals("中文😀", page.selectedTextOrOriginal());
-        cancelDuringDrag = true;
         touch(MotionEvent.ACTION_DOWN, 1);
         ShadowLooper.shadowMainLooper().idleFor(Duration.ofMillis(ViewConfiguration.getLongPressTimeout()));
-        assertEquals("中文😀", dragged);
+        assertNull(dragged);
         assertEquals(new TreeSet<>(List.of(1, 2, 3)), page.mBoomActionHandler.mSelectedId);
 
         assertTrue(page.mergeSelectedWords());
@@ -109,7 +107,7 @@ public class SwipeSelectViewTest {
         dragged = null;
         touch(MotionEvent.ACTION_DOWN, 1);
         ShadowLooper.shadowMainLooper().idleFor(Duration.ofMillis(ViewConfiguration.getLongPressTimeout()));
-        assertEquals("中文😀", dragged);
+        assertNull(dragged);
         assertEquals(new TreeSet<>(List.of(1)), page.mBoomActionHandler.mSelectedId);
     }
 
@@ -144,16 +142,15 @@ public class SwipeSelectViewTest {
         assertEquals(selected.codePointCount(0, selected.length()), page.selectedCharacterCount());
     }
 
-    @Test public void rejectedDragRestoresOriginalSelectionRatherThanAddingHeldWord() {
+    @Test public void chipLongPressDoesNotStartDragOrChangeSelectionUntilRelease() {
         open();
         page.restoreSelectionNow(new TreeSet<>(List.of(0)));
-        accepted = false;
         touch(MotionEvent.ACTION_DOWN, 1);
         ShadowLooper.shadowMainLooper().idleFor(Duration.ofMillis(ViewConfiguration.getLongPressTimeout()));
-        assertEquals("甲乙", dragged);
+        assertNull(dragged);
         assertEquals(new TreeSet<>(List.of(0)), page.mBoomActionHandler.mSelectedId);
         touch(MotionEvent.ACTION_UP, 1);
-        assertEquals(new TreeSet<>(List.of(0)), page.mBoomActionHandler.mSelectedId);
+        assertEquals(new TreeSet<>(List.of(0, 1)), page.mBoomActionHandler.mSelectedId);
     }
 
     @Test public void cancelledSwipePreservesOldSelectionAndNeverStartsDrag() {

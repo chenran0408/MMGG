@@ -2,7 +2,6 @@ package com.leaf.hyperdragshare.codex;
 
 import android.content.Context;
 import android.content.res.Resources;
-import android.text.TextUtils;
 import android.util.AttributeSet;
 import android.graphics.Rect;
 import android.view.MotionEvent;
@@ -37,23 +36,6 @@ public class SwipeSelectView extends LinearLayout {
     private float mLastRawX;
     private float mLastRawY;
     private TreeSet<Integer> mSelectionBeforeGesture = new TreeSet<>();
-    private final Runnable mStartDrag = () -> {
-        if (mBoomPage.isClosed() || mGesture != Gesture.PENDING || mStartIndex < 0) return;
-        if (mIsSelected) {
-            performSelect(true);
-        }
-        String text = mBoomPage.mBoomActionHandler.getSelectedText();
-        if (TextUtils.isEmpty(text)) return;
-        // startDragAndDrop can synchronously cancel this View's touch stream.
-        mGesture = Gesture.DRAGGING;
-        mAutoScrollVelocity = 0;
-        removeCallbacks(this.mAutoScroll);
-        if (!mBoomPage.mActions.dragText(this, text)) {
-            mGesture = Gesture.IDLE;
-            mBoomPage.restoreSelectionNow(mSelectionBeforeGesture);
-        }
-    };
-
     private Runnable mAutoScroll = new Runnable() {
         @Override
         public void run() {
@@ -107,7 +89,6 @@ public class SwipeSelectView extends LinearLayout {
                 if (touchedChip != null) {
                     mBoomPage.freezeSelectionRows();
                     mIsSelected = !touchedChip.word.isSelected();
-                    postDelayed(mStartDrag, ViewConfiguration.getLongPressTimeout());
                 }
                 mAutoScrollVelocity = 0;
                 break;
@@ -117,7 +98,6 @@ public class SwipeSelectView extends LinearLayout {
                     float dy = Math.abs(y - mDownY);
                     int slop = ViewConfiguration.get(getContext()).getScaledTouchSlop();
                     if (Math.max(dx, dy) <= slop) break;
-                    removeCallbacks(mStartDrag);
                     if (dy >= dx || mStartIndex < 0) {
                         mGesture = Gesture.SCROLLING;
                         requestDisallowInterceptTouchEvent(false);
@@ -210,7 +190,6 @@ public class SwipeSelectView extends LinearLayout {
         mGesture = Gesture.IDLE;
         requestDisallowInterceptTouchEvent(false);
         mAutoScrollVelocity = 0;
-        removeCallbacks(mStartDrag);
         removeCallbacks(mAutoScroll);
         if (wasSelecting) mBoomPage.notifySelectionChanged();
     }
@@ -227,7 +206,6 @@ public class SwipeSelectView extends LinearLayout {
     }
 
     @Override protected void onDetachedFromWindow() {
-        removeCallbacks(mStartDrag);
         finishTouch();
         super.onDetachedFromWindow();
     }

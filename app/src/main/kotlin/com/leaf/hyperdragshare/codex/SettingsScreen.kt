@@ -71,6 +71,7 @@ private sealed interface SettingsRoute : NavKey {
     data object HoneycombLayout : SettingsRoute
     data object HoneycombTargets : SettingsRoute
     data object Licenses : SettingsRoute
+    data object GestureTutorial : SettingsRoute
 }
 
 
@@ -117,6 +118,7 @@ fun DragShareSettingsApp(context: Context, openGestures: Boolean = false) {
             onOpenGames = { backStack.add(SettingsRoute.Games) },
             onOpenAbout = { backStack.add(SettingsRoute.About) }, persist = persist,
             onOpenProblemDiagnostics = { backStack.add(SettingsRoute.ProblemDiagnostics) },
+            onOpenGestureTutorial = { backStack.add(SettingsRoute.GestureTutorial) },
         ) + gestureSettingEntries(
             context,
             onManageTargets = openTargets,
@@ -223,6 +225,11 @@ fun DragShareSettingsApp(context: Context, openGestures: Boolean = false) {
                         onBack = { if (backStack.size > 1) backStack.removeAt(backStack.lastIndex) },
                     )
                 }
+                entry(SettingsRoute.GestureTutorial) {
+                    GestureTutorialPage(onBack = {
+                        if (backStack.size > 1) backStack.removeAt(backStack.lastIndex)
+                    })
+                }
                 entry(SettingsRoute.Diagnostics) {
                     ActivationDiagnosticsPage(
                         context = context,
@@ -277,6 +284,7 @@ private fun portalSettingEntries(
     onOpenGames: () -> Unit,
     onOpenAbout: () -> Unit,
     onOpenProblemDiagnostics: () -> Unit,
+    onOpenGestureTutorial: () -> Unit,
     persist: (DragShareSettingsMutation) -> DragShareSettings,
 ): List<SettingEntry> {
     val coroutineScope = rememberCoroutineScope()
@@ -1179,6 +1187,9 @@ private fun portalSettingEntries(
     }
 
     entries += unifiedDiagnosticsEntry(onOpenProblemDiagnostics)
+    navigationRow("gesture.tutorial", "操作教程", SettingModule.GENERAL, "工具与诊断",
+        summary = "分词拖出文字与拖出图片的演示", keywords = "帮助 使用 教程 文字 图片 拖拽",
+        onClick = onOpenGestureTutorial)
 
     row("app.update", "检查更新", SettingModule.GENERAL, "关于",
         summary = "查看正式版更新说明，下载并安装新版本",

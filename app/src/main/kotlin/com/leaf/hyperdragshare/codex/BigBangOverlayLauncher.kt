@@ -51,12 +51,14 @@ object BigBangOverlayLauncher {
         val after = args.getString("after_text")
         val pressConfirmedAt = args.getLong("press_confirmed_at")
         val copyDirect = args.getBoolean("copy_direct_source")
+        val dragPreview = args.getBoolean("drag_preview")
         val operation = OperationTrace.read(args).let {
             if (it == "-") OperationTrace.fresh("bigbang") else it
         }
         OperationTrace.event(operation, "text_window", "accepted")
         main.post { open(context.applicationContext, text, x, y, before = before, after = after,
-            pressConfirmedAt = pressConfirmedAt, copyDirect = copyDirect, operation = operation) }
+            pressConfirmedAt = pressConfirmedAt, copyDirect = copyDirect, dragPreview = dragPreview,
+            operation = operation) }
         return Bundle().apply { putBoolean("accepted", true) }
     }
 
@@ -77,7 +79,8 @@ object BigBangOverlayLauncher {
             open(activity, text, args.getInt("x", -1), args.getInt("y", -1),
                 before = args.getString("before_text"), after = args.getString("after_text"),
                 pressConfirmedAt = args.getLong("press_confirmed_at"),
-                copyDirect = args.getBoolean("copy_direct_source"), host = activity, operation = operation)
+                copyDirect = args.getBoolean("copy_direct_source"),
+                dragPreview = args.getBoolean("drag_preview"), host = activity, operation = operation)
         }
         return true
     }
@@ -103,7 +106,7 @@ object BigBangOverlayLauncher {
 
     private fun open(app: Context, text: String, x: Int, y: Int, savedState: Bundle? = null,
         before: String? = null, after: String? = null, pressConfirmedAt: Long = 0L, copyDirect: Boolean = false,
-        host: android.app.Activity? = null, operation: String = "-") {
+        dragPreview: Boolean = false, host: android.app.Activity? = null, operation: String = "-") {
         if (host == null && pressConfirmedAt > 0L && pressConfirmedAt == cancelledPressAt) {
             OperationTrace.event(operation, "text_window", "ignored_cancelled")
             return
@@ -208,7 +211,7 @@ object BigBangOverlayLauncher {
         val shown = overlay.show(pressConfirmedAt)
         OperationTrace.event(operation, "text_window", if (shown) "shown" else "show_failed")
         if (shown) {
-            session.open(text, x, y, savedState, before, after)
+            session.open(text, x, y, savedState, before, after, dragPreview)
             if (copyDirect) session.showDirectActions(text)
         }
     }

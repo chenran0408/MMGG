@@ -71,6 +71,8 @@ internal class BigBangPanelSession(private val context: Context, private val act
     private var lastCountedOriginal: String? = null
     private var selectedCharacterCount by mutableIntStateOf(0)
     private var hasTextSelection by mutableStateOf(false)
+    private var dragPreviewEnabled by mutableStateOf(false)
+    private var selectedDragText by mutableStateOf("")
     private var selectionToolbarVisible by mutableStateOf(false)
     private var isSegmenting by mutableStateOf(true)
     private var isRecognizing by mutableStateOf(false)
@@ -100,6 +102,7 @@ internal class BigBangPanelSession(private val context: Context, private val act
         hasTextSelection = selected
         selectedCharacterCount = page.selectedCharacterCount()
         directActionText = if (page.hasSelection()) page.selectedTextOrOriginal().orEmpty() else ""
+        selectedDragText = if (page.hasSelection()) page.selectedTextOrOriginal().orEmpty() else ""
     }
 
     private fun scheduleSelectionSummary() {
@@ -185,6 +188,13 @@ internal class BigBangPanelSession(private val context: Context, private val act
                     totalCharacterCount = totalCharacterCount,
                     selectedCharacterCount = selectedCharacterCount,
                     hasTextSelection = hasTextSelection,
+                    dragPreviewEnabled = dragPreviewEnabled,
+                    selectedDragText = selectedDragText,
+                    onDragSelectedText = { text ->
+                        if (!closed && text.isNotBlank() && hasTextSelection) {
+                            actions.dragText(legacyContentView, text)
+                        }
+                    },
                     selectionToolbarVisible = selectionToolbarVisible,
                     allTextSelected = boomChipPage?.mBoomActionHandler?.isAllSelected() == true,
                     isSegmenting = isSegmenting,
@@ -209,9 +219,10 @@ internal class BigBangPanelSession(private val context: Context, private val act
     }
 
     fun open(text: String, touchX: Int, touchY: Int, savedState: Bundle? = null,
-        before: String? = null, after: String? = null) {
+        before: String? = null, after: String? = null, dragPreview: Boolean = false) {
         check(!closed) { "Create a new panel session after close" }
         isRecognizing = false
+        dragPreviewEnabled = dragPreview
         directText = null
         requests.invalidate()
         undoEditState = savedState?.getBundle(UNDO_EDIT)
