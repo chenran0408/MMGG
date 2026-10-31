@@ -111,6 +111,12 @@ public final class FanFreeformHook implements IXposedHookLoadPackage {
                     Log.i("SystemUI application attached package="
                             + systemUiContext.getPackageName());
                     ensureRuntime(systemUiContext, classLoader);
+                    // Only rewrites Xiaomi's existing notification "小窗" action;
+                    // ordinary notifications and missing ROM contracts are unchanged.
+                    NotificationFreeformHook.install(classLoader, () -> {
+                        FanRuntime active = runtime;
+                        return active != null && active.notificationFreeformEnabled();
+                    });
                     probeSystemUiInterfaces(classLoader);
                     // The first class lookup can happen before Application.attach(). Retry
                     // here, and then scan the ROM dex for renamed HyperOS 2 classes below.

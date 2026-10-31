@@ -1096,6 +1096,16 @@ public final class ConfigStore {
                         ConfigContract.DEFAULT_OUTSIDE_PORTRAIT_ENABLED)
                 .putBoolean(ConfigContract.KEY_OUTSIDE_LANDSCAPE_ENABLED,
                         ConfigContract.DEFAULT_OUTSIDE_LANDSCAPE_ENABLED)
+                .putBoolean(ConfigContract.KEY_NOTIFICATION_FREEFORM_ENABLED,
+                        ConfigContract.DEFAULT_NOTIFICATION_FREEFORM_ENABLED)
+                .putBoolean(ConfigContract.KEY_MINI_MEDIA_CONTROLS_ENABLED,
+                        ConfigContract.DEFAULT_MINI_MEDIA_CONTROLS_ENABLED)
+                .putBoolean(ConfigContract.KEY_MINI_MEDIA_AUTO_MUTE,
+                        ConfigContract.DEFAULT_MINI_MEDIA_AUTO_MUTE)
+                .putBoolean(ConfigContract.KEY_REMOVE_FREEFORM_BLACKLIST,
+                        ConfigContract.DEFAULT_REMOVE_FREEFORM_BLACKLIST)
+                .putBoolean(ConfigContract.KEY_REMOVE_FREEFORM_COUNT_LIMIT,
+                        ConfigContract.DEFAULT_REMOVE_FREEFORM_COUNT_LIMIT)
                 .putBoolean(ConfigContract.KEY_HONEYCOMB_ENABLED,
                         ConfigContract.DEFAULT_HONEYCOMB_ENABLED)
                 .putInt(ConfigContract.KEY_HONEYCOMB_MODE,

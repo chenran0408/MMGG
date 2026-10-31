@@ -182,6 +182,7 @@ internal fun gestureSettingEntries(
         if (currentModule == SettingModule.FREEFORM) {
             when (key) {
                 C.KEY_CUSTOM_WINDOW_BOUNDS_ENABLED, C.KEY_OUTSIDE_ENABLED -> Unit
+                C.KEY_MINI_MEDIA_AUTO_MUTE -> result += C.KEY_MINI_MEDIA_CONTROLS_ENABLED
                 C.KEY_CUSTOM_WINDOW_PORTRAIT_ENABLED,
                 C.KEY_CUSTOM_WINDOW_LANDSCAPE_ENABLED -> result += C.KEY_CUSTOM_WINDOW_BOUNDS_ENABLED
                 C.KEY_PORTRAIT_PROPORTIONAL_SIZE_ENABLED,
@@ -249,6 +250,7 @@ internal fun gestureSettingEntries(
                 C.KEY_CUSTOM_WINDOW_PORTRAIT_ENABLED -> "启用竖屏自定义尺寸"
                 C.KEY_CUSTOM_WINDOW_LANDSCAPE_ENABLED -> "启用横屏自定义尺寸"
                 C.KEY_OUTSIDE_ENABLED -> "启用窗外点击"
+                C.KEY_MINI_MEDIA_CONTROLS_ENABLED -> "迷你小窗媒体控件"
                 C.KEY_FAN_ANIMATIONS_ENABLED -> "启用扇形动效"
                 else -> key
             }
@@ -438,6 +440,12 @@ internal fun gestureSettingEntries(
     slider("扇形应用选择放大", C.KEY_FAN_SELECTION_SCALE_PERCENT, C.MIN_FAN_SELECTION_SCALE_PERCENT, C.MAX_FAN_SELECTION_SCALE_PERCENT, "%")
     bool("扇形应用选择蓝色圈", "显示选中应用的圆圈反馈", C.KEY_FAN_SELECTION_RING, C.DEFAULT_FAN_SELECTION_RING)
     currentModule = SettingModule.FREEFORM
+    currentGroup = "系统小窗扩展"
+    bool("通知栏小窗启动", "将系统已有的通知栏小窗入口按小窗方式启动；默认关闭", C.KEY_NOTIFICATION_FREEFORM_ENABLED, C.DEFAULT_NOTIFICATION_FREEFORM_ENABLED)
+    bool("迷你小窗媒体控件", "在迷你小窗旁显示播放控制；默认关闭", C.KEY_MINI_MEDIA_CONTROLS_ENABLED, C.DEFAULT_MINI_MEDIA_CONTROLS_ENABLED)
+    bool("迷你小窗自动静音", "需要先启用媒体控件；默认关闭", C.KEY_MINI_MEDIA_AUTO_MUTE, C.DEFAULT_MINI_MEDIA_AUTO_MUTE)
+    bool("移除小窗黑名单", "允许系统黑名单中的应用使用小窗；谨慎开启", C.KEY_REMOVE_FREEFORM_BLACKLIST, C.DEFAULT_REMOVE_FREEFORM_BLACKLIST)
+    bool("放宽小窗数量限制", "移除系统的小窗数量上限；谨慎开启", C.KEY_REMOVE_FREEFORM_COUNT_LIMIT, C.DEFAULT_REMOVE_FREEFORM_COUNT_LIMIT)
     currentGroup = "启动行为"
     bool("启用自定义窗体尺寸", "控制竖屏与横屏小窗", C.KEY_CUSTOM_WINDOW_BOUNDS_ENABLED, C.DEFAULT_CUSTOM_WINDOW_BOUNDS_ENABLED)
     bool("竖屏自定义尺寸", "使用竖屏单独配置", C.KEY_CUSTOM_WINDOW_PORTRAIT_ENABLED, C.DEFAULT_CUSTOM_WINDOW_PORTRAIT_ENABLED)

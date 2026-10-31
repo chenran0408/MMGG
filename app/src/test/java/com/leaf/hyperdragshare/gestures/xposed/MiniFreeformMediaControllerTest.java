@@ -79,7 +79,8 @@ public final class MiniFreeformMediaControllerTest {
         sessions.items.add(current);
         sessions.fireChanged();
         assertEquals(1, old.unregisterCount);
-        assertEquals(2, host.showCount);
+        assertEquals(1, host.showCount);
+        assertEquals(1, host.updateCount);
         oldCallback.run();
         LinearLayout row = (LinearLayout) host.controls;
         assertFalse(row.getChildAt(1).isEnabled());
@@ -231,6 +232,7 @@ public final class MiniFreeformMediaControllerTest {
 
     private static final class FakeHost implements MiniFreeformMediaController.Host {
         int showCount;
+        int updateCount;
         int hideCount;
         int taskId = -1;
         View controls;
@@ -239,7 +241,10 @@ public final class MiniFreeformMediaControllerTest {
             this.taskId = taskId;
             this.controls = controls;
         }
-        @Override public void update(int taskId, Rect miniBounds) { this.taskId = taskId; }
+        @Override public void update(int taskId, Rect miniBounds) {
+            this.taskId = taskId;
+            updateCount++;
+        }
         @Override public void hide() { hideCount++; controls = null; }
     }
 

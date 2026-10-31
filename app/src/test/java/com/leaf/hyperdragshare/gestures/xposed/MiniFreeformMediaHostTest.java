@@ -2,7 +2,6 @@ package com.leaf.hyperdragshare.gestures.xposed;
 
 import android.content.Context;
 import android.graphics.Rect;
-import android.os.Looper;
 import android.view.View;
 import android.view.WindowManager;
 
@@ -10,7 +9,7 @@ import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.robolectric.RobolectricTestRunner;
 import org.robolectric.RuntimeEnvironment;
-import org.robolectric.Shadows;
+import org.robolectric.shadows.ShadowLooper;
 
 import static android.view.WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE;
 import static android.view.WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY;
@@ -92,7 +91,7 @@ public final class MiniFreeformMediaHostTest {
     }
 
     private static void flushMain() {
-        Shadows.shadowOf(Looper.getMainLooper()).idle();
+        ShadowLooper.idleMainLooper();
     }
 
     private static final class FixedView extends View {

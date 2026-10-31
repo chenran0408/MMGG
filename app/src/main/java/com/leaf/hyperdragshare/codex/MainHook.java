@@ -1,6 +1,7 @@
 package com.leaf.hyperdragshare.codex;
 
 import com.leaf.hyperdragshare.gestures.xposed.FanFreeformHook;
+import com.leaf.hyperdragshare.gestures.xposed.SystemServerFreeformConfig;
 import de.robv.android.xposed.IXposedHookLoadPackage;
 import de.robv.android.xposed.callbacks.XC_LoadPackage;
 
@@ -49,10 +50,13 @@ public final class MainHook implements IXposedHookLoadPackage {
                     }
                 }
             });
-        } else if (ANDROID_PACKAGE.equals(lpparam.packageName)) {
+        } else if (ANDROID_PACKAGE.equals(lpparam.packageName)
+                && ANDROID_PACKAGE.equals(lpparam.processName)) {
             RootProcessFrameworkHooks.install(lpparam.classLoader);
             BackTapFrameworkHooks.install(lpparam);
             OverlayNotificationHooks.install(lpparam.classLoader);
+            SystemServerFreeformConfig.install(
+                    lpparam.packageName, lpparam.processName, lpparam.classLoader);
         }
     }
 }

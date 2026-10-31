@@ -117,6 +117,29 @@ public final class GestureOrientationConfigTest {
     }
 
     @Test
+    public void optionalFreeformExtensionsDefaultOffAndReadFromSnapshot() {
+        GestureConfig legacy = GestureConfig.from(new Bundle());
+        assertFalse(legacy.notificationFreeformEnabled);
+        assertFalse(legacy.miniMediaControlsEnabled);
+        assertFalse(legacy.miniMediaAutoMute);
+        assertFalse(legacy.removeFreeformBlacklist);
+        assertFalse(legacy.removeFreeformCountLimit);
+
+        Bundle values = new Bundle();
+        values.putBoolean(ConfigContract.KEY_NOTIFICATION_FREEFORM_ENABLED, true);
+        values.putBoolean(ConfigContract.KEY_MINI_MEDIA_CONTROLS_ENABLED, true);
+        values.putBoolean(ConfigContract.KEY_MINI_MEDIA_AUTO_MUTE, true);
+        values.putBoolean(ConfigContract.KEY_REMOVE_FREEFORM_BLACKLIST, true);
+        values.putBoolean(ConfigContract.KEY_REMOVE_FREEFORM_COUNT_LIMIT, true);
+        GestureConfig configured = GestureConfig.from(values);
+        assertTrue(configured.notificationFreeformEnabled);
+        assertTrue(configured.miniMediaControlsEnabled);
+        assertTrue(configured.miniMediaAutoMute);
+        assertTrue(configured.removeFreeformBlacklist);
+        assertTrue(configured.removeFreeformCountLimit);
+    }
+
+    @Test
     public void sideEntryRequiresEnabledOrientationAndTargetsForSelectedLayout() {
         Bundle values = new Bundle();
         values.putBoolean(ConfigContract.KEY_SIDE_GESTURE_ENABLED, true);

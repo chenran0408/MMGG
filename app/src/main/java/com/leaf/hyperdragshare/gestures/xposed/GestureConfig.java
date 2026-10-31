@@ -164,6 +164,11 @@ final class GestureConfig {
     boolean outsideEnabled = ConfigContract.DEFAULT_OUTSIDE_ENABLED;
     boolean outsidePortraitEnabled = ConfigContract.DEFAULT_OUTSIDE_PORTRAIT_ENABLED;
     boolean outsideLandscapeEnabled = ConfigContract.DEFAULT_OUTSIDE_LANDSCAPE_ENABLED;
+    boolean notificationFreeformEnabled = ConfigContract.DEFAULT_NOTIFICATION_FREEFORM_ENABLED;
+    boolean miniMediaControlsEnabled = ConfigContract.DEFAULT_MINI_MEDIA_CONTROLS_ENABLED;
+    boolean miniMediaAutoMute = ConfigContract.DEFAULT_MINI_MEDIA_AUTO_MUTE;
+    boolean removeFreeformBlacklist = ConfigContract.DEFAULT_REMOVE_FREEFORM_BLACKLIST;
+    boolean removeFreeformCountLimit = ConfigContract.DEFAULT_REMOVE_FREEFORM_COUNT_LIMIT;
     List<TargetSpec> sideTargets = Collections.emptyList();
     Set<String> gestureExcludedPackages = Collections.emptySet();
 
@@ -465,6 +470,21 @@ final class GestureConfig {
                 ConfigContract.DEFAULT_FAN_MAX_TARGETS), 3, 24);
         result.gestureExcludedPackages = normalizeGestureExcludedPackages(
                 bundle.getStringArrayList(ConfigContract.KEY_GESTURE_EXCLUDED_PACKAGES));
+        result.notificationFreeformEnabled = bundle.getBoolean(
+                ConfigContract.KEY_NOTIFICATION_FREEFORM_ENABLED,
+                ConfigContract.DEFAULT_NOTIFICATION_FREEFORM_ENABLED);
+        result.miniMediaControlsEnabled = bundle.getBoolean(
+                ConfigContract.KEY_MINI_MEDIA_CONTROLS_ENABLED,
+                ConfigContract.DEFAULT_MINI_MEDIA_CONTROLS_ENABLED);
+        result.miniMediaAutoMute = bundle.getBoolean(
+                ConfigContract.KEY_MINI_MEDIA_AUTO_MUTE,
+                ConfigContract.DEFAULT_MINI_MEDIA_AUTO_MUTE);
+        result.removeFreeformBlacklist = bundle.getBoolean(
+                ConfigContract.KEY_REMOVE_FREEFORM_BLACKLIST,
+                ConfigContract.DEFAULT_REMOVE_FREEFORM_BLACKLIST);
+        result.removeFreeformCountLimit = bundle.getBoolean(
+                ConfigContract.KEY_REMOVE_FREEFORM_COUNT_LIMIT,
+                ConfigContract.DEFAULT_REMOVE_FREEFORM_COUNT_LIMIT);
         result.hideSystemRecentsClear = bundle.getBoolean(
                 ConfigContract.KEY_HIDE_SYSTEM_RECENTS_CLEAR,
                 ConfigContract.DEFAULT_HIDE_SYSTEM_RECENTS_CLEAR);

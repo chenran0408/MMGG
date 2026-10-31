@@ -55,4 +55,31 @@ public final class ConfigStoreSideTargetsTest {
         assertEquals(ConfigContract.MAX_HOT_BOTTOM_GAP_DP,
                 clamped.getInt(ConfigContract.KEY_HOT_BOTTOM_GAP_DP));
     }
+
+    @Test
+    public void newFreeformOptionsDefaultOffAndRoundTripThroughProvider() {
+        Context context = RuntimeEnvironment.getApplication();
+        ConfigStore store = new ConfigStore(context);
+        ConfigProvider provider = new ConfigProvider();
+        provider.attachInfo(context, new ProviderInfo());
+        Bundle defaults = provider.call("get", null, null);
+        assertEquals(false, defaults.getBoolean(ConfigContract.KEY_NOTIFICATION_FREEFORM_ENABLED));
+        assertEquals(false, defaults.getBoolean(ConfigContract.KEY_MINI_MEDIA_CONTROLS_ENABLED));
+        assertEquals(false, defaults.getBoolean(ConfigContract.KEY_MINI_MEDIA_AUTO_MUTE));
+        assertEquals(false, defaults.getBoolean(ConfigContract.KEY_REMOVE_FREEFORM_BLACKLIST));
+        assertEquals(false, defaults.getBoolean(ConfigContract.KEY_REMOVE_FREEFORM_COUNT_LIMIT));
+
+        store.putBoolean(ConfigContract.KEY_NOTIFICATION_FREEFORM_ENABLED, true);
+        store.putBoolean(ConfigContract.KEY_MINI_MEDIA_CONTROLS_ENABLED, true);
+        store.putBoolean(ConfigContract.KEY_MINI_MEDIA_AUTO_MUTE, true);
+        store.putBoolean(ConfigContract.KEY_REMOVE_FREEFORM_BLACKLIST, true);
+        store.putBoolean(ConfigContract.KEY_REMOVE_FREEFORM_COUNT_LIMIT, true);
+        ShadowLooper.shadowMainLooper().idleFor(120, TimeUnit.MILLISECONDS);
+        Bundle configured = provider.call("get", null, null);
+        assertEquals(true, configured.getBoolean(ConfigContract.KEY_NOTIFICATION_FREEFORM_ENABLED));
+        assertEquals(true, configured.getBoolean(ConfigContract.KEY_MINI_MEDIA_CONTROLS_ENABLED));
+        assertEquals(true, configured.getBoolean(ConfigContract.KEY_MINI_MEDIA_AUTO_MUTE));
+        assertEquals(true, configured.getBoolean(ConfigContract.KEY_REMOVE_FREEFORM_BLACKLIST));
+        assertEquals(true, configured.getBoolean(ConfigContract.KEY_REMOVE_FREEFORM_COUNT_LIMIT));
+    }
 }

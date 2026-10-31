@@ -428,6 +428,21 @@ public final class ConfigProvider extends ContentProvider {
             out.putBoolean(ConfigContract.KEY_OUTSIDE_LANDSCAPE_ENABLED,
                     prefs.getBoolean(ConfigContract.KEY_OUTSIDE_LANDSCAPE_ENABLED,
                             ConfigContract.DEFAULT_OUTSIDE_LANDSCAPE_ENABLED));
+            out.putBoolean(ConfigContract.KEY_NOTIFICATION_FREEFORM_ENABLED,
+                    prefs.getBoolean(ConfigContract.KEY_NOTIFICATION_FREEFORM_ENABLED,
+                            ConfigContract.DEFAULT_NOTIFICATION_FREEFORM_ENABLED));
+            out.putBoolean(ConfigContract.KEY_MINI_MEDIA_CONTROLS_ENABLED,
+                    prefs.getBoolean(ConfigContract.KEY_MINI_MEDIA_CONTROLS_ENABLED,
+                            ConfigContract.DEFAULT_MINI_MEDIA_CONTROLS_ENABLED));
+            out.putBoolean(ConfigContract.KEY_MINI_MEDIA_AUTO_MUTE,
+                    prefs.getBoolean(ConfigContract.KEY_MINI_MEDIA_AUTO_MUTE,
+                            ConfigContract.DEFAULT_MINI_MEDIA_AUTO_MUTE));
+            out.putBoolean(ConfigContract.KEY_REMOVE_FREEFORM_BLACKLIST,
+                    prefs.getBoolean(ConfigContract.KEY_REMOVE_FREEFORM_BLACKLIST,
+                            ConfigContract.DEFAULT_REMOVE_FREEFORM_BLACKLIST));
+            out.putBoolean(ConfigContract.KEY_REMOVE_FREEFORM_COUNT_LIMIT,
+                    prefs.getBoolean(ConfigContract.KEY_REMOVE_FREEFORM_COUNT_LIMIT,
+                            ConfigContract.DEFAULT_REMOVE_FREEFORM_COUNT_LIMIT));
             out.putString(ConfigContract.KEY_COMPONENTS, prefs.getString(ConfigContract.KEY_COMPONENTS, "[]"));
             out.putBoolean(ConfigContract.KEY_HONEYCOMB_ENABLED, prefs.getBoolean(
                     ConfigContract.KEY_HONEYCOMB_ENABLED,

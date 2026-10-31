@@ -21,6 +21,7 @@ import android.os.PowerManager;
 import android.os.VibrationEffect;
 import android.os.Vibrator;
 import android.os.VibratorManager;
+import android.media.session.MediaSessionManager;
 import android.view.MotionEvent;
 import android.view.ViewConfiguration;
 import android.view.WindowInsets;
@@ -111,6 +112,18 @@ final class FanRuntime {
 
     private final RecentsCleanCoverController recentsCleanCover;
 
+    private final MediaSessionManager miniMediaSessions;
+
+    private final MiniFreeformMediaHost miniMediaHost;
+
+    private MiniFreeformMediaController miniMediaController;
+
+    private String miniMediaPackage;
+
+    private int miniMediaTaskId = -1;
+
+    private Rect miniMediaBounds;
+
     private final float cornerTapSlop;
 
     private final long cornerTapTimeoutMs;
@@ -130,6 +143,10 @@ final class FanRuntime {
     private int cachedStatusBarGestureHeight;
 
     private volatile GestureConfig config = GestureConfig.defaults();
+
+    boolean notificationFreeformEnabled() {
+        return config.notificationFreeformEnabled;
+    }
 
     private volatile List<RuntimeTarget> targets = Collections.emptyList();
 
@@ -322,6 +339,8 @@ final class FanRuntime {
         directionDecisionDistance = Math.max(cornerTapSlop, 10 * density);
         fanEarlyClaimDistance = Math.max(density, cornerTapSlop / 4f);
         recentsCleanCover = new RecentsCleanCoverController(context, windowManager);
+        miniMediaSessions = context.getSystemService(MediaSessionManager.class);
+        miniMediaHost = new MiniFreeformMediaHost(context, windowManager);
         sideDirectionSlop = cornerTapSlop;
         sideVerticalFloor = 24 * density;
         overlay = new FanOverlayController(context, mainHandler);
@@ -531,6 +550,7 @@ final class FanRuntime {
 
     void onTaskInfo(Object info) {
         freeform.onTaskInfo(info);
+        updateMiniMedia(info);
         releaseOutsideCaptureTransitionIfSettled();
         refreshForegroundGestureExclusion();
         refreshTriggerCapture();
@@ -547,6 +567,7 @@ final class FanRuntime {
 
     void onTaskVanished(int taskId) {
         freeform.onTaskVanished(taskId);
+        clearMiniMediaForTask(taskId);
         releaseOutsideCaptureTransitionIfSettled();
         refreshForegroundGestureExclusion();
         refreshTriggerCapture();
@@ -558,6 +579,142 @@ final class FanRuntime {
             syncImeGestureProtection(false);
             imeDismissTap = false;
             capturedImeDismissTap = false;
+        }
+    }
+
+    /** Feeds the media decoration from the same task callback that observes mini state. */
+    private void updateMiniMedia(Object info) {
+        if (info == null) return;
+        int taskId = miniMediaTaskId(info);
+        if (taskId < 0) return;
+        boolean mini = booleanCall(info, "isMiniState", false);
+        boolean pinned = booleanCall(info, "isInPinMode", false)
+                || booleanCall(info, "isMiniPinedState", false)
+                || booleanCall(info, "isNormalPinedState", false);
+        if (!mini || pinned || !isMiniMediaTaskVisible(info)) {
+            if (taskId == miniMediaTaskId) clearMiniMedia();
+            return;
+        }
+        String packageName = miniMediaPackage(info);
+        Rect bounds = miniMediaBounds(info);
+        if (packageName == null || packageName.isEmpty() || bounds == null || bounds.isEmpty()) {
+            if (taskId == miniMediaTaskId) clearMiniMedia();
+            return;
+        }
+        if (miniMediaController != null && !packageName.equals(miniMediaPackage))
+            destroyMiniMediaController();
+        miniMediaTaskId = taskId;
+        miniMediaPackage = packageName;
+        miniMediaBounds = new Rect(bounds);
+        if (!config.miniMediaControlsEnabled) {
+            destroyMiniMediaController();
+            return;
+        }
+        startOrUpdateMiniMediaController();
+    }
+
+    private void refreshMiniMediaConfig() {
+        if (miniMediaPackage == null || miniMediaTaskId < 0 || miniMediaBounds == null) return;
+        if (!config.miniMediaControlsEnabled) {
+            destroyMiniMediaController();
+            return;
+        }
+        startOrUpdateMiniMediaController();
+    }
+
+    private void startOrUpdateMiniMediaController() {
+        if (miniMediaController == null) {
+            if (miniMediaSessions == null) return;
+            try {
+                miniMediaController = new MiniFreeformMediaController(context,
+                        new MiniFreeformMediaController.ControllerSessionSource(
+                                miniMediaSessions, mainHandler),
+                        new MiniFreeformMediaController.XiaomiPlayerVolume(
+                                context, miniMediaPackage), miniMediaHost);
+            } catch (RuntimeException error) {
+                Log.e("Cannot create mini media controller package=" + miniMediaPackage, error);
+                return;
+            }
+        }
+        miniMediaController.update(miniMediaPackage, miniMediaTaskId,
+                new Rect(miniMediaBounds), config.miniMediaControlsEnabled,
+                config.miniMediaAutoMute);
+    }
+
+    private void clearMiniMediaForTask(int taskId) {
+        if (taskId == miniMediaTaskId) clearMiniMedia();
+    }
+
+    private void clearMiniMedia() {
+        destroyMiniMediaController();
+        miniMediaPackage = null;
+        miniMediaTaskId = -1;
+        miniMediaBounds = null;
+    }
+
+    private void destroyMiniMediaController() {
+        if (miniMediaController != null) miniMediaController.destroy();
+        miniMediaController = null;
+    }
+
+    private static int miniMediaTaskId(Object info) {
+        try {
+            Object value = XposedHelpers.callMethod(info, "getTaskId");
+            return value instanceof Number ? ((Number) value).intValue() : -1;
+        } catch (Throwable ignored) {
+            return -1;
+        }
+    }
+
+    private static Rect miniMediaBounds(Object info) {
+        try {
+            Object value = XposedHelpers.callMethod(info, "getScaledBounds");
+            return value instanceof Rect ? new Rect((Rect) value) : null;
+        } catch (Throwable ignored) {
+            return null;
+        }
+    }
+
+    private static String miniMediaPackage(Object info) {
+        try {
+            Object task = XposedHelpers.callMethod(info, "getTaskInfo");
+            if (task instanceof ActivityManager.RunningTaskInfo) {
+                ActivityManager.RunningTaskInfo running = (ActivityManager.RunningTaskInfo) task;
+                ComponentName component = running.topActivity;
+                if (component == null) {
+                    Object realActivity = XposedHelpers.getObjectField(running, "realActivity");
+                    if (realActivity instanceof ComponentName)
+                        component = (ComponentName) realActivity;
+                }
+                if (component == null) component = running.baseActivity;
+                return component == null ? "" : component.getPackageName();
+            }
+            for (String field : new String[]{"topActivity", "realActivity", "baseActivity"}) {
+                Object value = XposedHelpers.getObjectField(task, field);
+                if (value instanceof ComponentName) return ((ComponentName) value).getPackageName();
+            }
+        } catch (Throwable ignored) {
+            // Task info is vendor-private; an unavailable package cannot be controlled.
+        }
+        return "";
+    }
+
+    private static boolean isMiniMediaTaskVisible(Object info) {
+        try {
+            Object task = XposedHelpers.callMethod(info, "getTaskInfo");
+            return booleanCall(task, "isVisible", true);
+        } catch (Throwable ignored) {
+            return true;
+        }
+    }
+
+    private static boolean booleanCall(Object target, String method, boolean fallback) {
+        if (target == null) return fallback;
+        try {
+            Object value = XposedHelpers.callMethod(target, method);
+            return value instanceof Boolean ? (Boolean) value : fallback;
+        } catch (Throwable ignored) {
+            return fallback;
         }
     }
 
@@ -2464,6 +2621,7 @@ final class FanRuntime {
                 if (activeTargets.isEmpty())
                     activeTargets = nextTargets;
                 freeform.updateConfig(next);
+                refreshMiniMediaConfig();
                 if (!next.honeycombEnabled && honeycombOverlay.isVisible()) {
                     honeycombOverlay.dismiss();
                 }

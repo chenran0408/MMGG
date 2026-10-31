@@ -371,7 +371,16 @@ final class MiniFreeformMediaController {
         if (!enabled || packageName == null) return;
         Session next = null;
         if (selected == null || selected.valid()) {
-            List<Session> active = sessions.activeSessions();
+            List<Session> active;
+            try {
+                active = sessions.activeSessions();
+            } catch (RuntimeException error) {
+                // SystemUI may temporarily lose media-session access while userspace
+                // services restart. Keep the mini task callback alive and hide controls
+                // until the next session change instead of propagating into task handling.
+                Log.e("Cannot read active mini media sessions", error);
+                active = java.util.Collections.emptyList();
+            }
             if (active != null) {
                 for (Session candidate : active) {
                     if (candidate == null || !candidate.valid()

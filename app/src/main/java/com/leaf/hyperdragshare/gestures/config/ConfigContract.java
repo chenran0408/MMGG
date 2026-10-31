@@ -465,6 +465,16 @@ public final class ConfigContract {
     public static final boolean DEFAULT_OUTSIDE_ENABLED = true;
     public static final boolean DEFAULT_OUTSIDE_PORTRAIT_ENABLED = true;
     public static final boolean DEFAULT_OUTSIDE_LANDSCAPE_ENABLED = true;
+    public static final String KEY_NOTIFICATION_FREEFORM_ENABLED = "notification_freeform_enabled";
+    public static final String KEY_MINI_MEDIA_CONTROLS_ENABLED = "mini_media_controls_enabled";
+    public static final String KEY_MINI_MEDIA_AUTO_MUTE = "mini_media_auto_mute";
+    public static final String KEY_REMOVE_FREEFORM_BLACKLIST = "remove_freeform_blacklist";
+    public static final String KEY_REMOVE_FREEFORM_COUNT_LIMIT = "remove_freeform_count_limit";
+    public static final boolean DEFAULT_NOTIFICATION_FREEFORM_ENABLED = false;
+    public static final boolean DEFAULT_MINI_MEDIA_CONTROLS_ENABLED = false;
+    public static final boolean DEFAULT_MINI_MEDIA_AUTO_MUTE = false;
+    public static final boolean DEFAULT_REMOVE_FREEFORM_BLACKLIST = false;
+    public static final boolean DEFAULT_REMOVE_FREEFORM_COUNT_LIMIT = false;
     public static final int MIN_OUTSIDE_TAP_WINDOW_MS = 120;
     public static final int MAX_OUTSIDE_TAP_WINDOW_MS = 450;
     public static final int HONEYCOMB_MODE_BROWSE = 0;
