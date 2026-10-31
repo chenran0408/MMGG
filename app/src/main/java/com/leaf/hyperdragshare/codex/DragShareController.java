@@ -1330,15 +1330,6 @@ final class DragShareController {
             updatePreviewPosition(x, y);
             updatePortalPullEffect(x, y);
             updateGestureMenuPosition(x, y);
-            if (GestureMath.shouldDeferToBottomInputDropZone(
-                    x, y, screenWidth, screenHeight, bottomInset, dp(110),
-                    Math.max(dp(settings.edgeTriggerDp), dp(MENU_TRIGGER_DP)), simpleMenuPosition)) {
-                if (menuShown) {
-                    if (isCircleStyle()) hideCircleMenu();
-                    else hideLinearMenu();
-                }
-                return;
-            }
             if (isCircleStyle()) {
                 updateCirclePointer(x, y);
                 if (menuShown) {

@@ -83,57 +83,57 @@ public final class DragMenuDirectionTest {
         }
     }
 
-    @Test public void bottomInputDropZoneDoesNotMaskBottomMenuTriggerAcrossStyles() {
-        int width = 1080;
-        int height = 2400;
-        int bottomInset = 96;
-        int triggerY = height - bottomInset - 40;
-        int zoneHeight = 412;
-        for (int style = 0; style < 4; style++) {
-            Bundle values = new Bundle();
-            values.putInt("ui_style", style);
-            for (int fixedEdge = DragShareSettings.SIMPLE_MENU_POSITION_TOP;
-                    fixedEdge <= DragShareSettings.SIMPLE_MENU_POSITION_RIGHT; fixedEdge++) {
-                values.putInt("simple_menu_position", fixedEdge);
-                int configured = DragShareSettings.fromBundle(values).simpleMenuPosition;
-                int effectiveEdge = GestureMath.initialMenuPosition(configured, width / 2f, width);
-                boolean defer = GestureMath.shouldDeferToBottomInputDropZone(
-                        width / 2f, triggerY, width, height, bottomInset, zoneHeight, 180, effectiveEdge);
-                assertEquals("style=" + style + ", fixedEdge=" + fixedEdge,
-                        effectiveEdge != DragShareSettings.SIMPLE_MENU_POSITION_BOTTOM, defer);
+    @Test public void bottomAreaDoesNotForceAnOpenMenuClosed() throws Exception {
+        DragShareController controller = new DragShareController(RuntimeEnvironment.getApplication());
+        Bundle values = new Bundle();
+        values.putBoolean("close_menu_when_pointer_leaves", false);
+        field("settings").set(controller, DragShareSettings.fromBundle(values));
+        field("active").setBoolean(controller, true);
+        field("screenWidth").setInt(controller, 1000);
+        field("screenHeight").setInt(controller, 2000);
+        field("bottomInset").setInt(controller, 0);
+        field("configuredSimpleMenuPosition").setInt(controller, DragShareSettings.SIMPLE_MENU_POSITION_TOP);
+        field("simpleMenuPosition").setInt(controller, DragShareSettings.SIMPLE_MENU_POSITION_TOP);
+        field("menuShown").setBoolean(controller, true);
+        var move = DragShareController.class.getDeclaredMethod("handlePointerOnMain", float.class, float.class);
+        move.setAccessible(true);
+        try {
+            for (float x : new float[]{100f, 500f, 900f}) {
+                field("menuShown").setBoolean(controller, true);
+                move.invoke(controller, x, 1990f);
+                assertTrue("bottom-area x=" + x + " must not force the menu closed",
+                        field("menuShown").getBoolean(controller));
             }
-
-            values.putInt("simple_menu_position", DragShareSettings.SIMPLE_MENU_POSITION_DRAG_EDGE);
-            int configuredFollow = DragShareSettings.fromBundle(values).simpleMenuPosition;
-            int initialFollowEdge = GestureMath.initialMenuPosition(configuredFollow, width / 2f, width);
-            int followedEdge = GestureMath.nearestMenuEdge(width / 2f, triggerY,
-                    width, 80, height - bottomInset, 180, initialFollowEdge);
-            assertEquals(DragShareSettings.SIMPLE_MENU_POSITION_BOTTOM, followedEdge);
-            assertFalse("style=" + style + " follow-to-bottom",
-                    GestureMath.shouldDeferToBottomInputDropZone(
-                            width / 2f, triggerY, width, height, bottomInset, zoneHeight, 180, followedEdge));
+        } finally {
+            controller.destroy();
         }
     }
 
-    @Test public void bottomInputDropZoneStillKeepsCentralDropAndSideAreas() {
-        int width = 1080;
-        int height = 2400;
-        int bottomInset = 96;
-        int zoneHeight = 412;
-        int top = DragShareSettings.SIMPLE_MENU_POSITION_TOP;
-        assertTrue(GestureMath.shouldDeferToBottomInputDropZone(
-                width / 2f, height - bottomInset - 40, width, height, bottomInset, zoneHeight, 180, top));
-        assertFalse(GestureMath.shouldDeferToBottomInputDropZone(
-                width * 0.1f, height - bottomInset - 40, width, height, bottomInset, zoneHeight, 180, top));
-        assertFalse(GestureMath.shouldDeferToBottomInputDropZone(
-                width / 2f, height - bottomInset - zoneHeight - 1, width, height,
-                bottomInset, zoneHeight, 180, top));
-        assertTrue(GestureMath.shouldDeferToBottomInputDropZone(
-                width / 2f, height - bottomInset - 220, width, height,
-                bottomInset, zoneHeight, 180, DragShareSettings.SIMPLE_MENU_POSITION_BOTTOM));
-        assertFalse(GestureMath.shouldDeferToBottomInputDropZone(
-                width / 2f, height - bottomInset - 40, width, height,
-                bottomInset, zoneHeight, 180, DragShareSettings.SIMPLE_MENU_POSITION_BOTTOM));
+    @Test public void closeWhenLeavesStillClosesMenuAfterPointerExitsItsZone() throws Exception {
+        DragShareController controller = new DragShareController(RuntimeEnvironment.getApplication());
+        Bundle values = new Bundle();
+        values.putBoolean("close_menu_when_pointer_leaves", true);
+        field("settings").set(controller, DragShareSettings.fromBundle(values));
+        field("active").setBoolean(controller, true);
+        field("screenWidth").setInt(controller, 1000);
+        field("screenHeight").setInt(controller, 2000);
+        field("bottomInset").setInt(controller, 0);
+        field("configuredSimpleMenuPosition").setInt(controller, DragShareSettings.SIMPLE_MENU_POSITION_TOP);
+        field("simpleMenuPosition").setInt(controller, DragShareSettings.SIMPLE_MENU_POSITION_TOP);
+        field("menuShown").setBoolean(controller, true);
+        field("menuLeft").setInt(controller, 300);
+        field("menuTop").setInt(controller, 300);
+        field("menuWidth").setInt(controller, 400);
+        field("menuHeight").setInt(controller, 200);
+        var move = DragShareController.class.getDeclaredMethod("handlePointerOnMain", float.class, float.class);
+        move.setAccessible(true);
+        try {
+            move.invoke(controller, 900f, 1000f);
+            assertFalse("the regular close-on-leave setting must still close the menu",
+                    field("menuShown").getBoolean(controller));
+        } finally {
+            controller.destroy();
+        }
     }
 
     private static Field field(String name) throws Exception {

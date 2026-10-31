@@ -180,20 +180,6 @@ final class GestureMath {
         return distances[edge] <= trigger ? edge : -1;
     }
 
-    /**
-     * Preserve the central bottom input drop area except where it overlaps an
-     * active bottom menu's actual edge-trigger band.
-     */
-    static boolean shouldDeferToBottomInputDropZone(float x, float y, int width,
-            int height, int bottomInset, int zoneHeight, int bottomTriggerHeight, int menuPosition) {
-        boolean inInputDropArea = y >= height - bottomInset - zoneHeight
-                && x >= width * 0.15f
-                && x <= width * 0.85f;
-        boolean inBottomMenuTrigger = menuPosition == DragShareSettings.SIMPLE_MENU_POSITION_BOTTOM
-                && y >= height - bottomInset - bottomTriggerHeight;
-        return inInputDropArea && !inBottomMenuTrigger;
-    }
-
     static float clamp01(float value) {
         return Math.max(0f, Math.min(1f, value));
     }
