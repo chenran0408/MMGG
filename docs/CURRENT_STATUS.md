@@ -21,14 +21,21 @@
 
 ## 最新验证
 
-当前源码版本为 `1.7.219-beta.35` / versionCode `277`，修复源码提交 `adf122c`，版本提交 `d6c4a31`。
+当前源码版本为 `1.7.219-beta.36` / versionCode `278`，小窗扩展提交 `9b0006e`，版本提交 `ed7a2f3`。
 
-- 全量 `testDebugUnitTest`：838 项通过，0 failures、0 errors、0 skipped。
-- `lintDebug`：0 errors、181 warnings。
+- 全量 `testDebugUnitTest`：866 项通过，0 failures、0 errors、0 skipped。
+- `lintDebug`：0 errors、189 warnings、2 hints。
 - `assembleDebug`：通过。
 - `assembleBeta`（含 R8）：通过。
-- Beta35 APK：`D:/CODEX/Tasks/2026-10-31/mmgg-portal-root-diagnosis/outputs/MMGG-1.7.219-beta.35.apk`，SHA-256 `814C580982039A63BE5890913FAF4D21190EC88C5643D6262E7F262352AD5214`；包元数据、R8和签名核验通过，与Beta34同一Android Debug签名。
-- 本轮未连接设备、未安装或实机验收；不沿用旧设备连接状态。
+- Beta36 APK：`D:/CODEX/Tasks/2026-10-31/mmgg-os4-freeform-completion/outputs/MMGG-1.7.219-beta.36.apk`，SHA-256 `6BB3FA0622D0D8E75F1C5A4B3251F801ACA8435C6AB70DBAAB311BDA8F07A272`；包元数据、R8和Android Debug签名核验通过。
+- 本轮已在本人设备通过 `adb install -r` 安装并启动 MMGG；SystemUI/System Server 未重载，因此新增系统 Hook 的设备命中状态仍未知。
+
+### 2026-10-31 OS4 小窗接入增量
+
+- 通知栏小窗：仅改写 SystemUI 已存在的 Xiaomi 小窗 Action，受独立开关控制，默认关闭。
+- 迷你小窗媒体控件：按 mini task 和 MediaSession 显示播放/暂停、上一首/下一首，可选静音租约，默认关闭；媒体会话或 Xiaomi 音量接口不可用时保持原小窗。
+- 黑名单和数量限制：仅在 `android/android` system_server 安装精确方法 Hook，两个开关独立控制，读取配置失败保持关闭。
+- 微信底部特殊菜单避让已由 `2ddc316` 移除；这不等同于微信最终接收或发送成功。
 
 ## 2026-10-31 传送门 Root 提示调查
 
