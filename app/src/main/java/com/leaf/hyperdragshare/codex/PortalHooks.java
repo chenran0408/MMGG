@@ -552,7 +552,9 @@ final class PortalHooks {
                             : null);
         }
         PressCaptureSource thumb = thumbCaptureSource;
-        if (thumb != null) thumb.onPointerEvent(action, x, y, eventTime);
+        if (thumb != null && (current == null || !current.hasPendingImagePreview())) {
+            thumb.onPointerEvent(action, x, y, eventTime);
+        }
     }
 
     private static void configureThumbCapture(Context context, DragShareSettings settings) {

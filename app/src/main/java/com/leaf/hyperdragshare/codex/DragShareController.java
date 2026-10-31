@@ -16,6 +16,7 @@ import android.os.Looper;
 import android.os.SystemClock;
 import android.util.TypedValue;
 import android.view.Gravity;
+import android.view.HapticFeedbackConstants;
 import android.view.MotionEvent;
 import android.view.View;
 import android.view.ViewGroup;
@@ -154,11 +155,17 @@ final class DragShareController {
     private volatile boolean active;
     private volatile boolean destroyed;
     private volatile long rootDownTime = -1L;
+    private volatile long releasedRootDownTime = -1L;
     private volatile long pressHandoffTime = -1L;
     private volatile long pressPipelineDownTime = -1L;
     // startPick*Task can create Taplus' full-screen float view before this controller reaches
     // the main thread. Keep its window suppressed during that small handoff.
     private volatile boolean pendingPortalHostFloatWindowSuppression;
+    private volatile CapturedContent pendingImagePreview;
+    private DragShareSettings pendingImageSettings;
+    private long pendingImageOriginDownTime = -1L;
+    private boolean activeImageDragStartedFromPreview;
+    private final PendingPreviewGesture pendingPreviewGesture = new PendingPreviewGesture();
     private volatile float lastObservedX = -1;
     private volatile float lastObservedY = -1;
     private volatile long lastObservedEventTime;
@@ -344,10 +351,14 @@ final class DragShareController {
             float initialX,
             float initialY,
             DragShareSettings loadedSettings) {
+        show(content, initialX, initialY, loadedSettings, rootDownTime);
+    }
+
+    void show(CapturedContent content, float initialX, float initialY,
+              DragShareSettings loadedSettings, long downTime) {
         if (content == null) {
             return;
         }
-        long downTime = rootDownTime;
         runOnMain(() -> showOnMain(content, initialX, initialY, loadedSettings, downTime));
     }
 
@@ -376,8 +387,110 @@ final class DragShareController {
         });
     }
 
+    /** Holds an image as a bounded, touchable preview until the user starts a second drag. */
+    void showPendingImagePreview(CapturedContent content, float x, float y,
+                                 DragShareSettings loadedSettings, long originDownTime) {
+        if (content == null || !content.isImage()) return;
+        runOnMain(() -> {
+            boolean ownsRootRelease = isRootPressCurrentOrReleased(originDownTime);
+            if (!ownsRootRelease) {
+                recycleOwnedImage(content);
+                OperationTrace.event(OperationTrace.id("press", originDownTime),
+                        "preview", "pending_image_late_ignored");
+                return;
+            }
+            if (destroyed || (loadedSettings != null && !loadedSettings.isSharingEnabled(true))) {
+                recycleOwnedImage(content);
+                return;
+            }
+            dismissPendingImagePreview(true);
+            active = false;
+            settings = loadedSettings == null ? DragShareSettings.defaults() : loadedSettings;
+            pendingImagePreview = content;
+            pendingImageSettings = settings;
+            pendingImageOriginDownTime = originDownTime;
+            palette = OverlayColors.from(settings.isDarkTheme(context));
+            refreshDisplayGeometry();
+            try {
+                createPreview(content);
+                previewParams.flags &= ~WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE;
+                previewView.setOnTouchListener((view, event) -> true);
+                if (isModernStyle()) modernPreviewWindow.show();
+                else windowManager.addView(previewView, previewParams);
+                // The bounded preview consumes only its own View stream. Root remains the
+                // sole owner of drag recognition and outside-tap cancellation.
+                float initialX = Float.isFinite(x) && x >= 0f ? x : screenWidth / 2f;
+                float initialY = Float.isFinite(y) && y >= 0f
+                        ? y : Math.max(topInset + dp(80), screenHeight * 0.32f);
+                updatePreviewPosition(initialX, initialY);
+                startPreviewEnterAnimation();
+                OperationTrace.event(OperationTrace.id("press", originDownTime),
+                        "preview", "pending_image_shown");
+            } catch (RuntimeException error) {
+                dismissPendingImagePreview(true);
+                failOverlay("图片预览窗口创建失败", error);
+            }
+        });
+    }
+
+    private void promotePendingImagePreview(float x, float y, long eventTime) {
+        CapturedContent payload = pendingImagePreview;
+        if (payload == null) return;
+        if (previewView != null) previewView.performHapticFeedback(HapticFeedbackConstants.LONG_PRESS);
+        DragShareSettings loadedSettings = pendingImageSettings;
+        long down = rootDownTime;
+        float startX = pendingPreviewGesture.startX();
+        float startY = pendingPreviewGesture.startY();
+        dismissPendingImagePreview(false);
+        pressHandoffTime = -1L;
+        pressPipelineDownTime = -1L;
+        showOnMain(payload, x, y, loadedSettings, down);
+        activeImageDragStartedFromPreview = active && session != null && session.payload == payload;
+        handleMotionOnMain(MotionEvent.ACTION_DOWN, startX, startY, down, "root", null);
+        handleMotionOnMain(MotionEvent.ACTION_MOVE, x, y, eventTime, "root", null);
+    }
+
+    private boolean isRootPressCurrentOrReleased(long pressDownTime) {
+        if (pressDownTime < 0L) return false;
+        if (rootDownTime >= 0L) {
+            return releasedRootDownTime < 0L && rootDownTime <= pressDownTime;
+        }
+        return releasedRootDownTime >= 0L && releasedRootDownTime <= pressDownTime;
+    }
+
+    private void dismissPendingImagePreview(boolean recyclePayload) {
+        CapturedContent payload = pendingImagePreview;
+        pendingImagePreview = null;
+        pendingImageSettings = null;
+        pendingImageOriginDownTime = -1L;
+        pendingPreviewGesture.reset();
+        if (previewView != null || modernPreviewWindow != null) removeGestureViews();
+        if (recyclePayload) recycleOwnedImage(payload);
+    }
+
+    private static void recycleOwnedImage(CapturedContent content) {
+        if (content != null && content.isImage() && content.bitmapOwnedByDragShare
+                && !content.bitmap.isRecycled()) content.bitmap.recycle();
+    }
+
+    private void handlePendingOutsideEvent(int action, float x, float y, long eventTime) {
+        if (pendingImagePreview == null || previewParams == null) return;
+        PendingPreviewGesture.Outcome outcome = pendingPreviewGesture.onEvent(
+                action, x, y, previewParams.x, previewParams.y,
+                previewParams.x + previewWidth, previewParams.y + previewHeight,
+                android.view.ViewConfiguration.get(context).getScaledTouchSlop());
+        if (outcome == PendingPreviewGesture.Outcome.START_DRAG) {
+            promotePendingImagePreview(x, y, eventTime);
+        } else if (outcome == PendingPreviewGesture.Outcome.CANCEL_PREVIEW) {
+            dismissPendingImagePreview(true);
+        }
+    }
+
     void cancelActiveSession() {
-        runOnMain(() -> cancelGestureOnMain("explicit_cancel_active_session"));
+        runOnMain(() -> {
+            if (pendingImagePreview != null) dismissPendingImagePreview(true);
+            cancelGestureOnMain("explicit_cancel_active_session");
+        });
     }
 
     float latestPointerX() {
@@ -386,6 +499,10 @@ final class DragShareController {
 
     float latestPointerY() {
         return lastObservedY;
+    }
+
+    boolean hasPendingImagePreview() {
+        return pendingImagePreview != null;
     }
 
     void acceptPointerEvent(
@@ -407,6 +524,7 @@ final class DragShareController {
         if ("root".equals(source) && action == MotionEvent.ACTION_DOWN) {
             diagnosticSourcePackage = null;
             rootDownTime = eventTime;
+            releasedRootDownTime = -1L;
             pressHandoffTime = -1L;
             pressPipelineDownTime = -1L;
         }
@@ -433,6 +551,11 @@ final class DragShareController {
             }
             boolean traceWasActive = active;
             gestureTrace.record(action, x, y, eventTime, source);
+            boolean pendingPreviewOwnsRootEvent = "root".equals(source)
+                    && pendingImagePreview != null;
+            if (pendingPreviewOwnsRootEvent) {
+                handlePendingOutsideEvent(action, x, y, eventTime);
+            }
             if (active && !inputSourceLogged) {
                 inputSourceLogged = true;
                 log("input source=" + source
@@ -440,14 +563,24 @@ final class DragShareController {
                         + " point=" + Math.round(x) + "," + Math.round(y));
             }
             try {
-                handleMotionOnMain(action, x, y, eventTime, source, beforeFinish);
+                if (pendingPreviewOwnsRootEvent) {
+                    if (action == MotionEvent.ACTION_UP || action == MotionEvent.ACTION_CANCEL) {
+                        finishGestureOnMain(false, beforeFinish,
+                                source + "_pending_preview_terminal");
+                    }
+                } else {
+                    handleMotionOnMain(action, x, y, eventTime, source, beforeFinish);
+                }
             } finally {
                 if (action == MotionEvent.ACTION_UP || action == MotionEvent.ACTION_CANCEL) {
                     finishGestureTrace(source, eventTime, traceWasActive);
                 }
                 if ("root".equals(source)
                         && (action == MotionEvent.ACTION_UP || action == MotionEvent.ACTION_CANCEL)) {
-                    if (rootDownTime == downTime) rootDownTime = -1L;
+                    if (rootDownTime == downTime) {
+                        if (action == MotionEvent.ACTION_UP) releasedRootDownTime = downTime;
+                        rootDownTime = -1L;
+                    }
                     if (pressHandoffTime == downTime) pressHandoffTime = -1L;
                     endPressPipeline(downTime);
                 }
@@ -527,6 +660,7 @@ final class DragShareController {
             disposeModernOverlayPrewarm();
             stopEdgeScroll();
             backgroundTouchBlocker.stop();
+            dismissPendingImagePreview(true);
             removeGestureViews();
             dragShareToast.close();
         });
@@ -547,25 +681,33 @@ final class DragShareController {
             log("native preview skipped because no physical Root gesture was observed");
             return;
         }
-        if (downTime != rootDownTime || (downTime >= 0L && downTime == pressHandoffTime)) {
+        boolean ownsCurrentPress = isRootPressCurrentOrReleased(downTime);
+        if (!ownsCurrentPress || (downTime >= 0L && downTime == pressHandoffTime)) {
             pendingPortalHostFloatWindowSuppression = false;
             OperationTrace.event(operation, "show", "rejected_stale");
+            recycleOwnedImage(payload);
             return;
         }
         if (destroyed) {
             pendingPortalHostFloatWindowSuppression = false;
             OperationTrace.event(operation, "show", "rejected_destroyed");
+            recycleOwnedImage(payload);
             return;
+        }
+        if (pendingImagePreview != null && pendingImagePreview != payload) {
+            dismissPendingImagePreview(true);
         }
         if (active) {
             pendingPortalHostFloatWindowSuppression = false;
             OperationTrace.event(operation, "show", "rejected_duplicate");
+            recycleOwnedImage(payload);
             if (!duplicateStartLogged) {
                 duplicateStartLogged = true;
                 log("duplicate Taplus start ignored during active drag");
             }
             return;
         }
+        activeImageDragStartedFromPreview = false;
         active = false;
         inputSourceLogged = false;
         duplicateStartLogged = false;
@@ -1279,6 +1421,7 @@ final class DragShareController {
             long eventTime,
             String source,
             Runnable beforeFinish) {
+        if (pendingImagePreview != null) return;
         if (!active) {
             if (action == MotionEvent.ACTION_UP || action == MotionEvent.ACTION_CANCEL) {
                 finishGestureOnMain(false, beforeFinish, source + "_terminal_while_inactive");
@@ -1884,6 +2027,10 @@ final class DragShareController {
         // HyperOS can silently reject an AccessibilityService activity start after its last
         // accessibility overlay has been removed. Keep the passive overlay attached through
         // the user-selected launch, then clean it up in the same main-thread turn.
+        boolean restorePendingImage = activeImageDragStartedFromPreview
+                && finished != null && finished.payload.isImage()
+                && (!allowShare || target == null);
+        activeImageDragStartedFromPreview = false;
         if (allowShare && target != null && finished != null) {
             OperationTrace.event(finished.operationId, "target", "selected");
             if (!finished.payload.isImage()
@@ -1894,11 +2041,18 @@ final class DragShareController {
                 finished.pendingTarget = target;
                 showToast("正在准备图片");
             }
-        } else if (finished != null && finished.pendingTarget == null) {
+        } else if (!restorePendingImage && finished != null && finished.pendingTarget == null) {
             OperationTrace.event(finished.operationId, "target", allowShare ? "rejected" : "cancelled");
             finished.cancelled = true;
         }
-        removeGestureViews(true);
+        if (restorePendingImage) {
+            finished.cancelled = true;
+            removeGestureViews();
+            showPendingImagePreview(finished.payload, lastX, lastY, settings,
+                    finished.rootDownTime);
+        } else {
+            removeGestureViews(true);
+        }
     }
 
     private void cancelGestureOnMain() {
@@ -1909,15 +2063,25 @@ final class DragShareController {
         if (!active) {
             return;
         }
+        Session cancelled = session;
+        boolean restorePendingImage = activeImageDragStartedFromPreview
+                && cancelled != null && cancelled.payload.isImage();
+        activeImageDragStartedFromPreview = false;
         active = false;
         traceDiagnostic("DRAG_STOP", reason, "CANCELLED");
         if (session != null) OperationTrace.event(session.operationId, "gesture", "cancelled");
         cancelStaleInputWatchdog();
         stopEdgeScroll();
         backgroundTouchBlocker.stop();
-        removeGestureViews(true);
-        if (session != null && session.pendingTarget == null) {
-            session.cancelled = true;
+        if (cancelled != null && cancelled.pendingTarget == null) {
+            cancelled.cancelled = true;
+        }
+        if (restorePendingImage) {
+            removeGestureViews();
+            showPendingImagePreview(cancelled.payload, lastX, lastY, settings,
+                    cancelled.rootDownTime);
+        } else {
+            removeGestureViews(true);
         }
     }
 

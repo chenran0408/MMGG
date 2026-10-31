@@ -64,6 +64,8 @@ final class PressCaptureSource implements RootTouchSource.ContactListener {
     private volatile long generation;
     private volatile boolean pointerDown;
     private volatile long downTime = -1L;
+    private volatile PressReleaseMode.Mode releaseMode = PressReleaseMode.Mode.NONE;
+    private volatile boolean released;
     private boolean lookupRunning;
     private boolean displayQueued;
     private long confirmedAt;
@@ -248,6 +250,8 @@ final class PressCaptureSource implements RootTouchSource.ContactListener {
         if (action == MotionEvent.ACTION_DOWN) {
             cancelGesture();
             downTime = time;
+            releaseMode = PressReleaseMode.Mode.NONE;
+            released = false;
             twoFingerModeForGesture = isTwoFingerPressEnabled();
             twoFingerPressQualified = !twoFingerModeForGesture;
             if (twoFingerModeForGesture) {
@@ -266,6 +270,9 @@ final class PressCaptureSource implements RootTouchSource.ContactListener {
             cancelGesture();
             return;
         }
+        if (action == MotionEvent.ACTION_UP && pressTriggerQualified() && detector.isActive()) {
+            detector.fire(time);
+        }
         boolean hadFired = detector.isFired();
         // Once the two-finger hold has fired, the remaining finger owns the
         // drag stream. Do not feed its single-pointer MOVE/UP back into the
@@ -273,7 +280,13 @@ final class PressCaptureSource implements RootTouchSource.ContactListener {
         if (action != MotionEvent.ACTION_DOWN && !detector.isFired()) {
             detector.onPointerEvent(action, x, y, 1);
         }
-        if (action == MotionEvent.ACTION_UP) pointerDown = false;
+        if (action == MotionEvent.ACTION_UP) {
+            releaseMode = hadFired
+                    ? PressReleaseMode.classify(time - downTime, pressThresholdMillis())
+                    : PressReleaseMode.Mode.NONE;
+            released = true;
+            pointerDown = false;
+        }
         if (action == MotionEvent.ACTION_MOVE
                 && Math.hypot(x - downX, y - downY) > WECHAT_DRAG_DISTANCE_DP
                         * context.getResources().getDisplayMetrics().density) {
@@ -285,6 +298,12 @@ final class PressCaptureSource implements RootTouchSource.ContactListener {
             main.removeCallbacks(classify);
             main.removeCallbacks(fire);
             blocker.stopAsync();
+            detector.cancel();
+            if (releaseMode == PressReleaseMode.Mode.NONE) {
+                cancelGesture();
+            } else if (cached != null) {
+                display();
+            }
             return;
         }
         if (!detector.isActive()) {
@@ -309,6 +328,11 @@ final class PressCaptureSource implements RootTouchSource.ContactListener {
     private boolean handleContactEvent(int action, float x, float y, float secondX, float secondY,
                                        int pointerCount, long eventTime) {
         if (stopped) return false;
+        boolean contactReleased = action == MotionEvent.ACTION_POINTER_UP
+                || action == MotionEvent.ACTION_UP;
+        if (contactReleased && pressTriggerQualified() && detector.isActive()) {
+            detector.fire(eventTime);
+        }
         boolean initialTwoFingerDown = pointerCount == 2 && action == MotionEvent.ACTION_DOWN
                 && !pointerDown && !detector.isActive();
         if (initialTwoFingerDown) {
@@ -319,6 +343,8 @@ final class PressCaptureSource implements RootTouchSource.ContactListener {
             }
             twoFingerModeForGesture = true;
             twoFingerPressQualified = true;
+            releaseMode = PressReleaseMode.Mode.NONE;
+            released = false;
             downTime = eventTime;
             downX = x;
             downY = y;
@@ -345,6 +371,8 @@ final class PressCaptureSource implements RootTouchSource.ContactListener {
                     ViewConfiguration.get(context).getScaledTouchSlop());
             twoFingerPressQualified = true;
             twoFingerContactSequence = true;
+            releaseMode = PressReleaseMode.Mode.NONE;
+            released = false;
             pointerDown = true;
             latestX = x;
             latestY = y;
@@ -372,10 +400,9 @@ final class PressCaptureSource implements RootTouchSource.ContactListener {
             boolean released = action == MotionEvent.ACTION_UP
                     || action == MotionEvent.ACTION_POINTER_UP;
             boolean confirmed = detector.isFired();
-            if (released && detector.isFired() && controller.isActive()) {
-                // The hold has already opened the preview. Keep the same
-                // session alive while the user lifts either trigger finger
-                // and continues dragging with the one that remains.
+            if (action == MotionEvent.ACTION_POINTER_UP && confirmed) {
+                // The first finger may leave after qualification. Keep the accepted
+                // candidate alive until the remaining Root stream really releases.
                 twoFingerContactSequence = false;
                 pointerDown = true;
                 return true;
@@ -384,11 +411,19 @@ final class PressCaptureSource implements RootTouchSource.ContactListener {
                 // Match a confirmed single-finger release: let accepted OCR/capture work
                 // finish after the Root stream cancels its now-invalid physical drag.
                 pointerDown = false;
+                releaseMode = PressReleaseMode.classify(
+                        eventTime - downTime, pressThresholdMillis());
+                this.released = true;
                 detector.cancel();
                 main.removeCallbacks(classify);
                 main.removeCallbacks(fire);
                 blocker.stopAsync();
                 finishWeChatPress();
+                if (releaseMode == PressReleaseMode.Mode.NONE) {
+                    cancelGesture();
+                } else if (cached != null) {
+                    display();
+                }
             } else {
                 cancelGesture();
             }
@@ -479,7 +514,7 @@ final class PressCaptureSource implements RootTouchSource.ContactListener {
             cached = null;
             displayQueued = false;
             controller.showContentForPressTakeover(content, latestX, latestY, settings, downTime);
-        } else if (detector.isFired()) display();
+        } else if (released && releaseMode != PressReleaseMode.Mode.NONE) display();
         else schedule();
         return true;
     }
@@ -495,6 +530,12 @@ final class PressCaptureSource implements RootTouchSource.ContactListener {
     /** Mode is captured at DOWN; only a valid second contact qualifies a two-finger press. */
     private boolean pressTriggerQualified() {
         return !twoFingerModeForGesture || twoFingerPressQualified;
+    }
+
+    private long pressThresholdMillis() {
+        return twoFingerModeForGesture
+                ? settings.resolveTwoFingerPressConfirmationTimeoutMillis()
+                : settings.resolvePressConfirmationTimeoutMillis();
     }
 
     private void schedule() {
@@ -523,8 +564,7 @@ final class PressCaptureSource implements RootTouchSource.ContactListener {
                 "ARMED", "press_duration_confirmed");
         controller.notePressPipeline(downTime);
         DragShareLog.i(TAG, "press confirmed by duration/movement elapsedMs=" + (now - detector.downTime()));
-        if (cached != null) display();
-        else if (!lookupRunning) lookup();
+        if (!released && cached == null && !lookupRunning) lookup();
     }
 
     private void lookup() {
@@ -568,7 +608,8 @@ final class PressCaptureSource implements RootTouchSource.ContactListener {
                 }
                 if (result.policyExcluded) excludedByPolicy.set(true);
                 main.post(() -> {
-                    if (request != generation || !allowed() || !pressTriggerQualified()) {
+                    if (request != generation || !captureResultStillOwned(requestDownTime)
+                            || !pressTriggerQualified()) {
                         OperationTrace.event(OperationTrace.id("press", requestDownTime), "capture",
                                 "late_ignored");
                         DragShareLog.i(TAG, "press payload dropped kind="
@@ -590,15 +631,17 @@ final class PressCaptureSource implements RootTouchSource.ContactListener {
                     cached = content;
                     controller.notePressDiagnostics(requestDownTime, content.sourcePackage,
                             detector.isFired() ? "ARMED" : "PENDING", "capture_result_available");
-                    if (detector.isFired()) display();
-                    else schedule();
+                    if (released) {
+                        if (releaseMode != PressReleaseMode.Mode.NONE) display();
+                        else cancelGesture();
+                    } else schedule();
                 });
             } catch (IOException | SecurityException error) {
                 OperationTrace.event(OperationTrace.id("press", requestDownTime), "capture",
                         "failed_" + error.getClass().getSimpleName());
                 DragShareLog.w(TAG, "press lookup failed error=" + error.getClass().getSimpleName());
                 main.post(() -> {
-                    if (stopped) return;
+                    if (stopped || request != generation || requestDownTime != downTime) return;
                     if (error instanceof SharedRootNodeCapture.ConnectionFailedException || error instanceof SecurityException) {
                         readerFailed(session, "取词连接已中断，正在重连。" + error.getMessage(), false);
                     } else if (request == generation) {
@@ -611,6 +654,11 @@ final class PressCaptureSource implements RootTouchSource.ContactListener {
                 DragShareLog.i(TAG, "press lookup stopped");
             }
         });
+    }
+
+    private boolean captureResultStillOwned(long requestDownTime) {
+        if (requestDownTime != downTime || stopped) return false;
+        return pointerDown ? allowed() : released && releaseMode != PressReleaseMode.Mode.NONE;
     }
 
     private boolean acceptAutomaticSource(long request, String source, AtomicBoolean excludedByPolicy) {
@@ -629,7 +677,7 @@ final class PressCaptureSource implements RootTouchSource.ContactListener {
         CapturedContent content = cached;
         cached = null;
         long request = generation;
-        if (request != generation || !allowed() || !pressTriggerQualified()) {
+        if (request != generation || (!released && !allowed()) || !pressTriggerQualified()) {
             DragShareLog.i(TAG, "press handoff dropped reason="
                     + (stopped ? "stopped" : "source_unavailable"));
             recycle(content);
@@ -645,7 +693,8 @@ final class PressCaptureSource implements RootTouchSource.ContactListener {
         String operation = operationId();
         Bundle text = new Bundle();
         text.putString("text", content.text);
-        text.putLong("press_confirmed_at", confirmedAt);
+        text.putLong("press_confirmed_at", confirmedAt > 0L ? confirmedAt : downTime);
+        text.putBoolean("drag_preview", releaseMode == PressReleaseMode.Mode.DRAG_PREVIEW);
         text.putString("before_text", content.beforeText);
         text.putString("after_text", content.afterText);
         text.putInt("x", Math.round(downX));
@@ -697,7 +746,7 @@ final class PressCaptureSource implements RootTouchSource.ContactListener {
             rejectWeChatScreenCapture(content, "image_candidate");
             return;
         }
-        if (!pointerDown) {
+        if (!pointerDown && !released) {
             OperationTrace.event(operationId(), "image_decision", "pointer_released");
             DragShareLog.i(TAG, "image press ended before drag preview was ready");
             recycle(content);
@@ -706,7 +755,13 @@ final class PressCaptureSource implements RootTouchSource.ContactListener {
         }
         OperationTrace.event(operationId(), "image_decision", "menu_" + captureKindOutcome(content));
         DragShareLog.i(TAG, "image press handed to drag menu source=" + content.sourcePackage);
-        controller.show(content, controller.latestPointerX(), controller.latestPointerY(), settings);
+        if (releaseMode == PressReleaseMode.Mode.DRAG_PREVIEW) {
+            controller.showPendingImagePreview(content, controller.latestPointerX(),
+                    controller.latestPointerY(), settings, downTime);
+        } else {
+            controller.show(content, controller.latestPointerX(),
+                    controller.latestPointerY(), settings, downTime);
+        }
     }
 
     private void openWeChatOcrDirect(long request, CapturedContent content) {
@@ -808,6 +863,14 @@ final class PressCaptureSource implements RootTouchSource.ContactListener {
     private void deliverWeChatText() {
         PendingWeChat pending = pendingWeChat;
         if (pending == null || !pending.ocrComplete) return;
+        if (!released) return;
+        if (releaseMode == PressReleaseMode.Mode.NONE) {
+            pendingWeChat = null;
+            recycle(pending.content);
+            controller.endPressPipeline(downTime);
+            blocker.stopAsync();
+            return;
+        }
         if (pending.textDelivered) {
             finishWeChatCandidateIfReleased(pending);
             return;
@@ -835,6 +898,7 @@ final class PressCaptureSource implements RootTouchSource.ContactListener {
         Bundle recognized = new Bundle();
         recognized.putString("text", pending.text);
         recognized.putLong("press_confirmed_at", confirmedAt);
+        recognized.putBoolean("drag_preview", releaseMode == PressReleaseMode.Mode.DRAG_PREVIEW);
         recognized.putInt("x", Math.round(downX));
         recognized.putInt("y", Math.round(downY));
         OperationTrace.put(recognized, pending.operation);
@@ -946,6 +1010,8 @@ final class PressCaptureSource implements RootTouchSource.ContactListener {
         controller.endPressPipeline(downTime);
         generation++;
         pointerDown = false;
+        released = false;
+        releaseMode = PressReleaseMode.Mode.NONE;
         PendingWeChat pending = pendingWeChat;
         pendingWeChat = null;
         weChatImageDragIntent = false;

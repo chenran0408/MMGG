@@ -50,6 +50,7 @@ public final class PressTriggerDetector {
     public void onPointerEvent(int action, float x, float y, int pointerCount) {
         if (!active) return;
         if (twoFinger) {
+            if (fired && action == 2 && pointerCount == 1) return;
             if (action != 2 || pointerCount != 2) cancel();
             return;
         }
