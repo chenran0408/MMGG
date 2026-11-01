@@ -145,7 +145,7 @@
 
 184的 `testDebugUnitTest lintDebug assembleDebug assembleRelease` 全部通过。Release采用R8、arm64-v8a，签名与apksigner校验通过；APK `outputs/HyperDragShare-1.7.184-arm64-v8a.apk`，7,446,367 bytes，SHA256 `143A64D4A6A0EF26A4C181B5B78BCE68FD83EE247ABE67B7D132026FDD586BD7`。设备已覆盖安装184（versionCode 208，lastUpdateTime 2026-10-22 01:13:12），前台仍是微信会话。仅重载Portal/AICR后，Portal PID 13444日志显示 `portal hooks installed`、`portal runtime started`；Root helper PID 12729 `connection ready elapsed_ms=450`，按压 reader `ready elapsed_ms=465`。AICR将在下次识别绑定新代码，SystemUI未重载。设备中连续真实微信长按多次命中 `kind=ocr_region`，观察到至少6次 `WeChat OCR result delivered to existing panel`，证明识别结果走同一分词面板，不再经过图片暂存和中间识字窗。日志中Root语义查询43–58ms；首帧约889–1215ms，AICR调用耗时159–718ms。由press confirmed到direct start有约0.82–1.23s，主要耗时在OCR开始前的区域截图/交接阶段，尚未拆分到单个步骤；不能归因于AICR全部耗时。未读取聊天文字或采集微信截图。用户主观视觉准确度与速度反馈仍待。预期日志为 `WeChat OCR direct start`、`WeChat OCR finished elapsedMs=... characters=...` 和 `WeChat OCR result delivered to existing panel`，日志不含识别文本.
 
-继续工作前先阅读本文件与 MIBIGBANG_MIGRATION_PLAN.md。代码与设备现状优先于历史计划；未执行的行为不得标成通过。
+继续工作前先阅读本文件与 archive/2026-11-02/MIBIGBANG_MIGRATION_PLAN.md。代码与设备现状优先于历史计划；未执行的行为不得标成通过。
 
 ## 当前设备与安装
 
@@ -493,7 +493,7 @@ Root追加文字的确认页新增多行勾选，默认全选，可点击整行�
 
 ScreenOcrActivity注册息屏监听：移除待执行截图、取消AICR请求并finish；正在执行的截图/ML Kit仍由已有结束回调处理图片生命周期，不伪装同步取消。追加模式发送restore_panel=false的取消结果，Launcher作废该会话，避免解锁后恢复旧分词面板。销毁时注销监听，普通用户取消仍恢复原面板。
 
-新增NEXT_DEVICE_ACCEPTANCE.md，将下一次体验集中到原页文字/图片、Root追加、侧窗取用及菜单缺失方向。用户尚未恢复设备测试，本轮没有操作设备；息屏广播与真实引擎回调时序仍待验收。
+新增archive/2026-11-02/NEXT_DEVICE_ACCEPTANCE.md，将下一次体验集中到原页文字/图片、Root追加、侧窗取用及菜单缺失方向。用户尚未恢复设备测试，本轮没有操作设备；息屏广播与真实引擎回调时序仍待验收。
 1.7.97（121）：159项现有测试、Lint、assembleDebug通过，未增加测试基建；设备仍1.7.80。
 
 ### 2026-10-21 02:29–02:33：1.7.97 集中真机验收
@@ -1373,7 +1373,7 @@ build346：383测试通过，0失败/错误/跳过；Lint0错误179警告3提示
 
 已核对设备安装王者荣耀包名命中内置表，但未启动游戏、未实测游戏内阻断。设置首页已打开；检查期间页面转入菜单分类，停止点击避免抢占。新选择页真实添加/移除及暗色尚未验；持久化/Bundle/主开关/精确匹配有针对性自动测试。默认开关与用户原配置保持。
 
-新增后续任务已读取并记入NEXT_INTEGRATION_BATCH.md：底部导航区与Hyper手势让位、AI引擎复制直达复用、原生四区侧边栏候选合并。候选未合入；不得把旧165候选APK覆盖当前版。
+新增后续任务已读取并记入archive/2026-11-02/NEXT_INTEGRATION_BATCH.md：底部导航区与Hyper手势让位、AI引擎复制直达复用、原生四区侧边栏候选合并。候选未合入；不得把旧165候选APK覆盖当前版。
 
 
 ## 2026-10-21 170/194 蜂巢编辑与避让
@@ -1476,11 +1476,11 @@ build375共404项单测0失败/错误/跳过；修复Lint缩进后build376的lin
 
 ## 2026-10-23 beta.12 验证边界
 
-最终版本254包已构建并验签，529逻辑/Robolectric测试通过，Lint0错误187警告2提示。Xiaomi 2410DPN6CC / Android17 / HyperOS4前期只做beta11生成文字面板和系统玻璃API元数据验证；最终beta12安装前ADB设备已断开。未安装或热重载254，未把历史版本253宿主自报视为254。没有新整机/软重启、没有清数据或发送消息。完整未验项目及恢复顺序见FEEDBACK_2026_10_23_BETA12.md和本轮外部TASK_CHECKLIST。
+最终版本254包已构建并验签，529逻辑/Robolectric测试通过，Lint0错误187警告2提示。Xiaomi 2410DPN6CC / Android17 / HyperOS4前期只做beta11生成文字面板和系统玻璃API元数据验证；最终beta12安装前ADB设备已断开。未安装或热重载254，未把历史版本253宿主自报视为254。没有新整机/软重启、没有清数据或发送消息。完整未验项目及恢复顺序见archive/2026-11-02/FEEDBACK_2026_10_23_BETA12.md和本轮外部TASK_CHECKLIST。
 
 ### beta.12 安装已完成（2026-10-23）
 按用户“安装后由其测试”授权，同签覆盖253→254成功；设备APK哈希与交付完全一致，firstInstallTime保持。安装验证通过不等于功能验收；未执行应用热重载/整机重启，已提示用户从通用设置执行热重载。设备交互由用户，后续开发不自动换包。
 
 ## beta14交付时的设备边界（2026-10-23）
 新包1.7.219-beta.14/256未安装；用户继续测试已安装beta12。此阶段没有抢占页面、注入触摸、换包、重载或重启；只读设备/安全中心PID及特定窗口元数据，采样中没有可用本次Sidebar生命周期记录。不能据此声称真实拖放或布局通过。
-用户报告beta12：微信首次分词有效，图片仍拖截图；N06拖不出/拖动露连接字；N04目前未误退；N07等待N06；音视频避让基本有效但仍误触；B04肉眼改善待具体比较；原分词布局未接受；GH01/GH02未找到未测试；H02未复现可标本轮完成。N09澄清为窗外点击开关，本批修runtime丢master。beta14的554测试及NATIVE View/Canvas是离线覆盖，真实设备待验，详见FEEDBACK_2026_10_23_BETA14.md。
+用户报告beta12：微信首次分词有效，图片仍拖截图；N06拖不出/拖动露连接字；N04目前未误退；N07等待N06；音视频避让基本有效但仍误触；B04肉眼改善待具体比较；原分词布局未接受；GH01/GH02未找到未测试；H02未复现可标本轮完成。N09澄清为窗外点击开关，本批修runtime丢master。beta14的554测试及NATIVE View/Canvas是离线覆盖，真实设备待验，详见archive/2026-11-02/FEEDBACK_2026_10_23_BETA14.md。

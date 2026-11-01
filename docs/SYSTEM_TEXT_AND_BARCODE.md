@@ -222,5 +222,5 @@ Portal 捕获是特定 ROM 的宿主适配，不是 OCR Binder。它把本次按
 
 ## 证据与兼容范围
 
-- 协议细节来自当前客户端、Parcel reader 和测试；旧接口调查见[AICR OCR 可行性记录](AICR_OCR_FEASIBILITY.md)，当前验证见[当前状态](CURRENT_STATUS.md)和[设备验证](DEVICE_VALIDATION.md)。
+- 协议细节来自当前客户端、Parcel reader 和测试；旧接口调查见[AICR OCR 可行性记录](archive/2026-11-02/AICR_OCR_FEASIBILITY.md)，当前验证见[当前状态](CURRENT_STATUS.md)和[设备验证](DEVICE_VALIDATION.md)。
 - OCR 产品路径已在小米 15 Pro / HyperOS 4.0.0.17 / Android 17 / AICR 4.12.26 验证；条码有该 AICR 样本的 wire 证据和项目验证记录。其他版本需按上面的步骤复核。

@@ -16,4 +16,4 @@
 
 截图仍受系统 Root、悬浮窗、锁屏和来源窗口策略约束。此能力只做用户明确请求的图片或有限屏幕 OCR，不等同于完整小爱识屏，也不绕过安全窗口限制。AICR V2 结构化接口 `AicrOcrClient.recognizeWithLines` 会保留每一行返回的原始文字、polygon 和 box 坐标，不解释或转换这些几何数据。当前图片与屏幕窗口调用兼容的 `recognize` 文本接口，因此界面按文字展示结果，不将行框映射到原屏位置。
 
-协议与目标 ROM 验证记录见 `docs/AICR_OCR_FEASIBILITY.md` 和 `docs/DEVICE_VALIDATION.md`。设备验证记录可能包含历史版本信息；当前引擎行为以本页和源码为准。
+协议与目标 ROM 验证记录见 `docs/archive/2026-11-02/AICR_OCR_FEASIBILITY.md` 和 `docs/DEVICE_VALIDATION.md`。设备验证记录可能包含历史版本信息；当前引擎行为以本页和源码为准。

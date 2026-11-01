@@ -37,7 +37,7 @@
 
 除设置外，文字、图片OCR、屏幕OCR、搜索与中转站以原页独立浮窗工作；外部分享使用透明接收桥，不打开设置首页。中转站仅保留临时拖放托盘和灰条，标题或灰条拖动、松手就近贴边、展开面积≤16%；系统小窗、搜索、复制和手动左右切换已删除，保留原有数据。141补系统栏避让与显示变化后的重新定位；142直接按住已选条目/组卡拖出整个选区，预览图也能拖出，删除底部专用拖动行并复用列表可见顺序；新交互未实测。
 
-141新增精确StopSelfHandler消息1 Hook，补服务计时器以外的传送门退出路径；只在按压Source存在时抑制该消息。锁屏背敲保留系统动作的修正尚未重载到android。当前差距以[MIBIGBANG_MIGRATION_PLAN.md](MIBIGBANG_MIGRATION_PLAN.md)顶部表为准，设备证据见[DEVICE_VALIDATION.md](DEVICE_VALIDATION.md)，按压机制见[CONTACT_AREA_TRIGGER.md](CONTACT_AREA_TRIGGER.md)，中转站见[STASH.md](STASH.md)。下文旧版本的系统小窗、校准和1220×2656参数均是历史记录，不代表当前入口。
+141新增精确StopSelfHandler消息1 Hook，补服务计时器以外的传送门退出路径；只在按压Source存在时抑制该消息。锁屏背敲保留系统动作的修正尚未重载到android。当前差距以[archive/2026-11-02/MIBIGBANG_MIGRATION_PLAN.md](archive/2026-11-02/MIBIGBANG_MIGRATION_PLAN.md)顶部表为准，设备证据见[DEVICE_VALIDATION.md](DEVICE_VALIDATION.md)，按压机制见[CONTACT_AREA_TRIGGER.md](CONTACT_AREA_TRIGGER.md)，中转站见[STASH.md](STASH.md)。下文旧版本的系统小窗、校准和1220×2656参数均是历史记录，不代表当前入口。
 
 ## 1.7.147 按时长与位移触发，取消面积前提
 

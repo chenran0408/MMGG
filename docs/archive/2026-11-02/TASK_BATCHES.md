@@ -6,4 +6,4 @@
 - [长期约束与检查命令](../AGENTS.md)
 - [分支清单](BRANCHES.md)
 - [有效/替代决策](DECISIONS.md)
-- [整理前完整历史](archive/2026-10-24/TASK_BATCHES.md)
+- [整理前完整历史](../2026-10-24/TASK_BATCHES.md)
