@@ -1,6 +1,6 @@
 # MMGG 当前状态与接手入口
 
-核对日期：2026-10-31。本文只维护当前事实；历史批次原文已归档到 `docs/archive/2026-10-30/CURRENT_STATUS_2026-10-30_before_compaction.md`，任务级证据仍保留在各任务目录。
+核对日期：2026-11-02。本文只维护当前事实；历史批次原文已归档到 `docs/archive/2026-10-30/CURRENT_STATUS_2026-10-30_before_compaction.md`，任务级证据仍保留在各任务目录。
 
 ## 工作线
 
@@ -21,7 +21,14 @@
 
 ## 最新验证
 
-当前开发源码版本为 `1.7.219-beta.38` / versionCode `280`；此前 Beta37 交付的功能提交为 `5bf92fe`、`4b7257a`，Beta38 日志导出增量尚在本轮提交中。
+当前开发源码版本为 `1.7.219-beta.39` / versionCode `281`；Beta38 日志导出增量已提交为 `d1f35d0`，此前 Beta37 交付的功能提交为 `5bf92fe`、`4b7257a`。
+
+### 2026-11-02 诊断打码红线与 FanRuntime 拆分
+
+- 诊断导出按 DIAGNOSTICS 双清单落地单一出口过滤器 `DiagnosticRedactionFilter`：默认模式仅脱敏凭据/令牌/密码字段、正文/剪贴板字段和URI查询参数；完整堆栈、异常消息、包名/类名、URI路径、时间戳原样进入runtime-log.txt。旧`filterRuntimeLine` allowlist、`redactSensitive`、`sanitizeStateSummary`、`sanitizeCompatibility`、`GestureDiagnostics.filterLine`已删除收敛。
+- 问题反馈与诊断页新增“完整诊断模式”开关（默认关闭，`full_diagnostics`私有偏好）；开启后除凭据模式匹配外全部原样记录，manifest.txt列出实际应用的打码规则并明示“此文件包含操作细节”。导出失败原因不再折叠为异常类名，写入完整`error.toString()`。
+- Beta39 `6ce51eb`（feat(diagnostic)）+ `e38af0f`（build，versionCode 281）；全量882项单测、Lint 0 errors/190 warnings/2 hints通过；Beta APK与SHA-256见交付任务 `D:/CODEX/Tasks/2026-11-02/mmgg-hyperdragshare-4-d-codex-tasks/outputs/DELIVERY.md`。设备验收未执行。
+- FanRuntime迷你媒体控制块按窄接口搬移为独立`MiniMediaControls`（FanRuntime 2436→2307行），方法体逐字搬移无逻辑修改；`8bad1b3`后全量887项单测、Lint同上通过。Xposed API在JVM是编译期stub，vendor解析成功路径仍只能设备验证。
 
 - 全量 `testDebugUnitTest`：877 项通过，0 failures、0 errors、0 skipped。
 - `lintDebug`：0 errors、190 warnings、2 hints。

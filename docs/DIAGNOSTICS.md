@@ -28,10 +28,10 @@ FileProvider继续使用现有`${applicationId}.updates`、read grant、EXTRA_ST
 | root-connection.txt | 模块进程最近80条受控连接/lease/重试与传送门Root检查阶段；无记录明确说明，不依赖文件日志 |
 | operation-trace.txt | 当前MMGG应用进程最近160条结构化操作阶段摘要；不依赖文件日志，不含正文、图片或原始URI。其他进程只在已有跨进程安全摘要可用时体现 |
 | compatibility.txt | 既有CompatibilityReport的设备、固定AICR/传送门组件版本、非敏感数值配置等受控字段；生成失败可缺失 |
-| runtime-log.txt | 能读取文件日志时，保留受控OperationTrace和logger头；没有合规记录时可缺失 |
-| manifest.txt | 每项included/unavailable、缺失原因和隐私过滤说明 |
+| runtime-log.txt | 能读取文件日志时，保留按“隐私与追踪上限”过滤的运行日志；没有记录时可缺失 |
+| manifest.txt | 每项included/unavailable、缺失原因和实际应用的打码规则清单 |
 
-日志关闭、设为系统日志、Root不可读取、无文件或只有被隐私过滤的自由文本时，summary、root-connection、operation-trace与manifest仍可生成。导出不会自动修改用户日志设置；只有需要系统原始日志的高级排查才需要另行开启文件日志。既有状态是快照，不进行新的探测以伪装确定结论。
+日志关闭、设为系统日志、Root不可读取或无文件时，summary、root-connection、operation-trace与manifest仍可生成。导出不会自动修改用户日志设置；只有需要系统原始日志的高级排查才需要另行开启文件日志。既有状态是快照，不进行新的探测以伪装确定结论。
 
 ## 隐私与追踪上限
 
@@ -40,7 +40,7 @@ FileProvider继续使用现有`${applicationId}.updates`、read grant、EXTRA_ST
 - 必打码：授权令牌、密码/凭据字段、签名材料；默认模式下用户正文、图片、剪贴板内容。
 - 禁止打码：完整异常消息与堆栈、包名/类名/方法名、传送门私有控制码、URI路径（查询参数除外）、时间戳、进程/模块名、配置键与非敏感数值。“自由文本”“非受控Hook文本”不再是过滤理由。
 
-新增打码必须先修改本清单并在manifest.txt说明；完整诊断模式（用户显式开启）下除凭据模式匹配外全部原样记录。运行日志保留受控格式proc/op/stage/outcome/asset及描述符字段，异常与堆栈按上述边界原样进入runtime-log.txt。现行包仍按受控摘要导出，堆栈/异常完整记录待导出过滤器按本清单调整后生效。因此它是可反馈的诊断包；完整原始日志副本仅在完整诊断模式下提供。
+新增打码必须先修改本清单并在manifest.txt说明。导出打码由单一入口过滤器实现：默认模式仅脱敏凭据/令牌/密码字段、正文/剪贴板字段和URI查询参数（URI路径原样保留）；完整堆栈、异常消息、包名/类名/方法名、时间戳与进程名原样进入runtime-log.txt。完整诊断模式可在“问题反馈与诊断”页开启（默认关闭），开启后除凭据模式匹配外全部原样记录，manifest.txt明示“此文件包含操作细节”。
 
 旧日志先归档后当前，过滤器在大小预算内保留最新受控记录，避免旧前缀占满预算导致漏掉最近操作。日志缺失不能直接判失败；activity_launch_returned、drop接受、descriptor_opened各有证据上限，读取与最终发送无回执时未知。两条实际链路与判读规则见[OPERATION_TRACING](OPERATION_TRACING.md)。
 
