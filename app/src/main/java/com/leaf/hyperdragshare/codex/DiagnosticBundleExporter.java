@@ -12,7 +12,6 @@ import java.io.FileInputStream;
 import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.InputStreamReader;
-import java.io.OutputStream;
 import java.nio.charset.StandardCharsets;
 import java.text.SimpleDateFormat;
 import java.util.Date;
@@ -22,7 +21,8 @@ import java.util.Locale;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipOutputStream;
 
-/** Creates a privacy-filtered support bundle from independently available diagnostics. */
+/** Creates a support bundle from independently available diagnostics; redaction runs
+ * through {@link DiagnosticRedactionFilter} only. */
 final class DiagnosticBundleExporter {
     private static final String REPORT_DIRECTORY = "diagnostics";
     private static final int MAX_RUNTIME_LOG_CHARS = 1_000_000;
@@ -51,6 +51,7 @@ final class DiagnosticBundleExporter {
         if (!directory.exists() && !directory.mkdirs()) {
             throw new IOException("Unable to create diagnostic report directory");
         }
+        boolean fullDiagnostics = DragShareSettings.readFullDiagnostics(app);
 
         String compatibility = null;
         String compatibilityFailure = null;
@@ -72,7 +73,7 @@ final class DiagnosticBundleExporter {
             try {
                 rawRuntime = File.createTempFile("runtime-log-", ".tmp", directory);
                 DragShareLog.exportTo(app, Uri.fromFile(rawRuntime));
-                runtime = filterRuntimeLog(rawRuntime);
+                runtime = filterRuntimeLog(rawRuntime, fullDiagnostics);
                 if (runtime.isEmpty()) {
                     missingLogReason = "没有可导出的结构化运行诊断记录。";
                     runtime = null;
@@ -87,37 +88,38 @@ final class DiagnosticBundleExporter {
         }
 
         return writeBundle(directory, stateSummary, compatibility, compatibilityFailure,
-                runtime, missingLogReason);
+                runtime, missingLogReason, fullDiagnostics);
     }
 
     /** Package-visible assembly seam keeps behavior tests independent of root and Android state. */
     static Result writeBundle(File directory, String stateSummary, String compatibility,
                               String compatibilityFailure, String runtime,
-                              String missingLogReason) throws IOException {
+                              String missingLogReason, boolean fullDiagnostics) throws IOException {
         if (directory == null) throw new IOException("Missing report directory");
         if (!directory.exists() && !directory.mkdirs()) {
             throw new IOException("Unable to create diagnostic report directory");
         }
         File output = new File(directory, fileName());
-        String safeRuntime = filterRuntimeText(runtime);
+        String safeRuntime = filterText(runtime, fullDiagnostics);
         boolean hasRuntime = !safeRuntime.isEmpty();
         String logReason = hasRuntime ? null : nonEmpty(missingLogReason,
                 runtime == null || runtime.isEmpty()
                         ? "Runtime log could not be collected."
-                        : "No safe structured runtime diagnostics were available.");
+                        : "No structured runtime diagnostics were available.");
         try (ZipOutputStream zip = new ZipOutputStream(new FileOutputStream(output))) {
-            addText(zip, "summary.txt", buildSummary(stateSummary));
-            addText(zip, "root-connection.txt", RootConnectionDiagnostics.summary());
+            addText(zip, "summary.txt", buildSummary(stateSummary, fullDiagnostics));
+            addText(zip, "root-connection.txt",
+                    filterText(RootConnectionDiagnostics.summary(), fullDiagnostics));
             String operationTrace = OperationTrace.summary();
             addText(zip, "operation-trace.txt", operationTrace.isEmpty()
                     ? "No recent structured operations were recorded in the MMGG app process.\n"
                     : "Controlled operation trace (bounded, MMGG app process):\n"
-                            + filterRuntimeText(operationTrace));
+                            + filterText(operationTrace, fullDiagnostics));
             if (compatibility != null) {
-                addText(zip, "compatibility.txt", sanitizeCompatibility(compatibility));
+                addText(zip, "compatibility.txt", filterText(compatibility, fullDiagnostics));
             }
             if (hasRuntime) addText(zip, "runtime-log.txt", safeRuntime);
-            addText(zip, "manifest.txt", buildManifest(compatibility != null,
+            addText(zip, "manifest.txt", buildManifest(fullDiagnostics, compatibility != null,
                     compatibilityFailure, hasRuntime, logReason));
         } catch (IOException | RuntimeException error) {
             if (output.exists() && !output.delete()) output.deleteOnExit();
@@ -127,27 +129,20 @@ final class DiagnosticBundleExporter {
         return new Result(output, logReason);
     }
 
-    static String filterRuntimeLog(File rawFile) throws IOException {
+    static String filterRuntimeLog(File rawFile, boolean fullDiagnostics) throws IOException {
         RuntimeTail tail = new RuntimeTail();
         try (BufferedReader reader = new BufferedReader(new InputStreamReader(
                 new FileInputStream(rawFile), StandardCharsets.UTF_8))) {
             String line;
             while ((line = reader.readLine()) != null) {
-                String filtered = filterRuntimeLine(line);
-                if (filtered != null) tail.add(filtered);
+                tail.add(DiagnosticRedactionFilter.line(line, fullDiagnostics));
             }
         }
         return tail.text();
     }
 
-    private static String filterRuntimeText(String raw) {
-        if (raw == null || raw.isEmpty()) return "";
-        RuntimeTail tail = new RuntimeTail();
-        for (String line : raw.split("\\r?\\n")) {
-            String filtered = filterRuntimeLine(line);
-            if (filtered != null) tail.add(filtered);
-        }
-        return tail.text();
+    private static String filterText(String raw, boolean fullDiagnostics) {
+        return raw == null || raw.isEmpty() ? "" : DiagnosticRedactionFilter.text(raw, fullDiagnostics);
     }
 
     private static final class RuntimeTail {
@@ -172,60 +167,7 @@ final class DiagnosticBundleExporter {
         }
     }
 
-    private static String filterRuntimeLine(String line) {
-        String touch = GestureDiagnostics.filterLine(line);
-        if (touch != null) return touch;
-        // Only OperationTrace events use a controlled grammar. Raw messages, throwable text,
-        // arbitrary tags and all URI/capability values are dropped at this boundary.
-        java.util.regex.Matcher normalizedEvent = java.util.regex.Pattern.compile(
-                "^(\\d{4}-\\d\\d-\\d\\d \\d\\d:\\d\\d:\\d\\d\\.\\d{3}) "
-                        + "([DIWE]) DragShare/Operation: proc=([A-Za-z0-9_.:-]{1,128}) "
-                        + "op=([A-Za-z0-9_.:-]{1,128}) stage=([A-Za-z0-9_.:-]{1,128}) "
-                        + "outcome=([A-Za-z0-9_.:-]{1,128}) asset=([a-fA-F0-9]{32}|-)"
-                        + "(?: callerUid=(\\d+) read=(unknown) delivery=(unknown))?$")
-                .matcher(line);
-        if (normalizedEvent.matches()) return line;
-        java.util.regex.Matcher normalizedHeader = java.util.regex.Pattern.compile(
-                "^\\d{4}-\\d\\d-\\d\\d \\d\\d:\\d\\d:\\d\\d\\.\\d{3} [DIWE] "
-                        + "DragShare/Log: diagnostic file opened build=[A-Za-z0-9_.+/-]{1,80} "
-                        + "level=(debug|info|disabled) destination=(file|system) "
-                        + "sampled_debug=(true|false)$").matcher(line);
-        if (normalizedHeader.matches()) return line;
-        java.util.regex.Matcher event = java.util.regex.Pattern.compile(
-                "^(\\d{4}-\\d\\d-\\d\\d \\d\\d:\\d\\d:\\d\\d\\.\\d{3}) "
-                        + "([DIWE]) pid=\\d+ uid=\\d+ thread=[^ ]+ DragShare/Operation: "
-                        + "proc=([A-Za-z0-9_.:-]{1,128}) op=([A-Za-z0-9_.:-]{1,128}) "
-                        + "stage=([A-Za-z0-9_.:-]{1,128}) outcome=([A-Za-z0-9_.:-]{1,128}) "
-                        + "asset=([a-fA-F0-9]{32}|-)(?: callerUid=(\\d+) read=(unknown) delivery=(unknown))?$")
-                .matcher(line);
-        if (event.matches()) {
-            String result = event.group(1) + " " + event.group(2) + " DragShare/Operation: proc="
-                    + event.group(3) + " op=" + event.group(4) + " stage=" + event.group(5)
-                    + " outcome=" + event.group(6) + " asset=" + event.group(7);
-            if (event.group(8) != null) {
-                result += " callerUid=" + event.group(8) + " read=" + event.group(9)
-                        + " delivery=" + event.group(10);
-            }
-            return result;
-        }
-        java.util.regex.Matcher header = java.util.regex.Pattern.compile(
-                "^(\\d{4}-\\d\\d-\\d\\d \\d\\d:\\d\\d:\\d\\d\\.\\d{3}) "
-                        + "([DIWE]) pid=\\d+ uid=\\d+ thread=[^ ]+ DragShare/Log: "
-                        + "diagnostic file opened session=[A-Za-z0-9-]{1,80} "
-                        + "build=([A-Za-z0-9_.+/-]{1,80}) device=[A-Za-z0-9_. -]{1,100} "
-                        + "android=[A-Za-z0-9._/-]{1,30} level=(debug|info|disabled) "
-                        + "destination=(file|system) max_bytes=\\d+ sampled_debug=(true|false)$")
-                .matcher(line);
-        if (header.matches()) {
-            return header.group(1) + " " + header.group(2)
-                    + " DragShare/Log: diagnostic file opened build=" + header.group(3)
-                    + " level=" + header.group(4) + " destination=" + header.group(5)
-                    + " sampled_debug=" + header.group(6);
-        }
-        return null;
-    }
-
-    private static String buildSummary(String stateSummary) {
+    private static String buildSummary(String stateSummary, boolean fullDiagnostics) {
         StringBuilder out = new StringBuilder();
         out.append("MMGG diagnostic bundle\n")
                 .append("Version: ").append(BuildConfig.VERSION_NAME).append(" ( ")
@@ -235,13 +177,15 @@ final class DiagnosticBundleExporter {
                 .append(android.os.Build.VERSION.RELEASE).append(" (SDK ")
                 .append(android.os.Build.VERSION.SDK_INT).append(")\n\n")
                 .append("Available state:\n")
-                .append(sanitizeStateSummary(stateSummary));
+                .append(stateSummary == null || stateSummary.trim().isEmpty()
+                        ? "State summary unavailable.\n"
+                        : DiagnosticRedactionFilter.text(stateSummary, fullDiagnostics));
         out.append("\nRoot connection events: see root-connection.txt.\n");
         if (out.charAt(out.length() - 1) != '\n') out.append('\n');
         return out.toString();
     }
 
-    private static String buildManifest(boolean compatibilityAvailable,
+    private static String buildManifest(boolean fullDiagnostics, boolean compatibilityAvailable,
                                         String compatibilityFailure,
                                         boolean runtimeAvailable, String logReason) {
         StringBuilder out = new StringBuilder("Diagnostic bundle contents\n");
@@ -256,67 +200,30 @@ final class DiagnosticBundleExporter {
                 .append('\n');
         if (!compatibilityAvailable) {
             out.append("Compatibility report reason: ")
-                    .append(nonEmpty(compatibilityFailure, "Report generation failed."))
+                    .append(DiagnosticRedactionFilter.text(
+                            nonEmpty(compatibilityFailure, "Report generation failed."), fullDiagnostics))
                     .append('\n');
         }
         if (!runtimeAvailable) {
-            out.append("Runtime log reason: ").append(logReason).append('\n')
+            out.append("Runtime log reason: ")
+                    .append(DiagnosticRedactionFilter.text(logReason, fullDiagnostics)).append('\n')
                     .append("原始运行日志不可读取；operation-trace.txt与root-connection.txt仍包含当前可取得的受控摘要。\n");
         }
-        out.append("运行日志仅保留已知的结构化操作追踪和安全日志头；自由文本与异常详情均已过滤。\n");
-        out.append("Privacy: no message body, image bytes, raw URI, or capability token is included.\n");
+        out.append("打码规则（本次导出实际应用，规则见 docs/DIAGNOSTICS.md）：\n")
+                .append("- 凭据/令牌字段 token|capability|authorization|bearer|password|passwd|secret|credential -> <redacted-secret>\n");
+        if (!fullDiagnostics) {
+            out.append("- 正文/剪贴板字段 payload|body|text|clipboard 及其后内容 -> <redacted-content>\n")
+                    .append("- URI 查询参数 -> ?<redacted-query>（URI 路径原样保留）\n")
+                    .append("Privacy: default mode redacts user content fields and URI query parameters; "
+                            + "stacks, exception messages, package names, URI paths and timestamps are kept verbatim.\n");
+        } else {
+            out.append("完整诊断模式已开启：此文件包含操作细节；除凭据字段外全部原样记录。\n");
+        }
         return out.toString();
     }
 
-    private static String redactSensitive(String value) {
-        if (value == null) return "";
-        return value.replaceAll("(?i)(?:content|file|https?|shareimage)://[^\\s\\]\"']+",
-                        "<redacted-uri>")
-                .replaceAll("(?i)\\b(?:token|capability|authorization|bearer)[=: ]+[^\\s,;]+",
-                        "<redacted-secret>")
-                .replaceAll("(?i)\\b(?:uri|payload|body|text)[=: ]+[^\\s,;]+",
-                        "<redacted-sensitive-value>");
-    }
-
-    private static String sanitizeStateSummary(String value) {
-        java.util.regex.Pattern allowed = java.util.regex.Pattern.compile(
-                "^overall=(CHECKING|NORMAL|NEEDS_ACTION|UNKNOWN|NOT_APPLICABLE); "
-                        + "root=(CHECKING|READY|UNAVAILABLE|UNKNOWN|NOT_APPLICABLE); "
-                        + "injection=(CHECKING|READY|UNAVAILABLE|UNKNOWN|NOT_APPLICABLE); "
-                        + "portal_service=(CHECKING|READY|UNAVAILABLE|UNKNOWN|NOT_APPLICABLE); "
-                        + "portal_root=(CHECKING|READY|UNAVAILABLE|UNKNOWN|NOT_APPLICABLE); "
-                        + "root_input=(CHECKING|READY|UNAVAILABLE|UNKNOWN|NOT_APPLICABLE); "
-                        + "press_reader=(CHECKING|READY|UNAVAILABLE|UNKNOWN|NOT_APPLICABLE); "
-                        + "overlay=(CHECKING|READY|UNAVAILABLE|UNKNOWN|NOT_APPLICABLE)$");
-        if (value != null && allowed.matcher(value.trim()).matches()) return value.trim() + "\n";
-        return "<state summary unavailable or contained unsupported text>\n";
-    }
-
-    private static String sanitizeCompatibility(String value) {
-        StringBuilder safe = new StringBuilder();
-        for (String line : redactSensitive(value).split("\\r?\\n")) {
-            String trimmed = line.trim();
-            // Dynamic hook diagnostics come from other processes and may contain arbitrary text.
-            if (trimmed.startsWith("Hyper手势兼容性报告")
-                    || trimmed.startsWith("生成时间:")
-                    || trimmed.matches("说明: Hyper手势兼容性报告不包含快捷方式名称、联系人和用户选择的应用清单。")
-                    || trimmed.matches("=== [^\\r\\n]{1,60} ===")
-                    || trimmed.matches("(?:厂商|品牌|型号|设备|产品|Android|安全补丁|增量版本|Fingerprint|当前显示): .{0,256}")
-                    || trimmed.matches("(?:Hyper手势|系统界面|小米桌面|LSPosed Manager|小米澎湃AI引擎|传送门): [A-Za-z0-9_.-]+ [^\\r\\n]{0,100}")
-                    || trimmed.matches("(?:接口状态|最后连接时间|bottom_target_count|honeycomb_target_count):?=?[ A-Za-z0-9_.:-]{0,128}")
-                    || trimmed.matches("[A-Za-z0-9_.-]{1,80}=(?:true|false|\\d{1,8})")) {
-                safe.append(trimmed).append('\n');
-            } else if (trimmed.startsWith("-- SystemUI --") || trimmed.startsWith("-- MiuiHome --")) {
-                safe.append(trimmed).append('\n')
-                        .append("<free-form hook diagnostics omitted>\n");
-            }
-        }
-        return safe.toString();
-    }
-
     private static String safeFailure(Throwable error) {
-        return error == null ? "收集失败。"
-                : "读取失败（" + error.getClass().getSimpleName() + "）。";
+        return error == null ? "收集失败。" : error.toString();
     }
 
     private static String nonEmpty(String value, String fallback) {

@@ -155,6 +155,7 @@ public final class DragShareSettings {
             "accessibility_recognition_sensitivity_percent";
     private static final String KEY_LOG_LEVEL = "log_level";
     private static final String KEY_LOG_DESTINATION = "log_destination";
+    private static final String KEY_FULL_DIAGNOSTICS = "full_diagnostics";
     private static final String KEY_PAUSE_AUTOMATIC_IN_GAMES = "pause_automatic_in_games";
 
     public final int colorMode;
@@ -1110,6 +1111,18 @@ public final class DragShareSettings {
                         DEFAULT_TWO_FINGER_LONG_PRESS_ENABLED),
                 preferences.getInt(KEY_TWO_FINGER_LONG_PRESS_TIMEOUT_MILLIS,
                         DEFAULT_TWO_FINGER_LONG_PRESS_TIMEOUT_MILLIS));
+    }
+
+    /** Export-only switch; not part of the provider settings bundle or hooked processes. */
+    static boolean readFullDiagnostics(Context context) {
+        return context != null && context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+                .getBoolean(KEY_FULL_DIAGNOSTICS, false);
+    }
+
+    static void writeFullDiagnostics(Context context, boolean enabled) {
+        if (context == null) return;
+        context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).edit()
+                .putBoolean(KEY_FULL_DIAGNOSTICS, enabled).apply();
     }
 
     public void saveLocal(Context context) {

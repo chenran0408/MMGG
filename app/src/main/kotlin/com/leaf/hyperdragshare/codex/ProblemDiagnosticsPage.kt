@@ -37,6 +37,7 @@ import top.yukonga.miuix.kmp.icon.MiuixIcons
 import top.yukonga.miuix.kmp.icon.extended.Help
 import top.yukonga.miuix.kmp.icon.extended.Report
 import top.yukonga.miuix.kmp.preference.ArrowPreference
+import top.yukonga.miuix.kmp.preference.SwitchPreference
 import java.io.File
 import java.io.IOException
 
@@ -289,6 +290,23 @@ internal fun ProblemDiagnosticsPage(
                         summary = "打开触控专项采集；按页面说明选择是否附带算法库",
                         icon = MiuixIcons.Report,
                         onClick = onOpenTouchDiagnostics,
+                    )
+                }
+            }
+            item("problem-diagnostics-full-mode") {
+                SmallTitle("完整诊断模式")
+                Card(Modifier.padding(horizontal = 12.dp, vertical = 3.dp)) {
+                    var fullDiagnostics by remember {
+                        mutableStateOf(DragShareSettings.readFullDiagnostics(appContext))
+                    }
+                    SwitchPreference(
+                        title = "完整诊断模式",
+                        summary = "开启后导出的诊断包原样记录堆栈、异常与操作细节，仅凭据字段脱敏；默认关闭",
+                        checked = fullDiagnostics,
+                        onCheckedChange = { enabled ->
+                            fullDiagnostics = enabled
+                            DragShareSettings.writeFullDiagnostics(appContext, enabled)
+                        },
                     )
                 }
             }

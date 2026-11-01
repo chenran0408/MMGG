@@ -30,26 +30,7 @@ public final class GestureDiagnostics {
 
     public static boolean enabled() { return DragShareLog.isDebugEnabled(); }
 
-    // Fixed-order, bounded grammar shared with the ZIP exporter. Never accepts free-form text.
     private static final String TOKEN = "[A-Za-z0-9_.:-]{1,128}";
-    private static final String NUMBER = "(?:-?[0-9]+(?:\\.[0-9]+)?|unknown)";
-    private static final String BOOL = "(?:true|false|unknown)";
-    private static final java.util.regex.Pattern BODY = java.util.regex.Pattern.compile(
-            "proc=" + TOKEN + " channel=" + TOKEN + " packageName=" + TOKEN + " action=" + TOKEN
-            + " downTime=" + NUMBER + " eventTime=" + NUMBER + " x=" + NUMBER + " y=" + NUMBER
-            + " rawX=" + NUMBER + " rawY=" + NUMBER + " dx=" + NUMBER + " dy=" + NUMBER
-            + " pointerId=" + NUMBER + " pointerCount=" + NUMBER + " state=" + TOKEN
-            + " dragging=" + BOOL + " windowFocus=" + BOOL + " viewFocus=" + BOOL
-            + " reason=" + TOKEN + " skipped=" + NUMBER + " lastEventAge=" + NUMBER + " gapMs=" + NUMBER
-            + " rawSpace=" + TOKEN + " timeBasis=" + TOKEN);
-
-    static String filterLine(String line) {
-        java.util.regex.Matcher header = java.util.regex.Pattern.compile(
-                "^(\\d{4}-\\d\\d-\\d\\d \\d\\d:\\d\\d:\\d\\d\\.\\d{3}) D "
-                + "(?:pid=\\d+ uid=\\d+ thread=[^ ]+ )?DragShare/TouchStream: (.*)$").matcher(line);
-        if (!header.matches() || !BODY.matcher(header.group(2)).matches()) return null;
-        return header.group(1) + " D DragShare/TouchStream: " + header.group(2);
-    }
 
     private static String token(String value) {
         return value != null && value.matches(TOKEN) ? value : "unknown";

@@ -132,7 +132,7 @@ public final class GestureDiagnosticsTest {
         assertTrue(joined.contains("rawSpace=evdev timeBasis=read_uptime"));
     }
 
-    @Test public void structuredTouchTraceSurvivesFilterAndZipButInjectionDoesNot() throws Exception {
+    @Test public void structuredTouchTraceSurvivesExportAndCredentialInjectionIsRedacted() throws Exception {
         configure(DragShareSettings.LOG_LEVEL_DEBUG);
         ShadowLog.clear();
         new GestureDiagnostics.Stream("root_evdev_test").root(
@@ -142,25 +142,25 @@ public final class GestureDiagnosticsTest {
         String prefix = "2026-10-24 12:30:01.123 D pid=44 uid=0 thread=main DragShare/TouchStream: ";
         String validLine = prefix + body + "\n";
         String bodyInjection = prefix + body + " private message body\n";
-        String uriInjection = prefix + body.replace("packageName=example.app", "packageName=content://secret/capability") + "\n";
+        String credentialInjection = prefix + body.replace("reason=evdev_frame", "reason=evdev_frame token=abc123") + "\n";
         File directory = Files.createTempDirectory("gesture-diagnostics-test").toFile();
         File raw = new File(directory, "raw.log");
         try {
-            Files.writeString(raw.toPath(), validLine + bodyInjection + uriInjection, StandardCharsets.UTF_8);
-            String filtered = DiagnosticBundleExporter.filterRuntimeLog(raw);
+            Files.writeString(raw.toPath(), validLine + bodyInjection + credentialInjection, StandardCharsets.UTF_8);
+            String filtered = DiagnosticBundleExporter.filterRuntimeLog(raw, false);
             assertTrue(filtered.contains("channel=root_evdev_test"));
             assertTrue(filtered.contains("gapMs="));
-            assertFalse(filtered.contains("private message body"));
-            assertFalse(filtered.contains("content://"));
+            assertTrue(filtered.contains("private message body"));
+            assertFalse(filtered.contains("token=abc123"));
 
             DiagnosticBundleExporter.Result result = DiagnosticBundleExporter.writeBundle(
-                    directory, "root=READY", null, null, validLine + bodyInjection + uriInjection, null);
+                    directory, "root=READY", null, null, validLine + bodyInjection + credentialInjection, null, false);
             String exported = zipText(result.file, "runtime-log.txt");
             assertTrue(exported.contains("channel=root_evdev_test"));
             assertTrue(exported.contains("gapMs="));
-            assertFalse(exported.contains("private message body"));
-            assertFalse(exported.contains("content://"));
+            assertTrue(exported.contains("private message body"));
             assertFalse(exported.contains("capability"));
+            assertFalse(exported.contains("token=abc123"));
         } finally {
             for (File file : directory.listFiles()) Files.deleteIfExists(file.toPath());
             Files.deleteIfExists(directory.toPath());

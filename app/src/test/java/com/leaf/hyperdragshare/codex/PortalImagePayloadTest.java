@@ -106,7 +106,7 @@ public final class PortalImagePayloadTest {
                         .append(item.msg).append('\n');
             }
             Files.write(raw.toPath(), log.toString().getBytes(StandardCharsets.UTF_8));
-            String filtered = DiagnosticBundleExporter.filterRuntimeLog(raw);
+            String filtered = DiagnosticBundleExporter.filterRuntimeLog(raw, false);
             assertTrue(filtered.contains("stage=portal_capture outcome=wechat_missing_payload"));
             assertFalse(filtered.contains("com.tencent.mm"));
         } finally {

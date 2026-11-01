@@ -644,7 +644,7 @@ public final class PressPreviewHandoffTest {
                         .append(item.msg).append('\n');
             }
             Files.write(raw.toPath(), log.toString().getBytes(StandardCharsets.UTF_8));
-            return DiagnosticBundleExporter.filterRuntimeLog(raw);
+            return DiagnosticBundleExporter.filterRuntimeLog(raw, false);
         } finally {
             Files.deleteIfExists(raw.toPath());
         }

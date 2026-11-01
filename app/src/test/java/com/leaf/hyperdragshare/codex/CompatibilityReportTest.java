@@ -42,7 +42,7 @@ public final class CompatibilityReportTest {
         File directory = Files.createTempDirectory("compatibility-report-test").toFile();
         try {
             DiagnosticBundleExporter.Result bundle = DiagnosticBundleExporter.writeBundle(
-                    directory, null, report, null, null, null);
+                    directory, null, report, null, null, null, false);
             String sanitized = readCompatibility(bundle.file);
             assertTrue(sanitized.contains("小米澎湃AI引擎: com.xiaomi.aicr 4.12.26"));
             assertTrue(sanitized.contains("传送门: com.miui.contentextension 5.1.5"));
