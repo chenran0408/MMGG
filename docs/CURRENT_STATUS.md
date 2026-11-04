@@ -1,6 +1,6 @@
 # MMGG 当前状态与接手入口
 
-核对日期：2026-11-02。本文只维护当前事实；历史批次原文已归档到 `docs/archive/2026-10-30/CURRENT_STATUS_2026-10-30_before_compaction.md`，任务级证据仍保留在各任务目录。
+核对日期：2026-11-05。本文只维护当前事实；历史批次原文已归档到 `docs/archive/2026-10-30/CURRENT_STATUS_2026-10-30_before_compaction.md`，任务级证据仍保留在各任务目录。
 
 ## 工作线
 
@@ -12,7 +12,7 @@
 
 ## 当前代码事实
 
-- Root evdev 仍是拖拽输入权威；真实 Root `UP/CANCEL` 决定结束。双指资格、Phase 1A owner、Blocker、微信专用 Hook 和控件避让阈值保持现状。
+- Root evdev 仍是拖拽输入权威；真实 Root `UP/CANCEL` 决定结束。Phase 1A owner、Blocker、微信专用 Hook 和控件避让阈值保持现状。按压为组合触发：单指 fire=拖拽，双指 fire=分词；资格规则详见 AGENTS 第2条与 DECISIONS D19。
 - `DragShareController` 仍负责手势协调、会话、目标选择和动作触发；`DragShareLifecycle` 为会话与预览退出 callback 提供 owner token。当前生命周期审计未发现稳定可复现的缺失保护，因此没有为拆分而改生产代码。
 - FanRuntime、Freeform 几何/配置/目标、设置导航和生效提示已经有独立决策边界。
 - Freeform 队列使用 generation、重试预算和 `QUEUED / REQUESTED / OBSERVED / UNKNOWN` 证据阶段。任务出现不等于最终启动成功。
@@ -20,6 +20,12 @@
 - 跨进程追踪只报告最后一个可观察阶段。`startActivity` 返回、拖放接受和 Provider descriptor 打开都不代表接收方已经读取或发送。
 
 ## 最新验证
+
+### 2026-11-05 组合按压触发
+
+- 触发方式改为单指/双指结合：首指 DOWN 即按单指启动；双指启用时第二指在确认前加入升级为双指（时长从第二指起算）。出口由手势类型决定：单指=拖拽（文字分词面板 drag_preview=true、图片待拖预览），双指=分词（drag_preview=false，图片回退现有菜单）；松手时长不再分流出口，`<T` 仍不触发。改动集中在 `PressCaptureSource`、`PressTriggerDetector`、`PressReleaseMode` 与设置文案；Portal 模式键同步、Pointer 退化拒绝、迟到第二指拒绝、Phase 1A/Blocker 未改。
+- `PressTriggerDetector` 删除候选等待态 API；`PressReleaseMode.classify(duration)` 替换为 `resolve(twoFinger)`。`TwoFingerPressTest` 已按组合语义重写（升级竞态、不退化、双指/单指 drag_preview 断言）；定向触发器/两指/RootTouchSource/PortalPressSettings/预览交接测试通过。全量回归与构建见本轮任务记录。
+- 未操作设备；双指升级竞态、混合触发与真实 HyperOS 表现待实机验证。历史“T..2T/>=2T 分流”描述（2026-10-31 段）已被本节替代。
 
 当前开发源码版本为 `1.7.219-beta.39` / versionCode `281`；Beta38 日志导出增量已提交为 `d1f35d0`，此前 Beta37 交付的功能提交为 `5bf92fe`、`4b7257a`。
 
