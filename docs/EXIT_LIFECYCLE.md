@@ -9,7 +9,6 @@
 | 资源 | creator → owner → async borrower → release point | 退出语义 |
 |---|---|---|
 | 设置页屏上触发区预览 | GestureSettingsContent创建 → 页面级BottomCornerPreviewOverlay → 无后台借用 → 类别/路由离开、ON_STOP、dispose或结束按钮 | 列表滚动不销毁owner；非触摸窗口登记既有OverlayTouchRegions以抑制模块手势。stop幂等，移窗失败也注销区域；add部分失败清窗口/登记 |
-| 传送门模式设置订阅 | PortalPressSettings.observe → PressCaptureSource或设置页面各自持有Subscription → Settings通知队列 → stop/dispose.close | 只读当前用户System键；订阅自有closed guard，注销前排队的迟到通知也不再更新owner |
 | IME期间待执行窗外点击 | OutsideGestureRecognizer → 当前识别器 → 单击Handler延时 → IME显隐转换clearAll、窗口消失或原cancel | IME显示取消待关闭操作，普通窗外动作暂缓；已核对的隐藏键盘即时路径保持；输入法隐藏后恢复原关闭规则 |
 | 活动预览、菜单、流光、环形窗 | Controller创建 → Controller字段 → 目标查询/动画 → removeGestureViews、各Window.dispose | 退出取消动画/查询，窗口释放，旧代次不得清理新窗口 |
 | 退出中的预览 | startPreviewExit移交 → exiting*字段 → 160/220ms退出回调 → finishPreviewExit或立即移除 | generation＋对象身份；先清owner字段再移窗；回调允许短时完成但失效后不访问UI |

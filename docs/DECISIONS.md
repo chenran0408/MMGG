@@ -22,7 +22,7 @@
 | D16 | 用户决定；暂停 | AICR缺失组件用户反馈继续排查 | 用户明确“这个反馈先不管了”；保留既有组件名/UID/用户/可见性调查，不能写已解决，也不以暂停推定服务不必要 |
 | D17 | 调查推测；未采用 | 注册系统pointer listener替换/叠加当前输入 | 用户提出关联问题；源码未见registerPointerEventListener直接调用，BackgroundTouchBlocker monitor用于取消背景触摸，FanFreeform有SystemUI InputEventHandler。不能据此认定监听抢走evdev，也不能当已实施的新架构 |
 | D18 | 调查推测；待确认 | 原三张文字/图片/图标悬浮都同源、录屏导致卡住、多个input设备等于多个物理屏幕 | 缺统一现场日志；H02曾依用户要求停止后被新虎扑反馈重开。beta19修复两个代码缺陷，但日志未含选中源；设备库存不能证明多个物理屏幕，用户未录屏也可触发。保留原生预览NOT_TOUCHABLE，不加关闭按钮掩盖归属问题 |
-| D19 | 用户决定（2026-11-05）；已替代旧互斥模式 | 单指/双指互斥的按压模式选择、按松手时长分流出口（T..2T=普通面板/菜单、>=2T=待拖预览） | 组合触发：单指 fire=拖拽（文字待拖面板＋drag_preview、图片待拖预览），双指 fire=分词（drag_preview=false；图片回退菜单）。Portal模式键/后备开关仍决定“第二指能否升级”，不再让单指等待；迟到第二指对已 fire 单指仍拒绝。实机双指与混合场景待设备验证 |
+| D19 | 用户决定（2026-11-05）；已替代旧互斥模式与全部模式选择 | 单指/双指互斥的按压模式选择、按松手时长分流出口（T..2T=普通面板/菜单、>=2T=待拖预览）、Portal模式键同步与模块后备开关 | 组合触发固定语义：单指 fire=拖拽（文字待拖面板＋drag_preview、图片待拖预览），双指 fire=分词（drag_preview=false；图片回退菜单），无模式开关。`PortalPressSettings`、`two_finger_long_press_enabled` 配置键及 EvdevTouchParser/RootTouchSource 开关已删除；双指独立时长保留。迟到第二指对已 fire 单指仍拒绝。实机双指与混合场景待设备验证 |
 
 ## 不应从历史材料恢复的操作
 

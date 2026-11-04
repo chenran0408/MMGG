@@ -23,11 +23,11 @@
 
 ### 2026-11-05 组合按压触发
 
-- 触发方式改为单指/双指结合：首指 DOWN 即按单指启动；双指启用时第二指在确认前加入升级为双指（时长从第二指起算）。出口由手势类型决定：单指=拖拽（文字分词面板 drag_preview=true、图片待拖预览），双指=分词（drag_preview=false，图片回退现有菜单）；松手时长不再分流出口，`<T` 仍不触发。改动集中在 `PressCaptureSource`、`PressTriggerDetector`、`PressReleaseMode` 与设置文案；Portal 模式键同步、Pointer 退化拒绝、迟到第二指拒绝、Phase 1A/Blocker 未改。
+- 触发方式为单指/双指结合且无模式开关（`161a171`）：首指 DOWN 即按单指启动；第二指在确认前加入升级为双指（时长从第二指起算）。出口由手势类型决定：单指=拖拽（文字分词面板 drag_preview=true、图片待拖预览），双指=分词（drag_preview=false，图片回退现有菜单）；松手时长不分流出口，`<T` 仍不触发。用户随后决定取消“全部单指/全部双指”模式选择：`PortalPressSettings`、`two_finger_long_press_enabled` 配置键、EvdevTouchParser/RootTouchSource 开关与设置页双指开关已删除；双指独立时长（250–3000ms，默认600）保留。Pointer 退化拒绝、迟到第二指拒绝、Phase 1A/Blocker 未改。
 - `PressTriggerDetector` 删除候选等待态 API；`PressReleaseMode.classify(duration)` 替换为 `resolve(twoFinger)`。`TwoFingerPressTest` 已按组合语义重写（升级竞态、不退化、双指/单指 drag_preview 断言）；定向触发器/两指/RootTouchSource/PortalPressSettings/预览交接测试通过。全量回归与构建见本轮任务记录。
 - 未操作设备；双指升级竞态、混合触发与真实 HyperOS 表现待实机验证。历史“T..2T/>=2T 分流”描述（2026-10-31 段）已被本节替代。
 
-当前开发源码版本为 `1.7.219-beta.39` / versionCode `281`；Beta38 日志导出增量已提交为 `d1f35d0`，此前 Beta37 交付的功能提交为 `5bf92fe`、`4b7257a`。
+当前开发源码版本为 `1.7.219-beta.39` / versionCode `281`；Beta38 日志导出增量已提交为 `d1f35d0`，此前 Beta37 交付的功能提交为 `5bf92fe`、`4b7257a`。组合触发及模式移除后全量验证：876 项单测 0 失败、Lint 0 errors/190 warnings、assembleDebug 通过；`d9d69ba` 清理恒真双指资格状态，`161a171` 固定单指=拖拽、双指=分词并删除模式选择。
 
 ### 2026-11-02 诊断打码红线与 FanRuntime 拆分
 

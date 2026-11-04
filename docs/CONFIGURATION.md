@@ -67,9 +67,7 @@ persist { current ->
 
 ## 双指按压与触发区底边间隔
 
-- `two_finger_long_press_enabled`是模块后备开关，缺失时false；`two_finger_long_press_timeout_millis`默认600、范围250–3000ms。原单指键、默认值与合法范围保持。两字段经过原Builder、SharedPreferences和Bundle；不将系统读取结果反写用户后备配置。
-- `PortalPressSettings`依据已核对的Portal 5.1.5源码，只读当前用户`Settings.System`的`support_double_press_mode`和`support_long_press_mode`。支持值非0且mode=2启用双指，mode=1保持单指；缺失、异常或不支持的组合回退模块值。单指原功能仍可用。不要改读Global镜像或把能力支持当用户已选择。
-- 该适配没有已验证的Portal时长接口，双指时长由模块设置。`PressCaptureSource`及设置页分别拥有自己的双URI订阅，退出关闭；订阅关闭后排队通知不再执行。系统模式实际可读性由ROM决定，读取失败不能影响功能。
+- 双指触发为固定能力，无启用开关（2026-11-05 用户决定）；旧 `two_finger_long_press_enabled` 键与 `PortalPressSettings` 模式同步已删除，旧偏好里遗留的该键会被忽略。`two_finger_long_press_timeout_millis` 默认600、范围250–3000ms，经原Builder、SharedPreferences和Bundle；原单指键、默认值与合法范围保持。
 - `hot_bottom_gap_dp`属于独立手势配置，默认0、范围0–200dp；不改`hot_height_percent`高度语义。`ConfigStore`、`ConfigProvider`、`GestureConfig`维持原通知链。`GestureGeometry.hotZoneBounds`供`FanRuntime`、`FanTriggerCapture`与屏上预览共用：以屏幕物理底边为基线，上移间隔，极端尺寸限制有效间隔以保留区域高度。0保留既有区域位置。
 - 菜单边距沿用`simpleMenuEdgeDistanceDp`（8dp、0–64dp）；简洁和现代线性布局实际都使用`LinearMenuGeometry`，设置页可为两者调整。原生Portal和圆形布局不套用线性布局参数。
 - `GestureSettingsContent`在列表外持有`BottomCornerPreviewOverlay`，底角/侧滑类别复用开始/结束入口；滑块草稿先更新预览，松手仍按原路径保存。类别/路由、后台与销毁退出规则见[退出所有权](EXIT_LIFECYCLE.md)。

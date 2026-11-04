@@ -4,7 +4,7 @@
 
 **Phase 1A 后续状态（2026-10-25，源码提交`4a8ec68`）**：本页第6节记录的32ms旧回调竞态已在Controller中按Root generation与Session身份修复，257回调也绑定到到达时的Session；旧UP/CANCEL仍正常排队处理。H1-H5/C1-C3/K1-K3及E1/E2测试、全量测试、Lint和Debug结果见[当前状态](CURRENT_STATUS.md)。这是逻辑层竞态修复，不是微信现场根因证明；真实宿主View的TouchTarget/CANCEL仍不可从现有Root日志直接观察。底层blocker API没有Session token，owner检查之后仍保留跨线程残余窗口。
 
-后续新增双指候选的输入分工：`EvdevTouchParser`只解析触点结构；`RootTouchSource`在主队列将精确双指交给`PressCaptureSource`明确接纳或拒绝。只在单指尚未确认且无活动拖拽时接纳双指；同SYN双指起始也可处理。拒绝、第三指和丢指隔离余触点至全抬起；已接纳的双指流不因后续设置改变而伪造终端。原活动单指拖拽落第二指仍取消。模式来源与字段见[CONFIGURATION](CONFIGURATION.md)。Phase 1A仅修复了已证实的Controller旧回调竞态，不代表宿主菜单冲突已归因或已验证。
+后续新增双指候选的输入分工：`EvdevTouchParser`只解析触点结构；`RootTouchSource`在主队列将精确双指交给`PressCaptureSource`明确接纳或拒绝。只在单指尚未确认且无活动拖拽时接纳双指；同SYN双指起始也可处理。拒绝、第三指和丢指隔离余触点至全抬起。原活动单指拖拽落第二指仍取消。触发无模式开关，字段见[CONFIGURATION](CONFIGURATION.md)。Phase 1A仅修复了已证实的Controller旧回调竞态，不代表宿主菜单冲突已归因或已验证。
 
 ## 1. 完整事件入口
 
