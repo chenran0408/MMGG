@@ -15,7 +15,7 @@ The project is organized around four functional areas. Package layout already se
 
 Cross-cutting shared UI (`ModernOverlayViews`, `OverlayPanelUi`, `InteractiveOverlayWindow`, `NativeGlassBackdrop`, `Os3BackgroundEffect`) serves areas 1 and 2; it is treated as shared infrastructure, not a fifth area.
 
-Hotspots by size: `DragShareController` 2592, `FanRuntime` 2307, `HyperOsFreeformBridge` 1894, `DragShareSettings` 1378, `ConfigStore` 1377, `SettingsScreen` 1136, `HoneycombOverlayView` 1113, `FanFreeformHook` 1062, `PressCaptureSource` 1001 (71 WeChat references, the heaviest host coupling in area 1).
+Hotspots by size (2026-11-05, after E1–E6): `DragShareController` 2506, `FanRuntime` 2289, `HyperOsFreeformBridge` 1813, `DragShareSettings` 1378, `ConfigStore` 1377, `SettingsScreen` 1136, `HoneycombOverlayView` 1113, `FanFreeformHook` 979, `PressCaptureSource` 839.
 
 ## Completed offline work
 
@@ -28,25 +28,35 @@ Hotspots by size: `DragShareController` 2592, `FanRuntime` 2307, `HyperOsFreefor
 
 ## Next device-independent rounds
 
-### E1 (area 1): WeChat press candidate owner
+### E1 (area 1): WeChat press candidate owner — DONE 2026-11-05
 
-Extract the WeChat press-candidate state machine (`PendingWeChat`, drag takeover, text delivery, screen-capture rejection) out of `PressCaptureSource` into one owner class. Generation checks, Root authority and Bitmap/URI ownership stay unchanged; existing TwoFingerPress/WeChat tests are the guardrails.
+Done as `WeChatPressFlow` (commit `0992141`): the WeChat press-candidate state machine, drag takeover, text delivery and screen-capture rejection now live in one owner class. Generation checks, Root authority and Bitmap/URI ownership stay in `PressCaptureSource`; the log TAG remains `PressCaptureSource` for diagnostic greps.
 
-### E2 (area 2): FanRuntime remaining responsibilities
+### E2 (area 2): FanRuntime remaining responsibilities — DONE 2026-11-05
 
-Keep extracting only clearly owned pieces from `FanRuntime` (recents watching, corner/side arbitration state) behind the existing collaborators. No input semantics change.
+Done as `SystemRecentsWatch` (commit `5568fd4`): the system-recents visibility polling state machine (probe window, back-off schedule, hard timeout, version invalidation) is a standalone owner with pure decision tests. Corner/side arbitration stays in `FanRuntime` because it has no pure boundary yet.
 
-### E3 (area 3): freeform request value object
+### E3 (area 3): freeform request value object — DONE 2026-11-05
 
-If duplication continues to grow, introduce a small internal request record for queued target launches and external intents. It must preserve the existing retry policy, task matching, timeout and private HyperOS calls. Do not merge the two launch paths until tests prove their behavior is equivalent.
+Done as `QueuedLaunchQueue` (commit `046cecb`): queued target/external launch payload, task id and generation live in one owner with atomic `begin/current/consume/clear/nextRetry` operations. The retry policy, task matching, timeout and private HyperOS calls are unchanged; the two launch paths remain separate.
 
-### E4 (area 4): diagnostic capability projection
+### E4 (area 4): diagnostic capability projection — VERIFIED 2026-11-05
 
-Keep capability collection, evidence interpretation and user-facing presentation separate. The home page should expose only the required action; technical evidence belongs in the diagnostic export. Missing evidence must remain `UNKNOWN`.
+Re-checked: capability collection (`RootConnectionDiagnostics`, `GestureDiagnostics`, `DragShareDiagnostics`), evidence interpretation and user-facing presentation are already separate classes; no extraction was needed. Missing evidence remains `UNKNOWN` in the status model.
+
+### E5 (area 2/3): freeform hook probe helpers — DONE 2026-11-05
+
+Done as `FreeformHookProbe` (commit `74abeec`): classloader probing and reflection summaries moved out of `FanFreeformHook` with unit tests. Hook installation order, candidate constants and private HyperOS calls are unchanged.
+
+### E6 (area 1): modern overlay prewarm owner — DONE 2026-11-05
+
+Done as `ModernOverlayPrewarm` (commit `7e50e03`): the warm-up overlay window lifecycle (schedule, first-draw finish, teardown, failure cleanup) is a standalone owner. Destroy-time disposal semantics and log messages are preserved; `DragShareExitLifecycleTest` guards the teardown order.
 
 ### Deferred: controller boundary map (area 1)
 
 Document the remaining `DragShareController` responsibilities and keep only one owner for each callback family. Extract code only when a pure boundary has a behavior test. Keep Root input, `UP/CANCEL`, payload ownership and URI/Bitmap release unchanged.
+
+Current extraction state after E1–E6: gesture trace recording, press release mode, pending preview gesture, WeChat press flow, modern overlay prewarm, drag actions and operation tracing all have named owners. The controller remains the single owner of gesture state transitions, Root UP/CANCEL semantics and window/menu lifecycle.
 
 ### R17: test matrix and release traceability
 

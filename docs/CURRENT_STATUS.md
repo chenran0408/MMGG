@@ -21,6 +21,16 @@
 
 ## 最新验证
 
+### 2026-11-05 工程化解耦轮（E1–E6）
+
+- E1 `0992141`：`WeChatPressFlow` 承接微信按压候选状态机（候选、拖拽接管、文字交付、截屏拒绝）；generation、Root 权威与资源所有权留在 `PressCaptureSource`，日志 TAG 不变。修复了 `PressPreviewHandoffTest` 反射辅助读错对象的 3 个用例失败。
+- E2 `5568fd4`：`SystemRecentsWatch` 承接系统最近任务可见性轮询（探测窗口、退避节奏、硬超时、版本失效），决策逻辑有纯逻辑测试。
+- E3 `046cecb`：`QueuedLaunchQueue` 统一小窗排队启动负载、taskId 与 generation，`begin/current/consume/clear/nextRetry` 原子操作；重试策略、任务匹配、超时与私有 HyperOS 调用未改。
+- E6 `7e50e03`：`ModernOverlayPrewarm` 承接预热窗口生命周期（调度、首帧收尾、销毁清理、失败回收）；销毁时释放顺序与日志保持，`DragShareExitLifecycleTest` 为护栏。
+- E5 `74abeec`：`FreeformHookProbe` 承接 FanFreeformHook 的类探测与反射摘要工具，附单元测试。
+- E4 复核：诊断能力采集、证据解读与用户呈现已分属独立类，无需抽取。
+- 每轮独立提交，均通过全量验证：最终 894 项单测 0 失败、Lint 0 errors、assembleDebug 通过。行为语义未变；FanRuntime 触发/资格、Phase 1A、Blocker、微信 Hook、控件避让阈值未触碰。未操作设备、未 push、未发布。
+
 ### 2026-11-05 组合按压触发
 
 - 触发方式为单指/双指结合且无模式开关（`161a171`）：首指 DOWN 即按单指启动；第二指在确认前加入升级为双指（时长从第二指起算）。出口由手势类型决定：单指=拖拽（文字分词面板 drag_preview=true、图片待拖预览），双指=分词（drag_preview=false，图片回退现有菜单）；松手时长不分流出口，`<T` 仍不触发。用户随后决定取消“全部单指/全部双指”模式选择：`PortalPressSettings`、`two_finger_long_press_enabled` 配置键、EvdevTouchParser/RootTouchSource 开关与设置页双指开关已删除；双指独立时长（250–3000ms，默认600）保留。Pointer 退化拒绝、迟到第二指拒绝、Phase 1A/Blocker 未改。
