@@ -117,7 +117,9 @@ public final class FanFreeformHook implements IXposedHookLoadPackage {
                         FanRuntime active = runtime;
                         return active != null && active.notificationFreeformEnabled();
                     });
-                    probeSystemUiInterfaces(classLoader);
+                    FreeformHookProbe.probeSystemUiInterfaces(classLoader,
+                            INPUT_CONTROLLER_CANDIDATES, EVENT_HANDLER, FREEFORM_CONTROLLER,
+                            FREEFORM_PIN_HANDLER, FREEFORM_ANIMATION);
                     // The first class lookup can happen before Application.attach(). Retry
                     // here, and then scan the ROM dex for renamed HyperOS 2 classes below.
                     hookFreeformController(classLoader);
@@ -130,44 +132,6 @@ public final class FanFreeformHook implements IXposedHookLoadPackage {
         } catch (Throwable error) {
             Log.e("SystemUI application attach diagnostic hook failed", error);
         }
-    }
-
-    private static void probeSystemUiInterfaces(ClassLoader classLoader) {
-        probeClass(classLoader, "inputController", INPUT_CONTROLLER_CANDIDATES);
-        probeClass(classLoader, "inputHandler", EVENT_HANDLER);
-        probeClass(classLoader, "freeformController", FREEFORM_CONTROLLER);
-        probeClass(classLoader, "freeformPinHandler", FREEFORM_PIN_HANDLER);
-        probeClass(classLoader, "freeformAnimation", FREEFORM_ANIMATION);
-        Log.i("SystemUI probe complete uptime=" + SystemClock.uptimeMillis());
-    }
-
-    private static void probeClass(ClassLoader classLoader, String role, String... names) {
-        for (String name : names) {
-            Class<?> type = XposedHelpers.findClassIfExists(name, classLoader);
-            if (type == null) {
-                Log.i("SystemUI probe " + role + " missing=" + name);
-                continue;
-            }
-            Log.i("SystemUI probe " + role + " present=" + name
-                    + " methods=" + methodSummary(type));
-            return;
-        }
-    }
-
-    private static String methodSummary(Class<?> type) {
-        LinkedHashSet<String> names = new LinkedHashSet<>();
-        try {
-            for (Method method : type.getDeclaredMethods()) {
-                names.add(method.getName() + "/" + method.getParameterTypes().length);
-            }
-        } catch (Throwable error) {
-            return "<unavailable:" + error.getClass().getSimpleName() + ">";
-        }
-        if (names.isEmpty()) return "[]";
-        List<String> sorted = new ArrayList<>(names);
-        Collections.sort(sorted);
-        if (sorted.size() > 40) sorted = sorted.subList(0, 40);
-        return sorted.toString();
     }
 
     private static void scanRomClassesAsync(ClassLoader classLoader) {
@@ -536,15 +500,16 @@ public final class FanFreeformHook implements IXposedHookLoadPackage {
             Class<?> handlerClass = findHandlerClass(controllerClass, classLoader, controllerName);
             if (handlerClass == null) {
                 Log.i("SystemUI input controller found but handler is missing controller="
-                        + controllerName + " nested=" + nestedClassSummary(controllerClass));
+                        + controllerName + " nested=" + FreeformHookProbe.nestedClassSummary(controllerClass));
                 return false;
             }
-            String createMethod = findEventReceiverMethod(controllerClass);
-            String registerMethod = findEventHandlerRegistrationMethod(controllerClass, handlerClass);
+            String createMethod = FreeformHookProbe.findEventReceiverMethod(controllerClass);
+            String registerMethod = FreeformHookProbe.findEventHandlerRegistrationMethod(
+                    controllerClass, handlerClass);
             if (createMethod == null || registerMethod == null) {
                 Log.i("SystemUI input methods missing controller=" + controllerName
                         + " create=" + createMethod + " register=" + registerMethod
-                        + " methods=" + methodSummary(controllerClass));
+                        + " methods=" + FreeformHookProbe.methodSummary(controllerClass));
                 return false;
             }
             int hookCount = XposedBridge.hookAllMethods(controllerClass, createMethod,
@@ -599,61 +564,6 @@ public final class FanFreeformHook implements IXposedHookLoadPackage {
                     + controllerName, error);
         }
         return null;
-    }
-
-    private static String nestedClassSummary(Class<?> type) {
-        try {
-            List<String> names = new ArrayList<>();
-            for (Class<?> nested : type.getDeclaredClasses()) names.add(nested.getName());
-            Collections.sort(names);
-            return names.toString();
-        } catch (Throwable error) {
-            return "<unavailable:" + error.getClass().getSimpleName() + ">";
-        }
-    }
-
-    private static String findEventReceiverMethod(Class<?> controllerClass) {
-        try {
-            for (Method method : controllerClass.getDeclaredMethods()) {
-                if ("createEventReceiver".equals(method.getName())) return method.getName();
-            }
-            for (Method method : controllerClass.getDeclaredMethods()) {
-                String name = method.getName().toLowerCase(java.util.Locale.US);
-                if (name.contains("eventreceiver") && name.contains("create")) {
-                    return method.getName();
-                }
-            }
-        } catch (Throwable error) {
-            Log.e("Cannot inspect input receiver methods class=" + controllerClass.getName(), error);
-        }
-        return null;
-    }
-
-    private static String findEventHandlerRegistrationMethod(Class<?> controllerClass,
-                                                              Class<?> handlerClass) {
-        try {
-            for (Method method : controllerClass.getDeclaredMethods()) {
-                if ("registerEventHandler".equals(method.getName())
-                        && acceptsHandler(method, handlerClass)) return method.getName();
-            }
-            for (Method method : controllerClass.getDeclaredMethods()) {
-                String name = method.getName().toLowerCase(java.util.Locale.US);
-                if (name.contains("register") && acceptsHandler(method, handlerClass)) {
-                    return method.getName();
-                }
-            }
-        } catch (Throwable error) {
-            Log.e("Cannot inspect input handler registration class="
-                    + controllerClass.getName(), error);
-        }
-        return null;
-    }
-
-    private static boolean acceptsHandler(Method method, Class<?> handlerClass) {
-        Class<?>[] parameterTypes = method.getParameterTypes();
-        return parameterTypes.length == 1
-                && parameterTypes[0] != Object.class
-                && parameterTypes[0].isAssignableFrom(handlerClass);
     }
 
     private static synchronized FanRuntime ensureRuntime(Context context,
