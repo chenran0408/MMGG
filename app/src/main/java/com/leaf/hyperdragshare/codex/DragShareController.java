@@ -71,9 +71,6 @@ final class DragShareController {
                 thread.setDaemon(true);
                 return thread;
             });
-    private static boolean modernOverlayPrewarmStarted;
-
-
     private final Context context;
     private final WindowManager windowManager;
     private final BackgroundTouchBlocker backgroundTouchBlocker;
@@ -84,11 +81,8 @@ final class DragShareController {
     private final DragShareToast dragShareToast;
     private final DragShareActions actions;
     private final DragShareLifecycle lifecycle = new DragShareLifecycle();
-    private Runnable modernOverlayPrewarmTask;
     private Runnable staleInputWatchdog;
-    private ModernPreviewOverlayView modernOverlayPrewarmView;
-    private ModernOverlayWindow modernOverlayPrewarmWindow;
-    private ViewTreeObserver.OnDrawListener modernOverlayPrewarmDrawListener;
+    private final ModernOverlayPrewarm overlayPrewarm;
     private final Runnable edgeScrollRunnable = new Runnable() {
         @Override
         public void run() {
@@ -292,7 +286,29 @@ final class DragShareController {
                 mainHandler,
                 dragShareToast,
                 "accessibility".equals(this.windowPolicy.sourceName));
-        prewarmModernOverlay();
+        overlayPrewarm = new ModernOverlayPrewarm(context, windowManager, mainHandler,
+                new ModernOverlayPrewarm.Host() {
+                    @Override
+                    public boolean isDestroyed() {
+                        return destroyed;
+                    }
+
+                    @Override
+                    public WindowManager.LayoutParams warmupParams() {
+                        return overlayParams(2, 2, "DragShare modern overlay warmup");
+                    }
+
+                    @Override
+                    public void log(String message) {
+                        DragShareController.log(message);
+                    }
+
+                    @Override
+                    public void log(String message, Throwable error) {
+                        DragShareController.log(message, error);
+                    }
+                });
+        overlayPrewarm.start();
     }
 
     boolean isActive() {
@@ -331,7 +347,7 @@ final class DragShareController {
             active = false;
             stopEdgeScroll();
             backgroundTouchBlocker.stop();
-            disposeModernOverlayPrewarm();
+            overlayPrewarm.dispose();
             removeGestureViews();
         }
         pendingPortalHostFloatWindowSuppression = false;
@@ -657,7 +673,7 @@ final class DragShareController {
             if (session != null) {
                 session.cancelled = true;
             }
-            disposeModernOverlayPrewarm();
+            overlayPrewarm.dispose();
             stopEdgeScroll();
             backgroundTouchBlocker.stop();
             dismissPendingImagePreview(true);
@@ -819,111 +835,6 @@ final class DragShareController {
     private List<ShareTarget> queryTargets(CapturedContent payload) {
         List<ShareTarget> queried = ShareTargetRepository.query(context, payload);
         return ShareTargetRepository.applySettings(context, queried, settings, payload.isImage());
-    }
-
-    private void prewarmModernOverlay() {
-        if (destroyed || modernOverlayPrewarmStarted) {
-            return;
-        }
-        modernOverlayPrewarmStarted = true;
-        Runnable prewarm = () -> {
-            modernOverlayPrewarmTask = null;
-            if (destroyed) return;
-            try {
-                long started = SystemClock.elapsedRealtime();
-                CapturedContent content = CapturedContent.text("预热", "warmup", null);
-                ModernPreviewOverlayView warmupView = new ModernPreviewOverlayView(
-                        context, content, DragShareSettings.defaults());
-                modernOverlayPrewarmView = warmupView;
-                WindowManager.LayoutParams warmupParams =
-                        overlayParams(2, 2, "DragShare modern overlay warmup");
-                warmupParams.x = -2;
-                warmupParams.y = -2;
-                ModernOverlayWindow warmupWindow = new ModernOverlayWindow(
-                        context, windowManager, warmupView, warmupParams, 0);
-                modernOverlayPrewarmWindow = warmupWindow;
-                ViewTreeObserver.OnDrawListener drawListener =
-                        new ViewTreeObserver.OnDrawListener() {
-                            private boolean finishPosted;
-
-                            @Override
-                            public void onDraw() {
-                                if (destroyed || modernOverlayPrewarmView != warmupView
-                                        || modernOverlayPrewarmWindow != warmupWindow) {
-                                    return;
-                                }
-                                if (finishPosted) {
-                                    return;
-                                }
-                                finishPosted = true;
-                                warmupView.post(() -> {
-                                    finishModernOverlayPrewarm(
-                                            warmupView, warmupWindow, this, started);
-                                });
-                            }
-                        };
-                ViewTreeObserver observer = warmupView.getViewTreeObserver();
-                observer.addOnDrawListener(drawListener);
-                modernOverlayPrewarmDrawListener = drawListener;
-                warmupWindow.showAnimated();
-            } catch (RuntimeException error) {
-                disposeModernOverlayPrewarm();
-                log("modern overlay prewarm failed", error);
-            }
-        };
-        modernOverlayPrewarmTask = prewarm;
-        mainHandler.post(prewarm);
-    }
-
-    private void finishModernOverlayPrewarm(
-            ModernPreviewOverlayView warmupView,
-            ModernOverlayWindow warmupWindow,
-            ViewTreeObserver.OnDrawListener drawListener,
-            long started) {
-        if (destroyed || modernOverlayPrewarmView != warmupView
-                || modernOverlayPrewarmWindow != warmupWindow) return;
-        ViewTreeObserver observer = warmupView.getViewTreeObserver();
-        if (observer.isAlive()) observer.removeOnDrawListener(drawListener);
-        modernOverlayPrewarmDrawListener = null;
-        modernOverlayPrewarmView = null;
-        modernOverlayPrewarmWindow = null;
-        try {
-            warmupWindow.dispose();
-            log("modern overlay prewarm completed elapsed_ms="
-                    + (SystemClock.elapsedRealtime() - started));
-        } catch (RuntimeException error) {
-            log("modern overlay prewarm cleanup failed", error);
-        }
-    }
-
-    private void disposeModernOverlayPrewarm() {
-        if (modernOverlayPrewarmTask != null) {
-            mainHandler.removeCallbacks(modernOverlayPrewarmTask);
-            modernOverlayPrewarmTask = null;
-        }
-        ModernPreviewOverlayView view = modernOverlayPrewarmView;
-        ModernOverlayWindow window = modernOverlayPrewarmWindow;
-        ViewTreeObserver.OnDrawListener listener = modernOverlayPrewarmDrawListener;
-        modernOverlayPrewarmView = null;
-        modernOverlayPrewarmWindow = null;
-        modernOverlayPrewarmDrawListener = null;
-        if (view != null && listener != null) {
-            ViewTreeObserver observer = view.getViewTreeObserver();
-            if (observer.isAlive()) observer.removeOnDrawListener(listener);
-        }
-        if (window != null) {
-            try {
-                window.dispose();
-            } catch (RuntimeException error) {
-                log("modern overlay prewarm cleanup failed", error);
-            }
-        } else if (view != null) {
-            try {
-                view.disposeOverlay();
-            } catch (RuntimeException error) {
-                log("modern overlay prewarm view cleanup failed", error);
-            }
-        }
     }
 
     private void loadTargetsAndCreateMenu(

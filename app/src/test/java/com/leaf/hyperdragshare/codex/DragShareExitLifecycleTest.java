@@ -63,9 +63,10 @@ public final class DragShareExitLifecycleTest {
 
         try {
             discardScheduledPrewarm(controller);
-            set(controller, "modernOverlayPrewarmView", prewarmView);
-            set(controller, "modernOverlayPrewarmWindow", prewarmWindow);
-            set(controller, "modernOverlayPrewarmDrawListener", drawListener);
+            Object prewarm = prewarm(controller);
+            set(prewarm, "view", prewarmView);
+            set(prewarm, "window", prewarmWindow);
+            set(prewarm, "drawListener", drawListener);
 
             prewarmWindow.show();
             ShadowLooper.shadowMainLooper().idle();
@@ -76,9 +77,9 @@ public final class DragShareExitLifecycleTest {
             ShadowLooper.shadowMainLooper().idle();
 
             assertFalse("destroy left the prewarm Dialog showing", prewarmWindow.isShowing());
-            assertNull(get(controller, "modernOverlayPrewarmView"));
-            assertNull(get(controller, "modernOverlayPrewarmWindow"));
-            assertNull(get(controller, "modernOverlayPrewarmDrawListener"));
+            assertNull(get(prewarm, "view"));
+            assertNull(get(prewarm, "window"));
+            assertNull(get(prewarm, "drawListener"));
             assertEquals(drawsBeforeDestroy, drawCount.get());
         } finally {
             prewarmWindow.dispose();
@@ -91,7 +92,7 @@ public final class DragShareExitLifecycleTest {
     @Test
     public void destroyMakesCapturedPrewarmDrawListenerInert() throws Exception {
         Field prewarmStartedField =
-                DragShareController.class.getDeclaredField("modernOverlayPrewarmStarted");
+                ModernOverlayPrewarm.class.getDeclaredField("started");
         prewarmStartedField.setAccessible(true);
         boolean previousPrewarmStarted = prewarmStartedField.getBoolean(null);
         prewarmStartedField.setBoolean(null, false);
@@ -101,19 +102,20 @@ public final class DragShareExitLifecycleTest {
             activityController = Robolectric.buildActivity(Activity.class).setup();
             Activity context = activityController.get();
             controller = new DragShareController(context, OverlayWindowPolicy.portal());
-            Runnable prewarmTask = (Runnable) get(controller, "modernOverlayPrewarmTask");
+            Object prewarm = prewarm(controller);
+            Runnable prewarmTask = (Runnable) get(prewarm, "task");
             assertTrue(prewarmTask != null);
             ((Handler) get(controller, "mainHandler")).removeCallbacks(prewarmTask);
             prewarmTask.run();
             ShadowLooper.shadowMainLooper().idle();
 
             ModernPreviewOverlayView prewarmView =
-                    (ModernPreviewOverlayView) get(controller, "modernOverlayPrewarmView");
+                    (ModernPreviewOverlayView) get(prewarm, "view");
             ModernOverlayWindow prewarmWindow =
-                    (ModernOverlayWindow) get(controller, "modernOverlayPrewarmWindow");
+                    (ModernOverlayWindow) get(prewarm, "window");
             ViewTreeObserver.OnDrawListener drawListener =
                     (ViewTreeObserver.OnDrawListener) get(
-                            controller, "modernOverlayPrewarmDrawListener");
+                            prewarm, "drawListener");
             assertTrue(prewarmView != null);
             assertTrue(prewarmWindow != null && prewarmWindow.isShowing());
             assertTrue(drawListener != null);
@@ -124,16 +126,16 @@ public final class DragShareExitLifecycleTest {
             controller.destroy();
             ShadowLooper.shadowMainLooper().idle();
             assertFalse(prewarmWindow.isShowing());
-            assertNull(get(controller, "modernOverlayPrewarmView"));
-            assertNull(get(controller, "modernOverlayPrewarmWindow"));
-            assertNull(get(controller, "modernOverlayPrewarmDrawListener"));
+            assertNull(get(prewarm, "view"));
+            assertNull(get(prewarm, "window"));
+            assertNull(get(prewarm, "drawListener"));
 
             drawListener.onDraw();
             assertFalse("a captured draw callback must stop before posting finish work",
                     finishPosted.getBoolean(drawListener));
             ShadowLooper.shadowMainLooper().idle();
-            assertNull(get(controller, "modernOverlayPrewarmView"));
-            assertNull(get(controller, "modernOverlayPrewarmWindow"));
+            assertNull(get(prewarm, "view"));
+            assertNull(get(prewarm, "window"));
 
             ModernPreviewOverlayView replacementView = new ModernPreviewOverlayView(
                     context,
@@ -152,17 +154,17 @@ public final class DragShareExitLifecycleTest {
                     0);
             ViewTreeObserver.OnDrawListener replacementListener =
                     new ViewTreeObserverListener(new AtomicInteger());
-            set(controller, "modernOverlayPrewarmView", replacementView);
-            set(controller, "modernOverlayPrewarmWindow", replacementWindow);
-            set(controller, "modernOverlayPrewarmDrawListener", replacementListener);
-            invoke(controller, "finishModernOverlayPrewarm",
+            set(prewarm, "view", replacementView);
+            set(prewarm, "window", replacementWindow);
+            set(prewarm, "drawListener", replacementListener);
+            invoke(prewarm, "finish",
                     new Class<?>[]{ModernPreviewOverlayView.class, ModernOverlayWindow.class,
                             ViewTreeObserver.OnDrawListener.class, long.class},
                     prewarmView, prewarmWindow, drawListener, 0L);
-            assertSame(replacementView, get(controller, "modernOverlayPrewarmView"));
-            assertSame(replacementWindow, get(controller, "modernOverlayPrewarmWindow"));
+            assertSame(replacementView, get(prewarm, "view"));
+            assertSame(replacementWindow, get(prewarm, "window"));
             assertSame(replacementListener,
-                    get(controller, "modernOverlayPrewarmDrawListener"));
+                    get(prewarm, "drawListener"));
         } finally {
             try {
                 if (controller != null) {
@@ -310,11 +312,16 @@ public final class DragShareExitLifecycleTest {
     }
 
     private static void discardScheduledPrewarm(DragShareController controller) throws Exception {
-        Runnable pendingTask = (Runnable) get(controller, "modernOverlayPrewarmTask");
+        Object prewarm = prewarm(controller);
+        Runnable pendingTask = (Runnable) get(prewarm, "task");
         if (pendingTask != null) {
             ((Handler) get(controller, "mainHandler")).removeCallbacks(pendingTask);
         }
-        set(controller, "modernOverlayPrewarmTask", null);
+        set(prewarm, "task", null);
+    }
+
+    private static Object prewarm(DragShareController controller) throws Exception {
+        return get(controller, "overlayPrewarm");
     }
 
     private static Object get(Object object, String name) throws Exception {
