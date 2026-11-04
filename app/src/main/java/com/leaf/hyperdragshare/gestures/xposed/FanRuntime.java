@@ -41,14 +41,6 @@ final class FanRuntime {
 
     private static final float BOTTOM_HONEYCOMB_FAN_GAP_DP = 10f;
 
-    private static final long SYSTEM_RECENTS_FAST_WATCH_MS = 5000L;
-
-    private static final long SYSTEM_RECENTS_SLOW_WATCH_MS = 120_000L;
-
-    private static final long SYSTEM_RECENTS_IDLE_WATCH_MS = 10_000L;
-
-    private static final long SYSTEM_RECENTS_MAX_WATCH_MS = 10L * 60L * 1000L;
-
     private enum State {
 
         IDLE,
@@ -305,8 +297,7 @@ final class FanRuntime {
 
     private long outsideCaptureWindowTransitionGeneration;
 
-    private long systemRecentsWatchVersion;
-    private boolean sideSystemRecentsWatchActive;
+    private final SystemRecentsWatch systemRecentsWatch;
 
     private int taskLoadGeneration;
 
@@ -339,6 +330,21 @@ final class FanRuntime {
         taskSwitcherOverlay = new TaskSwitcherOverlayController(context, mainHandler);
         recentTaskRepository = new RecentTaskRepository(context);
         systemRecentsLauncher = new SystemRecentsLauncher(context);
+        systemRecentsWatch = new SystemRecentsWatch(mainHandler, new SystemRecentsWatch.Host() {
+            @Override
+            public boolean isRecentsVisible() {
+                return systemRecentsLauncher.isVisible();
+            }
+
+            @Override
+            public void onWatchStopped(String reason) {
+                refreshOutsideCapture();
+                if ("timeout".equals(reason))
+                    Log.i("System recents watch reached hard timeout; polling stopped");
+                else
+                    Log.i("Outside capture refreshed after HyperOS system recents closed");
+            }
+        });
         fullscreenLauncher = new FullscreenAppLauncher(context);
         triggerCapture = new FanTriggerCapture(context, mainHandler, new FanTriggerCapture.Listener() {
 
@@ -1480,35 +1486,7 @@ final class FanRuntime {
         }
         if (config.haptic)
             vibrateTick();
-        long version = ++systemRecentsWatchVersion;
-        sideSystemRecentsWatchActive = true;
-        long startedAt = android.os.SystemClock.uptimeMillis();
-        mainHandler.postDelayed(() -> watchSystemRecents(version, 0, false, startedAt), 100L);
-    }
-
-    private void watchSystemRecents(long version, int attempts, boolean wasVisible, long startedAt) {
-        if (version != systemRecentsWatchVersion)
-            return;
-        long elapsed = android.os.SystemClock.uptimeMillis() - startedAt;
-        boolean visible = systemRecentsLauncher.isVisible();
-        if (elapsed > SYSTEM_RECENTS_MAX_WATCH_MS) {
-            sideSystemRecentsWatchActive = false;
-            refreshOutsideCapture();
-            Log.i("System recents watch reached hard timeout; polling stopped");
-            return;
-        }
-        if (visible) {
-            long delay = elapsed < SYSTEM_RECENTS_FAST_WATCH_MS ? 450L : elapsed < SYSTEM_RECENTS_SLOW_WATCH_MS ? 1500L : SYSTEM_RECENTS_IDLE_WATCH_MS;
-            mainHandler.postDelayed(() -> watchSystemRecents(version, attempts + 1, true, startedAt), delay);
-            return;
-        }
-        if (!wasVisible && attempts < 12) {
-            mainHandler.postDelayed(() -> watchSystemRecents(version, attempts + 1, false, startedAt), 100L);
-            return;
-        }
-        sideSystemRecentsWatchActive = false;
-        refreshOutsideCapture();
-        Log.i("Outside capture refreshed after HyperOS system recents closed");
+        systemRecentsWatch.start();
     }
 
     private void arm(GestureGeometry.Corner corner, float x, float y, long downTime, long eventTime) {
@@ -2481,7 +2459,7 @@ final class FanRuntime {
                     honeycombOverlay.dismiss();
                 }
                 boolean sideGestureActive = state == State.SIDE_ARMED
-                        || activeSideList || sideSystemRecentsWatchActive;
+                        || activeSideList || systemRecentsWatch.isActive();
                 boolean bottomGestureActive = !sideGestureActive
                         && (state == State.ARMED || state == State.CLAIMED
                         || (state == State.ACTIVE && !activeSideList)
