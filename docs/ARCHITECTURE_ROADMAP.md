@@ -58,7 +58,9 @@ Document the remaining `DragShareController` responsibilities and keep only one 
 
 Current extraction state after E1–E6: gesture trace recording, press release mode, pending preview gesture, WeChat press flow, modern overlay prewarm, drag actions and operation tracing all have named owners. The controller remains the single owner of gesture state transitions, Root UP/CANCEL semantics and window/menu lifecycle.
 
-### R17: test matrix and release traceability
+### R17: test matrix and release traceability — DONE 2026-11-05
+
+Done as `docs/VERIFICATION.json`: one machine-readable record holding commit, version, APK hash, unit-test counts, lint results and executed build tasks. Device-only checks stay explicitly `PENDING`; a local build is never recorded as a cloud CI result or a cross-app send confirmation.
 
 Add a single machine-readable verification record containing commit, version, APK hash, unit-test count, lint result and build tasks. Keep device-only checks explicitly pending. Do not treat a local build as a cloud CI result or a cross-app send confirmation.
 
