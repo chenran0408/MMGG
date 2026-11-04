@@ -2,6 +2,21 @@
 
 This roadmap is for work that can be completed without a connected device. It does not replace `CURRENT_STATUS.md`; that file remains the source for current facts.
 
+## Four functional areas (2026-11-05 audit)
+
+The project is organized around four functional areas. Package layout already separates gestures code; the `codex` package still mixes area 1, area 4 and shared UI infrastructure, which the rounds below address by ownership rather than mass file moves.
+
+| Area | Scope | Main code (current location) | Size (files/lines) |
+|---|---|---|---|
+| 1 分词与拖拽 | Press capture, segmentation, drag, share targets, stash, WeChat adaptation, OCR/recognize | `codex` press/drag/bigbang/stash/portal files, `gestures` root input readers | 73 files / ~22.9k lines |
+| 2 手势增强 | Corner/side/honeycomb triggers, recents, outside gestures, gesture config | `gestures/xposed` Fan* + Honeycomb* + TaskSwitcher*, `gestures/config` | 60 files / ~14.0k lines |
+| 3 小窗增强 | HyperOS freeform bridge, mini windows, shortcut host, media controls | `gestures/xposed` HyperOsFreeformBridge, ShortcutHostRuntime, MiniMediaControls, HyperOsProfile | 16 files / ~5.1k lines |
+| 4 其他功能 | Settings UI, activation/diagnostics, touch probe reports, app update, copy direct, licenses | `codex` settings/diagnostics/touchprobe/update pages | 34 files / ~10.4k lines |
+
+Cross-cutting shared UI (`ModernOverlayViews`, `OverlayPanelUi`, `InteractiveOverlayWindow`, `NativeGlassBackdrop`, `Os3BackgroundEffect`) serves areas 1 and 2; it is treated as shared infrastructure, not a fifth area.
+
+Hotspots by size: `DragShareController` 2592, `FanRuntime` 2307, `HyperOsFreeformBridge` 1894, `DragShareSettings` 1378, `ConfigStore` 1377, `SettingsScreen` 1136, `HoneycombOverlayView` 1113, `FanFreeformHook` 1062, `PressCaptureSource` 1001 (71 WeChat references, the heaviest host coupling in area 1).
+
 ## Completed offline work
 
 - Fan runtime eligibility, target resolution, configuration loading and freeform geometry are isolated behind small decision boundaries.
@@ -13,17 +28,25 @@ This roadmap is for work that can be completed without a connected device. It do
 
 ## Next device-independent rounds
 
-### R14: controller boundary map
+### E1 (area 1): WeChat press candidate owner
 
-Document the remaining `DragShareController` responsibilities and keep only one owner for each callback family. Extract code only when a pure boundary has a behavior test. Keep Root input, `UP/CANCEL`, payload ownership and URI/Bitmap release unchanged.
+Extract the WeChat press-candidate state machine (`PendingWeChat`, drag takeover, text delivery, screen-capture rejection) out of `PressCaptureSource` into one owner class. Generation checks, Root authority and Bitmap/URI ownership stay unchanged; existing TwoFingerPress/WeChat tests are the guardrails.
 
-### R15: freeform request value object
+### E2 (area 2): FanRuntime remaining responsibilities
+
+Keep extracting only clearly owned pieces from `FanRuntime` (recents watching, corner/side arbitration state) behind the existing collaborators. No input semantics change.
+
+### E3 (area 3): freeform request value object
 
 If duplication continues to grow, introduce a small internal request record for queued target launches and external intents. It must preserve the existing retry policy, task matching, timeout and private HyperOS calls. Do not merge the two launch paths until tests prove their behavior is equivalent.
 
-### R16: diagnostic capability projection
+### E4 (area 4): diagnostic capability projection
 
 Keep capability collection, evidence interpretation and user-facing presentation separate. The home page should expose only the required action; technical evidence belongs in the diagnostic export. Missing evidence must remain `UNKNOWN`.
+
+### Deferred: controller boundary map (area 1)
+
+Document the remaining `DragShareController` responsibilities and keep only one owner for each callback family. Extract code only when a pure boundary has a behavior test. Keep Root input, `UP/CANCEL`, payload ownership and URI/Bitmap release unchanged.
 
 ### R17: test matrix and release traceability
 
