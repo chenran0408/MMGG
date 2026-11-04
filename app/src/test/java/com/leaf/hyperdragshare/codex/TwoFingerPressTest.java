@@ -416,7 +416,7 @@ public final class TwoFingerPressTest {
 
             Object pending = pendingWeChat(CapturedContent.pressOcrRegion(
                     screenshot, "com.tencent.mm", new Rect()));
-            field(source, "pendingWeChat").set(source, pending);
+            setWeChatCandidate(source, pending);
             CapturedContent portalImage = CapturedContent.portalMediaImage(
                     bitmap, "com.tencent.mm", new Rect(0, 0, 2, 2));
             assertTrue(source.acceptWeChatPortalContent(portalImage));
@@ -455,8 +455,16 @@ public final class TwoFingerPressTest {
         }
     }
 
+    private static WeChatPressFlow weChatFlow(PressCaptureSource source) throws Exception {
+        return (WeChatPressFlow) field(source, "weChatPress").get(source);
+    }
+
+    private static void setWeChatCandidate(PressCaptureSource source, Object pending) throws Exception {
+        field(weChatFlow(source), "candidate").set(weChatFlow(source), pending);
+    }
+
     private static Object pendingWeChat(CapturedContent content) throws Exception {
-        Class<?> type = Class.forName(PressCaptureSource.class.getName() + "$PendingWeChat");
+        Class<?> type = Class.forName(WeChatPressFlow.class.getName() + "$Candidate");
         java.lang.reflect.Constructor<?> constructor = type.getDeclaredConstructor(
                 CapturedContent.class, long.class, String.class);
         constructor.setAccessible(true);

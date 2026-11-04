@@ -323,7 +323,7 @@ public final class PressPreviewHandoffTest {
         field(source, "downTime").setLong(source, 100L);
         field(source, "confirmedAt").setLong(source, 600L);
         field(source, "generation").setLong(source, 4L);
-        field(source, "pendingWeChat").set(source, pending);
+        setCandidate(source, pending);
 
         try {
             invokeDragCandidate(source, 80f, 90f);
@@ -335,7 +335,7 @@ public final class PressPreviewHandoffTest {
             assertEquals("识别出的当前文字", payload.text);
             assertEquals("com.tencent.mm", payload.sourcePackage);
             assertTrue(screenshot.isRecycled());
-            assertEquals(null, field(source, "pendingWeChat").get(source));
+            assertNull(candidateOf(source));
         } finally {
             source.stop();
             controller.destroy();
@@ -360,7 +360,7 @@ public final class PressPreviewHandoffTest {
         field(source, "downTime").setLong(source, 100L);
         field(source, "confirmedAt").setLong(source, 600L);
         field(source, "generation").setLong(source, 5L);
-        field(source, "pendingWeChat").set(source, pending);
+        setCandidate(source, pending);
         ((PressTriggerDetector) field(source, "detector").get(source))
                 .start(20f, 30f, 100L, 500L);
         CapturedContent actualPortalImage = CapturedContent.portalMediaImage(
@@ -401,7 +401,7 @@ public final class PressPreviewHandoffTest {
         field(source, "downTime").setLong(source, 100L);
         field(source, "confirmedAt").setLong(source, 600L);
         field(source, "generation").setLong(source, 6L);
-        field(source, "pendingWeChat").set(source, pending);
+        setCandidate(source, pending);
 
         try {
             invokeDragCandidate(source, 80f, 90f);
@@ -409,7 +409,7 @@ public final class PressPreviewHandoffTest {
 
             assertNull(field(controller, "session").get(controller));
             assertTrue(screenshot.isRecycled());
-            assertNull(field(source, "pendingWeChat").get(source));
+            assertNull(candidateOf(source));
         } finally {
             source.stop();
             controller.destroy();
@@ -434,7 +434,7 @@ public final class PressPreviewHandoffTest {
         field(source, "downTime").setLong(source, 100L);
         field(source, "confirmedAt").setLong(source, 600L);
         field(source, "generation").setLong(source, 7L);
-        field(source, "pendingWeChat").set(source, pending);
+        setCandidate(source, pending);
 
         try {
             invokeDragCandidate(source, 80f, 90f);
@@ -442,7 +442,7 @@ public final class PressPreviewHandoffTest {
 
             assertNull(field(controller, "session").get(controller));
             assertTrue(screenshot.isRecycled());
-            assertNull(field(source, "pendingWeChat").get(source));
+            assertNull(candidateOf(source));
             assertTrue(filteredOperationMessages().contains(
                     "stage=image_drag outcome=rejected_ocr_region_drag_screen_capture"));
         } finally {
@@ -595,7 +595,7 @@ public final class PressPreviewHandoffTest {
 
     private static Object pendingWeChat(CapturedContent content, long request, boolean textWindowAccepted,
                                         String text) throws Exception {
-        Class<?> type = Class.forName(PressCaptureSource.class.getName() + "$PendingWeChat");
+        Class<?> type = Class.forName(WeChatPressFlow.class.getName() + "$Candidate");
         var constructor = type.getDeclaredConstructor(CapturedContent.class, long.class, String.class);
         constructor.setAccessible(true);
         Object pending = constructor.newInstance(content, request, OperationTrace.id("press", request));
@@ -606,11 +606,22 @@ public final class PressPreviewHandoffTest {
         return pending;
     }
 
+    private static WeChatPressFlow flowOf(PressCaptureSource source) throws Exception {
+        return (WeChatPressFlow) field(source, "weChatPress").get(source);
+    }
+
+    private static Object candidateOf(PressCaptureSource source) throws Exception {
+        return field(flowOf(source), "candidate").get(flowOf(source));
+    }
+
+    private static void setCandidate(PressCaptureSource source, Object pending) throws Exception {
+        field(flowOf(source), "candidate").set(flowOf(source), pending);
+    }
+
     private static void invokeDragCandidate(PressCaptureSource source, float x, float y) throws Exception {
-        var method = PressCaptureSource.class.getDeclaredMethod(
-                "dragWeChatPressCandidate", float.class, float.class);
+        var method = WeChatPressFlow.class.getDeclaredMethod("dragCandidate", float.class, float.class);
         method.setAccessible(true);
-        method.invoke(source, x, y);
+        method.invoke(flowOf(source), x, y);
     }
 
     private static void registerShareProvider(Context context) {
