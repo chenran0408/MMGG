@@ -1,6 +1,6 @@
 package com.leaf.hyperdragshare.codex;
 
-/** Duration-based action chosen when a press is released. */
+/** Press outcome chosen by gesture kind: two-finger segments, single finger drags. */
 public final class PressReleaseMode {
     public enum Mode {
         NONE,
@@ -10,12 +10,7 @@ public final class PressReleaseMode {
 
     private PressReleaseMode() {}
 
-    public static Mode classify(long durationMillis, long thresholdMillis) {
-        if (durationMillis < 0L || thresholdMillis <= 0L || durationMillis < thresholdMillis) {
-            return Mode.NONE;
-        }
-        return durationMillis - thresholdMillis >= thresholdMillis
-                ? Mode.DRAG_PREVIEW
-                : Mode.NORMAL;
+    public static Mode resolve(boolean twoFinger) {
+        return twoFinger ? Mode.NORMAL : Mode.DRAG_PREVIEW;
     }
 }

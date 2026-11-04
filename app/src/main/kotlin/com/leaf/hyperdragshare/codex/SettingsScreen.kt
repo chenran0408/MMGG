@@ -935,16 +935,16 @@ private fun portalSettingEntries(
 
     val portalPressSummary = if (portalPressSnapshot.available) {
         if (portalPressSnapshot.systemSelectedTwoFinger) {
-            "跟随传送门设置：双指长按触发分词与大爆炸；单指长按保持原行为。长按时长由 MMGG 调节。"
+            "跟随传送门设置：双指长按打开分词与大爆炸；单指长按直接进入文字/图片拖拽。长按时长由 MMGG 调节。"
         } else {
-            "跟随传送门设置：单指长按触发；长按时长由 MMGG 调节。"
+            "跟随传送门设置：单指长按直接进入拖拽；双指分词入口未启用。长按时长由 MMGG 调节。"
         }
     } else {
-        "无法读取传送门手势模式，使用 MMGG 本地设置。双指长按触发分词与大爆炸；单指长按保持原行为。"
+        "无法读取传送门手势模式，使用 MMGG 本地设置。双指长按打开分词；单指长按直接进入文字/图片拖拽。"
     }
-    row("drag.twoFingerLongPress", "双指长按触发", SettingModule.PORTAL, "拖拽触摸与滚动",
+    row("drag.twoFingerLongPress", "双指长按分词", SettingModule.PORTAL, "拖拽触摸与滚动",
         summary = portalPressSummary,
-        keywords = "双指 长按 分词 大爆炸 触发",
+        keywords = "双指 长按 分词 大爆炸 触发 拖拽 单指",
         enabled = !portalPressSnapshot.available,
     ) { title, summary, enabled ->
         SwitchPreference(

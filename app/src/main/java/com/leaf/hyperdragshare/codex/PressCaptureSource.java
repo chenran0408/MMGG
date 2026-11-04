@@ -252,14 +252,11 @@ final class PressCaptureSource implements RootTouchSource.ContactListener {
             downTime = time;
             releaseMode = PressReleaseMode.Mode.NONE;
             released = false;
-            twoFingerModeForGesture = isTwoFingerPressEnabled();
-            twoFingerPressQualified = !twoFingerModeForGesture;
-            if (twoFingerModeForGesture) {
-                detector.startTwoFingerCandidate(x, y, time,
-                        settings.resolvePressConfirmationTimeoutMillis());
-            } else {
-                detector.start(x, y, time, settings.resolvePressConfirmationTimeoutMillis());
-            }
+            // Combined triggers: a lone press is always a single-finger drag
+            // candidate; a second finger may still upgrade it before confirmation.
+            twoFingerModeForGesture = false;
+            twoFingerPressQualified = true;
+            detector.start(x, y, time, settings.resolvePressConfirmationTimeoutMillis());
             pointerDown = true;
             downX = x;
             downY = y;
@@ -282,7 +279,7 @@ final class PressCaptureSource implements RootTouchSource.ContactListener {
         }
         if (action == MotionEvent.ACTION_UP) {
             releaseMode = hadFired
-                    ? PressReleaseMode.classify(time - downTime, pressThresholdMillis())
+                    ? PressReleaseMode.resolve(twoFingerModeForGesture)
                     : PressReleaseMode.Mode.NONE;
             released = true;
             pointerDown = false;
@@ -363,12 +360,13 @@ final class PressCaptureSource implements RootTouchSource.ContactListener {
             return true;
         }
         if (pointerCount == 2 && action == MotionEvent.ACTION_POINTER_DOWN) {
-            if (!twoFingerModeForGesture || twoFingerPressQualified
+            if (!isTwoFingerPressEnabled() || twoFingerModeForGesture
                     || !canStartTwoFingerCandidate(true, controller, detector, eventTime,
                     x, y, secondX, secondY)) return false;
             detector.startTwoFinger(x, y, secondX, secondY, eventTime,
                     settings.resolveTwoFingerPressConfirmationTimeoutMillis(),
                     ViewConfiguration.get(context).getScaledTouchSlop());
+            twoFingerModeForGesture = true;
             twoFingerPressQualified = true;
             twoFingerContactSequence = true;
             releaseMode = PressReleaseMode.Mode.NONE;
@@ -411,8 +409,7 @@ final class PressCaptureSource implements RootTouchSource.ContactListener {
                 // Match a confirmed single-finger release: let accepted OCR/capture work
                 // finish after the Root stream cancels its now-invalid physical drag.
                 pointerDown = false;
-                releaseMode = PressReleaseMode.classify(
-                        eventTime - downTime, pressThresholdMillis());
+                releaseMode = PressReleaseMode.resolve(twoFingerModeForGesture);
                 this.released = true;
                 detector.cancel();
                 main.removeCallbacks(classify);
@@ -530,12 +527,6 @@ final class PressCaptureSource implements RootTouchSource.ContactListener {
     /** Mode is captured at DOWN; only a valid second contact qualifies a two-finger press. */
     private boolean pressTriggerQualified() {
         return !twoFingerModeForGesture || twoFingerPressQualified;
-    }
-
-    private long pressThresholdMillis() {
-        return twoFingerModeForGesture
-                ? settings.resolveTwoFingerPressConfirmationTimeoutMillis()
-                : settings.resolvePressConfirmationTimeoutMillis();
     }
 
     private void schedule() {
