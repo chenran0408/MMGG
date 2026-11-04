@@ -43,8 +43,6 @@ final class PressCaptureSource implements RootTouchSource.ContactListener {
     private final BackgroundTouchBlocker blocker;
     private final PressTriggerDetector detector = new PressTriggerDetector();
     private final OcrRecognizer ocrRecognizer;
-    private volatile PortalPressSettings.Snapshot portalPressSettings;
-    private PortalPressSettings.Subscription portalPressSubscription;
     private final Runnable classify = this::classifyPress;
     private final Runnable fire = this::firePress;
     private volatile SharedRootNodeCapture.Connection nodeSession;
@@ -124,13 +122,7 @@ final class PressCaptureSource implements RootTouchSource.ContactListener {
         this.settings = settings;
         this.ocrRecognizer = ocrRecognizer;
         blocker = new BackgroundTouchBlocker(context);
-        portalPressSettings = PortalPressSettings.read(context);
-        portalPressSubscription = PortalPressSettings.observe(context, main,
-                this::refreshPortalPressSettings);
-        if (input != null) {
-            input.setContactListener(this);
-            input.setTwoFingerPressEnabled(isTwoFingerPressEnabled());
-        }
+        if (input != null) input.setContactListener(this);
         ModuleActivation.reportPressReader(context, false, "");
         openReader();
     }
@@ -195,11 +187,8 @@ final class PressCaptureSource implements RootTouchSource.ContactListener {
     void updateSettings(DragShareSettings updated) {
         DragShareSettings previous = settings;
         settings = updated;
-        if (input != null) input.setTwoFingerPressEnabled(isTwoFingerPressEnabled());
-        PortalPressSettings.Snapshot system = portalPressSettings;
-        boolean pressConfigurationChanged = (!system.available
-                && previous.twoFingerLongPressEnabled != updated.twoFingerLongPressEnabled)
-                || previous.twoFingerLongPressTimeoutMillis != updated.twoFingerLongPressTimeoutMillis;
+        boolean pressConfigurationChanged =
+                previous.twoFingerLongPressTimeoutMillis != updated.twoFingerLongPressTimeoutMillis;
         boolean capturePolicyChanged = previous.pauseAutomaticInGames != updated.pauseAutomaticInGames
                 || !previous.manualGamePackages.equals(updated.manualGamePackages)
                 || !previous.accessibilityBlacklistedPackages.equals(updated.accessibilityBlacklistedPackages);
@@ -209,25 +198,6 @@ final class PressCaptureSource implements RootTouchSource.ContactListener {
         } else if (pressConfigurationChanged) {
             if (Looper.myLooper() == Looper.getMainLooper()) cancelUnconfirmedPressCandidate();
             else main.post(this::cancelUnconfirmedPressCandidate);
-        }
-    }
-
-    private boolean isTwoFingerPressEnabled() {
-        PortalPressSettings.Snapshot system = portalPressSettings;
-        if (system == null) system = PortalPressSettings.read(context);
-        return system.resolveTwoFingerEnabled(settings.twoFingerLongPressEnabled);
-    }
-
-    private void refreshPortalPressSettings() {
-        if (stopped) return;
-        PortalPressSettings.Snapshot previous = portalPressSettings;
-        PortalPressSettings.Snapshot updated = PortalPressSettings.read(context);
-        boolean wasEnabled = previous.resolveTwoFingerEnabled(settings.twoFingerLongPressEnabled);
-        portalPressSettings = updated;
-        boolean isEnabled = updated.resolveTwoFingerEnabled(settings.twoFingerLongPressEnabled);
-        if (input != null) input.setTwoFingerPressEnabled(isEnabled);
-        if (wasEnabled != isEnabled) {
-            cancelUnconfirmedPressCandidate();
         }
     }
 
@@ -331,8 +301,7 @@ final class PressCaptureSource implements RootTouchSource.ContactListener {
         boolean initialTwoFingerDown = pointerCount == 2 && action == MotionEvent.ACTION_DOWN
                 && !pointerDown && !detector.isActive();
         if (initialTwoFingerDown) {
-            boolean twoFingerEnabled = isTwoFingerPressEnabled();
-            if (!canStartInitialTwoFingerCandidate(twoFingerEnabled, controller,
+            if (!canStartInitialTwoFingerCandidate(controller,
                     x, y, secondX, secondY)) {
                 return false;
             }
@@ -357,8 +326,8 @@ final class PressCaptureSource implements RootTouchSource.ContactListener {
             return true;
         }
         if (pointerCount == 2 && action == MotionEvent.ACTION_POINTER_DOWN) {
-            if (!isTwoFingerPressEnabled() || twoFingerModeForGesture
-                    || !canStartTwoFingerCandidate(true, controller, detector, eventTime,
+            if (twoFingerModeForGesture
+                    || !canStartTwoFingerCandidate(controller, detector, eventTime,
                     x, y, secondX, secondY)) return false;
             detector.startTwoFinger(x, y, secondX, secondY, eventTime,
                     settings.resolveTwoFingerPressConfirmationTimeoutMillis(),
@@ -431,22 +400,20 @@ final class PressCaptureSource implements RootTouchSource.ContactListener {
         return true;
     }
 
-    static boolean canStartTwoFingerCandidate(boolean enabled,
-                                              DragShareController controller,
+    static boolean canStartTwoFingerCandidate(DragShareController controller,
                                               PressTriggerDetector detector,
                                               long eventTime,
                                               float x, float y, float secondX, float secondY) {
-        return enabled && controller != null && !controller.isActive()
+        return controller != null && !controller.isActive()
                 && detector != null && detector.isActive() && !detector.isFired()
                 && eventTime < detector.deadline()
                 && Float.isFinite(x) && Float.isFinite(y)
                 && Float.isFinite(secondX) && Float.isFinite(secondY);
     }
 
-    static boolean canStartInitialTwoFingerCandidate(boolean enabled,
-                                                     DragShareController controller,
+    static boolean canStartInitialTwoFingerCandidate(DragShareController controller,
                                                      float x, float y, float secondX, float secondY) {
-        return enabled && controller != null && !controller.isActive()
+        return controller != null && !controller.isActive()
                 && Float.isFinite(x) && Float.isFinite(y)
                 && Float.isFinite(secondX) && Float.isFinite(secondY);
     }
@@ -1052,12 +1019,8 @@ final class PressCaptureSource implements RootTouchSource.ContactListener {
     void stop() {
         Runnable stop = () -> {
             stopped = true;
-            PortalPressSettings.Subscription observer = portalPressSubscription;
-            portalPressSubscription = null;
-            if (observer != null) observer.close();
             if (input != null) {
                 input.clearContactListener(this);
-                input.setTwoFingerPressEnabled(false);
             }
             twoFingerContactSequence = false;
             main.removeCallbacks(readerRetry);

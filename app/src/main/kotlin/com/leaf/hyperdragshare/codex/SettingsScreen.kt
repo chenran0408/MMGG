@@ -4,8 +4,6 @@ import android.app.Activity
 import android.content.Context
 import android.content.Intent
 import android.os.Build
-import android.os.Handler
-import android.os.Looper
 import android.provider.Settings
 import android.widget.Toast
 import androidx.compose.foundation.layout.fillMaxSize
@@ -284,17 +282,6 @@ private fun portalSettingEntries(
     persist: (DragShareSettingsMutation) -> DragShareSettings,
 ): List<SettingEntry> {
     val coroutineScope = rememberCoroutineScope()
-    var portalPressSnapshot by remember(context) {
-        mutableStateOf(PortalPressSettings.read(context))
-    }
-    DisposableEffect(context) {
-        val subscription = PortalPressSettings.observe(context, Handler(Looper.getMainLooper())) {
-            portalPressSnapshot = PortalPressSettings.read(context)
-        }
-        onDispose { subscription.close() }
-    }
-    val effectiveTwoFingerLongPressEnabled = portalPressSnapshot
-        .resolveTwoFingerEnabled(settings.twoFingerLongPressEnabled)
     var copyDirectEnabled by remember(context) {
         mutableStateOf(IntegrationSettings.isCopyDirectEnabled(context))
     }
@@ -933,36 +920,9 @@ private fun portalSettingEntries(
         )
     }
 
-    val portalPressSummary = if (portalPressSnapshot.available) {
-        if (portalPressSnapshot.systemSelectedTwoFinger) {
-            "跟随传送门设置：双指长按打开分词与大爆炸；单指长按直接进入文字/图片拖拽。长按时长由 MMGG 调节。"
-        } else {
-            "跟随传送门设置：单指长按直接进入拖拽；双指分词入口未启用。长按时长由 MMGG 调节。"
-        }
-    } else {
-        "无法读取传送门手势模式，使用 MMGG 本地设置。双指长按打开分词；单指长按直接进入文字/图片拖拽。"
-    }
-    row("drag.twoFingerLongPress", "双指长按分词", SettingModule.PORTAL, "拖拽触摸与滚动",
-        summary = portalPressSummary,
-        keywords = "双指 长按 分词 大爆炸 触发 拖拽 单指",
-        enabled = !portalPressSnapshot.available,
-    ) { title, summary, enabled ->
-        SwitchPreference(
-            title = title,
-            summary = summary,
-            checked = effectiveTwoFingerLongPressEnabled,
-            onCheckedChange = { checked ->
-                persist { _ -> setTwoFingerLongPressEnabled(checked) }
-            },
-            enabled = enabled,
-        )
-    }
-
     row("drag.twoFingerLongPressTimeout", "双指长按时长", SettingModule.PORTAL, "拖拽触摸与滚动",
-        summary = "双指按住达到此时长后确认",
-        keywords = "双指 长按 时间 毫秒",
-        enabled = effectiveTwoFingerLongPressEnabled,
-        prerequisite = if (effectiveTwoFingerLongPressEnabled) null else "先开启双指长按触发",
+        summary = "单指长按进入拖拽，双指按住达到此时长后打开分词",
+        keywords = "双指 长按 时间 毫秒 分词 大爆炸 触发 拖拽 单指",
     ) { title, summary, enabled ->
         SliderPreference(
             title = title,

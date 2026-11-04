@@ -27,7 +27,7 @@ class SettingsEffectNoticePolicyTest {
         )
         assertEquals(
             listOf(SettingsEffectNotice.ROOT_INPUT),
-            classifySettingsEffectNotices(defaults, changed { setTwoFingerLongPressEnabled(true) }),
+            classifySettingsEffectNotices(defaults, changed { setTwoFingerLongPressTimeoutMillis(900) }),
         )
         assertEquals(
             listOf(SettingsEffectNotice.PORTAL_SESSION),

@@ -67,7 +67,7 @@ public final class RootTouchSourceTest {
         List<Integer> actions = new ArrayList<>();
         EvdevTouchParser parser = RootTouchSource.createParser(
                 (action, x, y, major, minor, width) -> actions.add(action),
-                (action, x, y, secondX, secondY, count) -> { }, true);
+                (action, x, y, secondX, secondY, count) -> { });
 
         pointerDown(parser, 0, 42, 10, 20);
         pointerDown(parser, 1, 43, 30, 40);

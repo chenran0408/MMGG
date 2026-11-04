@@ -42,13 +42,12 @@ import java.util.concurrent.TimeUnit;
 @Config(manifest = Config.NONE)
 public final class TwoFingerPressTest {
     @Test
-    public void loneSinglePointerStillConfirmsWhenTwoFingerUpgradeIsEnabled() throws Exception {
+    public void loneSinglePointerStillConfirms() throws Exception {
         Context context = RuntimeEnvironment.getApplication();
         clearPortalSettings(context);
         BigBangProvider provider = new BigBangProvider(context);
         ShadowContentResolver.registerProviderInternal(ImageStagingClient.AUTHORITY, provider);
         DragShareSettings settings = DragShareSettings.defaults().toBuilder()
-                .setTwoFingerLongPressEnabled(true)
                 .setTwoFingerLongPressTimeoutMillis(600)
                 .build();
         DragShareController controller = new DragShareController(context, OverlayWindowPolicy.portal());
@@ -87,7 +86,6 @@ public final class TwoFingerPressTest {
         BigBangProvider provider = new BigBangProvider(context);
         ShadowContentResolver.registerProviderInternal(ImageStagingClient.AUTHORITY, provider);
         DragShareSettings settings = DragShareSettings.defaults().toBuilder()
-                .setTwoFingerLongPressEnabled(true)
                 .setTwoFingerLongPressTimeoutMillis(600)
                 .build();
         DragShareController controller = new DragShareController(context, OverlayWindowPolicy.portal());
@@ -155,10 +153,8 @@ public final class TwoFingerPressTest {
         provider.pressRegionResponse.putBoolean("image_cropped", true);
 
         DragShareSettings singleFinger = DragShareSettings.defaults().toBuilder()
-                .setTwoFingerLongPressEnabled(false)
                 .build();
         DragShareSettings twoFinger = singleFinger.toBuilder()
-                .setTwoFingerLongPressEnabled(true)
                 .setTwoFingerLongPressTimeoutMillis(600)
                 .build();
         DragShareController controller = new DragShareController(context, OverlayWindowPolicy.portal());
@@ -225,50 +221,12 @@ public final class TwoFingerPressTest {
     }
 
     @Test
-    public void singleFingerModeStillConfirmsAStationarySinglePointer() throws Exception {
-        Context context = RuntimeEnvironment.getApplication();
-        clearPortalSettings(context);
-        BigBangProvider provider = new BigBangProvider(context);
-        ShadowContentResolver.registerProviderInternal(ImageStagingClient.AUTHORITY, provider);
-        DragShareSettings settings = DragShareSettings.defaults().toBuilder()
-                .setTwoFingerLongPressEnabled(false)
-                .build();
-        DragShareController controller = new DragShareController(context, OverlayWindowPolicy.portal());
-        RootTouchSource input = new RootTouchSource(context,
-                (action, x, y, time, major, minor, width) -> { }, (ready, reason) -> { });
-        field(input, "ready").setBoolean(input, true);
-        PressCaptureSource source = new PressCaptureSource(context, input, controller, settings);
-        AtomicBoolean reducedContactAccepted = new AtomicBoolean(true);
-        long downTime = SystemClock.uptimeMillis();
-        try {
-            field(source, "nodeSession").set(source, provider.connection);
-            controller.acceptPointerEvent(MotionEvent.ACTION_DOWN, 20f, 30f, downTime, "root");
-            ShadowLooper.shadowMainLooper().idle();
-            new Handler(Looper.getMainLooper()).post(() ->
-                    source.onPointerEvent(MotionEvent.ACTION_DOWN, 20f, 30f, downTime));
-            ShadowLooper.shadowMainLooper().idle();
-
-            ShadowSystemClock.advanceBy(java.time.Duration.ofMillis(2000));
-            ShadowLooper.shadowMainLooper().idle();
-
-            PressTriggerDetector detector = (PressTriggerDetector) field(source, "detector").get(source);
-            assertTrue("single-finger mode must preserve the existing one-finger press", detector.isFired());
-        } finally {
-            source.stop();
-            controller.destroy();
-            ShadowLooper.shadowMainLooper().idle();
-            clearPortalSettings(context);
-        }
-    }
-
-    @Test
     public void twoFingerModeDoesNotDowngradeAfterSecondFingerIsReleased() throws Exception {
         Context context = RuntimeEnvironment.getApplication();
         clearPortalSettings(context);
         BigBangProvider provider = new BigBangProvider(context);
         ShadowContentResolver.registerProviderInternal(ImageStagingClient.AUTHORITY, provider);
         DragShareSettings settings = DragShareSettings.defaults().toBuilder()
-                .setTwoFingerLongPressEnabled(true)
                 .setTwoFingerLongPressTimeoutMillis(600)
                 .build();
         DragShareController controller = new DragShareController(context, OverlayWindowPolicy.portal());
@@ -319,7 +277,6 @@ public final class TwoFingerPressTest {
         BigBangProvider provider = new BigBangProvider(context);
         ShadowContentResolver.registerProviderInternal(ImageStagingClient.AUTHORITY, provider);
         DragShareSettings settings = DragShareSettings.defaults().toBuilder()
-                .setTwoFingerLongPressEnabled(true)
                 .setTwoFingerLongPressTimeoutMillis(600)
                 .build();
         DragShareController controller = new DragShareController(context, OverlayWindowPolicy.portal());
@@ -385,90 +342,6 @@ public final class TwoFingerPressTest {
     }
 
     @Test
-    public void enablingTwoFingerUpgradeKeepsSinglePointerConfirmation() throws Exception {
-        Context context = RuntimeEnvironment.getApplication();
-        clearPortalSettings(context);
-        BigBangProvider provider = new BigBangProvider(context);
-        ShadowContentResolver.registerProviderInternal(ImageStagingClient.AUTHORITY, provider);
-        DragShareSettings singleFinger = DragShareSettings.defaults().toBuilder()
-                .setTwoFingerLongPressEnabled(false).build();
-        DragShareSettings twoFinger = singleFinger.toBuilder()
-                .setTwoFingerLongPressEnabled(true)
-                .setTwoFingerLongPressTimeoutMillis(600)
-                .build();
-        DragShareController controller = new DragShareController(context, OverlayWindowPolicy.portal());
-        RootTouchSource input = new RootTouchSource(context,
-                (action, x, y, time, major, minor, width) -> { }, (ready, reason) -> { });
-        field(input, "ready").setBoolean(input, true);
-        PressCaptureSource source = new PressCaptureSource(context, input, controller, singleFinger);
-        long downTime = SystemClock.uptimeMillis();
-        try {
-            field(source, "nodeSession").set(source, provider.connection);
-            source.updateSettings(twoFinger);
-            controller.acceptPointerEvent(MotionEvent.ACTION_DOWN, 20f, 30f, downTime, "root");
-            ShadowLooper.shadowMainLooper().idle();
-            new Handler(Looper.getMainLooper()).post(() ->
-                    source.onPointerEvent(MotionEvent.ACTION_DOWN, 20f, 30f, downTime));
-            ShadowLooper.shadowMainLooper().idle();
-
-            ShadowSystemClock.advanceBy(java.time.Duration.ofMillis(3000));
-            ShadowLooper.shadowMainLooper().idle();
-
-            PressTriggerDetector detector = (PressTriggerDetector) field(source, "detector").get(source);
-            assertTrue("combined triggers keep the lone single-finger press qualified",
-                    detector.isFired());
-            assertNull(provider.bigBangRequest);
-        } finally {
-            source.stop();
-            controller.destroy();
-            ShadowLooper.shadowMainLooper().idle();
-            clearPortalSettings(context);
-        }
-    }
-
-    @Test
-    public void switchingFromTwoFingerToSingleModeRestoresSinglePointerConfirmation() throws Exception {
-        Context context = RuntimeEnvironment.getApplication();
-        clearPortalSettings(context);
-        BigBangProvider provider = new BigBangProvider(context);
-        ShadowContentResolver.registerProviderInternal(ImageStagingClient.AUTHORITY, provider);
-        DragShareSettings twoFinger = DragShareSettings.defaults().toBuilder()
-                .setTwoFingerLongPressEnabled(true)
-                .setTwoFingerLongPressTimeoutMillis(600)
-                .build();
-        DragShareSettings singleFinger = twoFinger.toBuilder()
-                .setTwoFingerLongPressEnabled(false)
-                .build();
-        DragShareController controller = new DragShareController(context, OverlayWindowPolicy.portal());
-        RootTouchSource input = new RootTouchSource(context,
-                (action, x, y, time, major, minor, width) -> { }, (ready, reason) -> { });
-        field(input, "ready").setBoolean(input, true);
-        PressCaptureSource source = new PressCaptureSource(context, input, controller, twoFinger);
-        long downTime = SystemClock.uptimeMillis();
-        try {
-            field(source, "nodeSession").set(source, provider.connection);
-            source.updateSettings(singleFinger);
-            controller.acceptPointerEvent(MotionEvent.ACTION_DOWN, 20f, 30f, downTime, "root");
-            ShadowLooper.shadowMainLooper().idle();
-            new Handler(Looper.getMainLooper()).post(() ->
-                    source.onPointerEvent(MotionEvent.ACTION_DOWN, 20f, 30f, downTime));
-            ShadowLooper.shadowMainLooper().idle();
-
-            ShadowSystemClock.advanceBy(java.time.Duration.ofMillis(2000));
-            ShadowLooper.shadowMainLooper().idle();
-
-            PressTriggerDetector detector = (PressTriggerDetector) field(source, "detector").get(source);
-            assertTrue("the newly selected single-finger mode must restore one-finger confirmation",
-                    detector.isFired());
-        } finally {
-            source.stop();
-            controller.destroy();
-            ShadowLooper.shadowMainLooper().idle();
-            clearPortalSettings(context);
-        }
-    }
-
-    @Test
     public void asynchronousPortalImageBeforeConfirmationCachesForQualifiedSinglePress()
             throws Exception {
         Context context = RuntimeEnvironment.getApplication();
@@ -476,7 +349,6 @@ public final class TwoFingerPressTest {
         BigBangProvider provider = new BigBangProvider(context);
         ShadowContentResolver.registerProviderInternal(ImageStagingClient.AUTHORITY, provider);
         DragShareSettings settings = DragShareSettings.defaults().toBuilder()
-                .setTwoFingerLongPressEnabled(true)
                 .setTwoFingerLongPressTimeoutMillis(600)
                 .build();
         DragShareController controller = new DragShareController(context, OverlayWindowPolicy.portal());
@@ -521,7 +393,6 @@ public final class TwoFingerPressTest {
         BigBangProvider provider = new BigBangProvider(context);
         ShadowContentResolver.registerProviderInternal(ImageStagingClient.AUTHORITY, provider);
         DragShareSettings settings = DragShareSettings.defaults().toBuilder()
-                .setTwoFingerLongPressEnabled(true)
                 .setTwoFingerLongPressTimeoutMillis(600)
                 .build();
         DragShareController controller = new DragShareController(context, OverlayWindowPolicy.portal());
@@ -600,7 +471,6 @@ public final class TwoFingerPressTest {
         BigBangProvider provider = new BigBangProvider(context);
         ShadowContentResolver.registerProviderInternal(ImageStagingClient.AUTHORITY, provider);
         DragShareSettings settings = DragShareSettings.defaults().toBuilder()
-                .setTwoFingerLongPressEnabled(true)
                 .setTwoFingerLongPressTimeoutMillis(600)
                 .build();
         DragShareController controller = new DragShareController(context, OverlayWindowPolicy.portal());
@@ -668,7 +538,6 @@ public final class TwoFingerPressTest {
         BigBangProvider provider = new BigBangProvider(context);
         ShadowContentResolver.registerProviderInternal(ImageStagingClient.AUTHORITY, provider);
         DragShareSettings settings = DragShareSettings.defaults().toBuilder()
-                .setTwoFingerLongPressEnabled(true)
                 .setTwoFingerLongPressTimeoutMillis(600)
                 .build();
         DragShareController controller = new DragShareController(context, OverlayWindowPolicy.portal());
@@ -720,7 +589,6 @@ public final class TwoFingerPressTest {
         BigBangProvider provider = new BigBangProvider(context);
         ShadowContentResolver.registerProviderInternal(ImageStagingClient.AUTHORITY, provider);
         DragShareSettings settings = DragShareSettings.defaults().toBuilder()
-                .setTwoFingerLongPressEnabled(true)
                 .setTwoFingerLongPressTimeoutMillis(600)
                 .build();
         DragShareController controller = new DragShareController(context, OverlayWindowPolicy.portal());
@@ -798,7 +666,6 @@ public final class TwoFingerPressTest {
         BigBangProvider provider = new BigBangProvider(context);
         ShadowContentResolver.registerProviderInternal(ImageStagingClient.AUTHORITY, provider);
         DragShareSettings settings = DragShareSettings.defaults().toBuilder()
-                .setTwoFingerLongPressEnabled(true)
                 .setTwoFingerLongPressTimeoutMillis(600)
                 .build();
         DragShareController controller = new DragShareController(context, OverlayWindowPolicy.portal());
@@ -854,7 +721,6 @@ public final class TwoFingerPressTest {
     @Test
     public void rootPreviewAlreadyActiveRejectsSecondFingerBeforeCandidateDeadline() {
         DragShareSettings settings = DragShareSettings.defaults().toBuilder()
-                .setTwoFingerLongPressEnabled(true)
                 .build();
         DragShareController controller = new DragShareController(
                 RuntimeEnvironment.getApplication(), OverlayWindowPolicy.portal());
@@ -862,7 +728,7 @@ public final class TwoFingerPressTest {
         detector.start(20f, 30f, 100L, 600L);
         Bitmap bitmap = Bitmap.createBitmap(2, 2, Bitmap.Config.ARGB_8888);
         try {
-            assertTrue(PressCaptureSource.canStartTwoFingerCandidate(true, controller, detector,
+            assertTrue(PressCaptureSource.canStartTwoFingerCandidate(controller, detector,
                     200L, 20f, 30f, 40f, 50f));
 
             controller.acceptPointerEvent(MotionEvent.ACTION_DOWN, 20f, 30f, 100L, "root");
@@ -874,7 +740,7 @@ public final class TwoFingerPressTest {
             ShadowLooper.shadowMainLooper().idle();
 
             assertTrue(controller.isActive());
-            assertFalse(PressCaptureSource.canStartTwoFingerCandidate(true, controller, detector,
+            assertFalse(PressCaptureSource.canStartTwoFingerCandidate(controller, detector,
                     200L, 20f, 30f, 40f, 50f));
         } finally {
             controller.destroy();
@@ -907,9 +773,9 @@ public final class TwoFingerPressTest {
 
     private static void clearPortalSettings(Context context) {
         Settings.System.putString(context.getContentResolver(),
-                PortalPressSettings.KEY_SUPPORT_DOUBLE_PRESS_MODE, null);
+                "support_double_press_mode", null);
         Settings.System.putString(context.getContentResolver(),
-                PortalPressSettings.KEY_SUPPORT_LONG_PRESS_MODE, null);
+                "support_long_press_mode", null);
     }
 
     private static final class BigBangProvider extends ContentProvider {

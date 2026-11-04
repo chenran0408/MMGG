@@ -125,21 +125,6 @@ public final class EvdevTouchParserTest {
     }
 
     @Test
-    public void secondPointerCancelsInsteadOfFinishingShare() {
-        List<Frame> frames = new ArrayList<>();
-        EvdevTouchParser parser = new EvdevTouchParser((action, x, y, major, minor, widthMajor) ->
-                frames.add(new Frame(action, x, y, major, minor)));
-
-        pointerDown(parser, 0, 42, 10, 20, 18, 9);
-        pointerDown(parser, 1, 43, 30, 40, 60, 42);
-
-        assertEquals(Arrays.asList(
-                MotionEvent.ACTION_DOWN,
-                MotionEvent.ACTION_CANCEL), actions(frames));
-        assertEquals(new Frame(MotionEvent.ACTION_CANCEL, 10, 20, 18, 9), frames.get(1));
-    }
-
-    @Test
     public void enabledTwoFingerStreamKeepsRootPrimaryUntilThirdContactCancels() {
         List<Frame> frames = new ArrayList<>();
         List<Integer> contactCounts = new ArrayList<>();
@@ -147,7 +132,6 @@ public final class EvdevTouchParserTest {
                 (action, x, y, major, minor, widthMajor) ->
                         frames.add(new Frame(action, x, y, major, minor)),
                 (action, x, y, secondX, secondY, count) -> contactCounts.add(count));
-        parser.setTwoFingerPressEnabled(true);
 
         pointerDown(parser, 0, 42, 10, 20);
         pointerDown(parser, 1, 43, 30, 40);
@@ -163,15 +147,13 @@ public final class EvdevTouchParserTest {
     }
 
     @Test
-    public void changingTwoFingerSettingDoesNotCancelAcceptedContactStream() {
+    public void twoFingerStreamContinuesUntilBothContactsLift() {
         List<Frame> frames = new ArrayList<>();
         EvdevTouchParser parser = new EvdevTouchParser((action, x, y, major, minor, widthMajor) ->
                 frames.add(new Frame(action, x, y, major, minor)));
-        parser.setTwoFingerPressEnabled(true);
 
         pointerDown(parser, 0, 42, 10, 20);
         pointerDown(parser, 1, 43, 30, 40);
-        parser.setTwoFingerPressEnabled(false);
         parser.consume(EvdevTouchParser.EV_ABS, EvdevTouchParser.ABS_MT_SLOT, 0);
         parser.consume(EvdevTouchParser.EV_ABS, EvdevTouchParser.ABS_MT_POSITION_X, 11);
         parser.consume(EvdevTouchParser.EV_SYN, EvdevTouchParser.SYN_REPORT, 0);
@@ -194,7 +176,6 @@ public final class EvdevTouchParserTest {
                 (action, x, y, major, minor, widthMajor) ->
                         frames.add(new Frame(action, x, y, major, minor)),
                 (action, x, y, secondX, secondY, count) -> contactCounts.add(count));
-        parser.setTwoFingerPressEnabled(true);
 
         pointerDown(parser, 0, 42, 10, 20);
         pointerDown(parser, 1, 43, 30, 40);
@@ -218,7 +199,6 @@ public final class EvdevTouchParserTest {
                 (action, x, y, major, minor, widthMajor) ->
                         frames.add(new Frame(action, x, y, major, minor)),
                 (action, x, y, secondX, secondY, count) -> { });
-        parser.setTwoFingerPressEnabled(true);
 
         pointerDown(parser, 0, 42, 10, 20);
         pointerDown(parser, 1, 43, 30, 40);
@@ -236,7 +216,6 @@ public final class EvdevTouchParserTest {
                 (action, x, y, major, minor, widthMajor) ->
                         frames.add(new Frame(action, x, y, major, minor)),
                 (action, x, y, secondX, secondY, count) -> { });
-        parser.setTwoFingerPressEnabled(true);
 
         pointerDown(parser, 0, 42, 10, 20);
         pointerDown(parser, 1, 43, 30, 40);
@@ -251,7 +230,6 @@ public final class EvdevTouchParserTest {
                 (action, x, y, major, minor, widthMajor) ->
                         frames.add(new Frame(action, x, y, major, minor)),
                 (action, x, y, secondX, secondY, count) -> { });
-        parser.setTwoFingerPressEnabled(true);
 
         pointerDown(parser, 0, 42, 10, 20);
         pointerDown(parser, 1, 43, 30, 40);
@@ -276,7 +254,6 @@ public final class EvdevTouchParserTest {
                 (action, x, y, major, minor, widthMajor) ->
                         frames.add(new Frame(action, x, y, major, minor)),
                 (action, x, y, secondX, secondY, count) -> contactCounts.add(count));
-        parser.setTwoFingerPressEnabled(true);
         parser.consume(EvdevTouchParser.EV_ABS, EvdevTouchParser.ABS_MT_SLOT, 0);
         parser.consume(EvdevTouchParser.EV_ABS, EvdevTouchParser.ABS_MT_TRACKING_ID, 42);
         parser.consume(EvdevTouchParser.EV_ABS, EvdevTouchParser.ABS_MT_POSITION_X, 10);

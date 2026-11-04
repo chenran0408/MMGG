@@ -117,7 +117,7 @@ class SettingsEffectNoticeTest {
             persist { setColorMode(DragShareSettings.COLOR_DARK) }
             assertToastContains("应用主题立即更新")
             persist { setEdgeTriggerDp(123) }
-            persist { setTwoFingerLongPressEnabled(true) }
+            persist { setTwoFingerLongPressTimeoutMillis(900) }
             assertToastContains("根输入（Root）")
             persist { setTwoFingerLongPressTimeoutMillis(900) }
 
@@ -155,7 +155,6 @@ class SettingsEffectNoticeTest {
             assertEquals(DragShareSettings.COLOR_DARK, current.colorMode)
             assertEquals(DragShareSettings.COLOR_DARK, saved.colorMode)
             assertEquals(123, saved.edgeTriggerDp)
-            assertTrue(saved.twoFingerLongPressEnabled)
             assertEquals(900, saved.twoFingerLongPressTimeoutMillis)
             assertEquals(setOf("target.added-hidden"), saved.hiddenTargetKeys)
             assertEquals(listOf("target.second", "target.first"), saved.targetOrder)

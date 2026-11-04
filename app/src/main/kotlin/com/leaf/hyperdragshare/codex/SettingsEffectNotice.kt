@@ -43,9 +43,7 @@ internal fun classifySettingsEffectNotices(
         add(SettingsEffectNotice.GESTURE_EXCLUSIONS)
     }
 
-    if (previous.twoFingerLongPressEnabled != next.twoFingerLongPressEnabled
-        || previous.twoFingerLongPressTimeoutMillis != next.twoFingerLongPressTimeoutMillis
-    ) {
+    if (previous.twoFingerLongPressTimeoutMillis != next.twoFingerLongPressTimeoutMillis) {
         add(SettingsEffectNotice.ROOT_INPUT)
     }
 

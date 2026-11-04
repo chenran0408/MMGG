@@ -57,7 +57,6 @@ final class RootTouchSource {
     private volatile boolean ready;
     private volatile String failureReason = "";
     private volatile ContactListener contactListener;
-    private volatile boolean twoFingerPressEnabled;
     private boolean statePublished;
 
     /** Resources are transferred under this lock; no I/O or listener runs with it held. */
@@ -150,21 +149,13 @@ final class RootTouchSource {
         contactListener = listener;
     }
 
-    void setTwoFingerPressEnabled(boolean enabled) {
-        twoFingerPressEnabled = enabled;
-        Run run = currentRun;
-        if (run != null && run.parser != null) run.parser.setTwoFingerPressEnabled(enabled);
-    }
-
     void clearContactListener(ContactListener listener) {
         if (contactListener == listener) contactListener = null;
     }
 
     static EvdevTouchParser createParser(EvdevTouchParser.Listener listener,
-                                         EvdevTouchParser.ContactListener contactListener,
-                                         boolean twoFingerPressEnabled) {
+                                         EvdevTouchParser.ContactListener contactListener) {
         EvdevTouchParser parser = new EvdevTouchParser(listener, contactListener);
-        parser.setTwoFingerPressEnabled(twoFingerPressEnabled);
         return parser;
     }
 
@@ -193,8 +184,7 @@ final class RootTouchSource {
             run.parser = createParser((action, x, y, major, minor, width) ->
                     onRawFrame(run, action, x, y, major, minor, width),
                     (action, x, y, secondX, secondY, count) -> onRawContactFrame(
-                            run, action, x, y, secondX, secondY, count),
-                    twoFingerPressEnabled);
+                            run, action, x, y, secondX, secondY, count));
             long probeStarted = SystemClock.elapsedRealtime();
             String probe = rootText(run, probeCommand());
             logConnectionStage("device_probe", probeStarted);

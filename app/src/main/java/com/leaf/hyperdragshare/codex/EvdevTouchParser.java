@@ -70,7 +70,6 @@ final class EvdevTouchParser {
     private int lastTouchMinor;
     private int lastWidthMajor;
     private int lastContactCount;
-    private volatile boolean twoFingerPressEnabled;
     private boolean twoFingerStream;
     private boolean singleFingerContinuation;
 
@@ -82,10 +81,6 @@ final class EvdevTouchParser {
         this.listener = listener;
         this.contactListener = contactListener;
         resetSlots();
-    }
-
-    void setTwoFingerPressEnabled(boolean enabled) {
-        twoFingerPressEnabled = enabled;
     }
 
     void consume(int type, int code, int value) {
@@ -204,7 +199,7 @@ final class EvdevTouchParser {
 
         if (!gestureActive) {
             if (trackedCount > 1) {
-                if (twoFingerPressEnabled && trackedCount == 2
+                if (trackedCount == 2
                         && trackedPointerCountWithCoordinates() == 2 && candidate >= 0) {
                     primarySlot = candidate;
                     gestureActive = true;
@@ -279,7 +274,7 @@ final class EvdevTouchParser {
         if (trackedCount == 2) {
             boolean hasTwoCoordinates = trackedPointerCountWithCoordinates() == 2
                     && hasCoordinates(primarySlot);
-            if (twoFingerPressEnabled && gestureActive && hasTwoCoordinates) {
+            if (gestureActive && hasTwoCoordinates) {
                 twoFingerStream = true;
             }
             if (twoFingerStream && gestureActive && hasTwoCoordinates) {
