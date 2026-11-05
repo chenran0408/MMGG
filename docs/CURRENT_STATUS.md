@@ -8,7 +8,7 @@
 - 稳定线：`repair-from-189`，工作树 `D:/CODEX/Tasks/2026-10-20/new-chat-2/work/HyperDragShare`；本轮未修改，当前稳定工作树干净。
 - 远程维护策略：GitHub 用户仓库只维护 Beta 与正式线；`upstream` 仅作原作者参考，不向其推送。
 - Candidate A/B：继续作为冻结验证证据，不作为当前开发基线。
-- 本轮没有 push、发布或改远程默认分支；与远程的领先数量请按实际 Git 状态读取。
+- 本轮已将 Beta43 分支和候选 tag 推送到 GitHub；未改远程默认分支。
 
 ## 当前代码事实
 
@@ -19,13 +19,22 @@
 - Activation 首页与诊断页共用 `ActivationPresentation`；`UNKNOWN` 不转换为权限缺失。
 - 跨进程追踪只报告最后一个可观察阶段。`startActivity` 返回、拖放接受和 Provider descriptor 打开都不代表接收方已经读取或发送。
 
+### 2026-11-06 设置页精简与 Beta43 交付
+
+- 设置页把单指拖拽确认时间与双指分词确认时间放在同一组，日志等级与保存位置选项移除写死的“当前”标记。
+- 源码提交：`fff44ae`、`12ea168`；候选 tag：`delivered/mmgg-1.7.219-beta.43`。
+- `assembleBeta`（R8、资源收缩）通过；版本 `1.7.219-beta.43` / versionCode `285`；APK SHA-256 `F4EE0D26E3C44A538AB920EBF58A339FAD307B33B3707AD713B9F34E684CC887`，v2 签名通过，Android Debug 证书。
+- GitHub Beta 预发布：[MMGG 1.7.219-beta.43](https://github.com/chenran0408/MMGG/releases/tag/delivered/mmgg-1.7.219-beta.43)。本轮未执行设备验收。
+
 ### 2026-11-06 分词面板精简与 Beta42 交付
 
 - 分词面板移除重复的“全文操作/选中内容操作”状态标题；无拖拽预览或选区时不显示多余分隔线。
 - 窗口外观弹窗直接使用“窗口外观”标题，去掉重复的小标题；识别提示改为通用“正在识别文字…”。
 - 源码提交：`12b47b0`、`b6664a5`、`4fcc79b`；候选 tag：`delivered/mmgg-1.7.219-beta.42`。
 - `assembleBeta`（R8、资源收缩）通过；版本 `1.7.219-beta.42` / versionCode `284`；APK SHA-256 `4C3DF565B74D41785B89AEEB3F8030E626271E18DEEACDA516991433EFB0D972`，v2 签名通过，Android Debug 证书。
-- GitHub Beta 预发布：[MMGG 1.7.219-beta.42](https://github.com/chenran0408/MMGG/releases/tag/delivered/mmgg-1.7.219-beta.42)。本轮未执行设备验收。`r`n`r`n## 最新验证
+- GitHub Beta 预发布：[MMGG 1.7.219-beta.42](https://github.com/chenran0408/MMGG/releases/tag/delivered/mmgg-1.7.219-beta.42)。本轮未执行设备验收。
+
+## 最新验证
 
 ### 2026-11-05 工程化解耦轮（E1–E6）
 
@@ -51,7 +60,7 @@
 - `PressPreviewHandoffTest` 删除 3 个 `dragCandidate` 用例，新增"松手开分词窗口（drag_preview=true、截图回收、候选清空）"与"按住直接接管建立会话"两个行为测试。
 - 全量验证：893 项单测 0 失败、Lint 0 errors/190 warnings/2 hints、assembleDebug、assembleBeta（R8）通过。未操作设备；微信按住直接拖拽、非微信应用直接拖拽与真实触摸窗口路由待实机验证。
 
-当前开发源码版本为 `1.7.219-beta.42` / versionCode `284`；Beta38 日志导出增量已提交为 `d1f35d0`，此前 Beta37 交付的功能提交为 `5bf92fe`、`4b7257a`。组合触发及模式移除后全量验证：876 项单测 0 失败、Lint 0 errors/190 warnings、assembleDebug 通过；`d9d69ba` 清理恒真双指资格状态，`161a171` 固定单指=拖拽、双指=分词并删除模式选择。
+当前开发源码版本为 `1.7.219-beta.43` / versionCode `285`；Beta38 日志导出增量已提交为 `d1f35d0`，此前 Beta37 交付的功能提交为 `5bf92fe`、`4b7257a`。组合触发及模式移除后全量验证：876 项单测 0 失败、Lint 0 errors/190 warnings、assembleDebug 通过；`d9d69ba` 清理恒真双指资格状态，`161a171` 固定单指=拖拽、双指=分词并删除模式选择。
 
 ### 2026-11-02 诊断打码红线与 FanRuntime 拆分
 
