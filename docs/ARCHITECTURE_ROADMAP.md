@@ -9,7 +9,7 @@ The project is organized around four functional areas. Package layout already se
 | Area | Scope | Main code (current location) | Size (files/lines) |
 |---|---|---|---|
 | 1 分词与拖拽 | Press capture, segmentation, drag, share targets, stash, WeChat adaptation, OCR/recognize | `codex` press/drag/bigbang/stash/portal files, `gestures` root input readers | 73 files / ~22.9k lines |
-| 2 手势增强 | Corner/side/honeycomb triggers, recents, outside gestures, gesture config | `gestures/xposed` Fan* + Honeycomb* + TaskSwitcher*, `gestures/config` | 60 files / ~14.0k lines |
+| 2 手势增强 | Corner/honeycomb triggers, outside gestures, gesture config | `gestures/xposed` Fan* + Honeycomb*, `gestures/config` | 60 files / ~14.0k lines |
 | 3 小窗增强 | HyperOS freeform bridge, mini windows, shortcut host, media controls | `gestures/xposed` HyperOsFreeformBridge, ShortcutHostRuntime, MiniMediaControls, HyperOsProfile | 16 files / ~5.1k lines |
 | 4 其他功能 | Settings UI, activation/diagnostics, touch probe reports, app update, copy direct, licenses | `codex` settings/diagnostics/touchprobe/update pages | 34 files / ~10.4k lines |
 
@@ -34,7 +34,7 @@ The OCR candidate state introduced in commit `0992141` is now generalized as `Pr
 
 ### E2 (area 2): FanRuntime remaining responsibilities — DONE 2026-11-05
 
-Done as `SystemRecentsWatch` (commit `5568fd4`): the system-recents visibility polling state machine (probe window, back-off schedule, hard timeout, version invalidation) is a standalone owner with pure decision tests. Corner/side arbitration stays in `FanRuntime` because it has no pure boundary yet.
+The side swipe and task switcher paths were removed from the runtime. `FanRuntime` now owns only corner and honeycomb arbitration; outside gesture handling remains separate.
 
 ### E3 (area 3): freeform request value object — DONE 2026-11-05
 

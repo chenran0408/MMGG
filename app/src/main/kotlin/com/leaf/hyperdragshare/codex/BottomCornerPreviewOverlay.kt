@@ -100,14 +100,8 @@ internal class BottomCornerPreviewOverlay(
         val hotHeightPercent: Int,
         val bottomGapDp: Int,
         val fanDistancePercent: Int,
-        val sideDistancePercent: Int,
-        val sideTopSafeMarginPercent: Int,
-        val sideDirectionHorizontal: Boolean,
-        val sideDirectionUp: Boolean,
-        val sideDirectionDown: Boolean,
         val leftCornerEnabled: Boolean,
         val rightCornerEnabled: Boolean,
-        val sideEnabled: Boolean,
         val primaryColor: Int,
         val surfaceColor: Int,
         val textColor: Int,
@@ -176,9 +170,6 @@ internal class BottomCornerPreviewOverlay(
             val safe = safeInsets.getInsetsIgnoringVisibility(
                 WindowInsetsCompat.Type.navigationBars() or WindowInsetsCompat.Type.displayCutout(),
             )
-            val reportedSideGestures = safeInsets.getInsets(WindowInsetsCompat.Type.systemGestures())
-            val sideLeftWidth = if (reportedSideGestures.left > 0) reportedSideGestures.left else dp(32).toInt()
-            val sideRightWidth = if (reportedSideGestures.right > 0) reportedSideGestures.right else dp(32).toInt()
             val gapPx = (data.bottomGapDp * density).toInt()
             val leftZone = GestureGeometry.hotZoneBounds(
                 width, height, 0, 0, safe.top,
@@ -191,12 +182,6 @@ internal class BottomCornerPreviewOverlay(
 
             val captionX = safe.left + dp(8)
             drawCaption(canvas, "手势范围预览 · 不拦截触摸", captionX, safe.top + dp(30), data.textColor)
-            val sideTop = maxOf(safe.top, (height * data.sideTopSafeMarginPercent / 100f).toInt())
-            val hotTop = minOf(leftZone.top, rightZone.top)
-            val sideBottom = maxOf(sideTop,
-                minOf(height - safe.bottom, hotTop - dp(24).toInt()))
-            drawSideZones(canvas, width, sideTop, sideBottom,
-                sideLeftWidth, sideRightWidth)
             drawCornerZone(canvas, leftZone, data.leftCornerEnabled)
             drawCornerZone(canvas, rightZone, data.rightCornerEnabled)
 
@@ -213,31 +198,6 @@ internal class BottomCornerPreviewOverlay(
                 if (data.leftCornerEnabled) data.primaryColor else data.mutedColor)
             drawArrow(canvas, centerX(rightZone), centerY(rightZone), menuCenterX + dp(20), menuCenterY,
                 if (data.rightCornerEnabled) data.primaryColor else data.mutedColor)
-            if (data.sideEnabled) {
-                val swipeDistance = minOf(width * data.sideDistancePercent / 100f,
-                    (width / 2f - safe.left - safe.right).coerceAtLeast(0f))
-                val swipeY = (sideTop + sideBottom) / 2f
-                if (data.sideDirectionHorizontal) {
-                    val leftStart = sideLeftWidth / 2f
-                    val rightStart = width - sideRightWidth / 2f
-                    drawArrow(canvas, leftStart, swipeY,
-                        leftStart + swipeDistance, swipeY, data.primaryColor)
-                    drawArrow(canvas, rightStart, swipeY,
-                        rightStart - swipeDistance, swipeY, data.primaryColor)
-                }
-                if (data.sideDirectionUp) {
-                    drawArrow(canvas, sideLeftWidth / 2f, swipeY,
-                        sideLeftWidth / 2f, sideTop.toFloat(), data.primaryColor)
-                    drawArrow(canvas, width - sideRightWidth / 2f, swipeY,
-                        width - sideRightWidth / 2f, sideTop.toFloat(), data.primaryColor)
-                }
-                if (data.sideDirectionDown) {
-                    drawArrow(canvas, sideLeftWidth / 2f, swipeY,
-                        sideLeftWidth / 2f, sideBottom.toFloat(), data.primaryColor)
-                    drawArrow(canvas, width - sideRightWidth / 2f, swipeY,
-                        width - sideRightWidth / 2f, sideBottom.toFloat(), data.primaryColor)
-                }
-            }
             drawGapMarker(canvas, leftZone, height)
             drawGapMarker(canvas, rightZone, height)
 
@@ -250,15 +210,8 @@ internal class BottomCornerPreviewOverlay(
 
             drawCaption(canvas, "高 ${data.hotHeightPercent}% · 底距 ${data.bottomGapDp} dp",
                 captionX, height - safe.bottom - dp(39), data.textColor)
-            drawCaption(canvas, "斜滑 ${data.fanDistancePercent}% · 侧滑 ${data.sideDistancePercent}%",
+            drawCaption(canvas, "斜滑 ${data.fanDistancePercent}%",
                 captionX, height - safe.bottom - dp(23), data.textColor)
-            val sideDirections = buildList {
-                if (data.sideDirectionHorizontal) add("横")
-                if (data.sideDirectionUp) add("上")
-                if (data.sideDirectionDown) add("下")
-            }.joinToString("/").ifEmpty { "无" }
-            drawCaption(canvas, "侧滑方向 $sideDirections", captionX,
-                height - safe.bottom - dp(7), data.mutedColor)
         }
 
         override fun onSizeChanged(w: Int, h: Int, oldw: Int, oldh: Int) {
@@ -271,15 +224,6 @@ internal class BottomCornerPreviewOverlay(
         override fun onDetachedFromWindow() {
             if (touchRegionId != 0) OverlayTouchRegions.update(context, touchRegionId, null)
             super.onDetachedFromWindow()
-        }
-
-        private fun drawSideZones(canvas: Canvas, width: Int, topInset: Int, bottom: Int,
-                                  leftWidth: Int, rightWidth: Int) {
-            val top = topInset.toFloat()
-            val safeBottom = maxOf(topInset, bottom).toFloat()
-            fillPaint.color = if (data.sideEnabled) withAlpha(data.primaryColor, .25f) else withAlpha(data.mutedColor, .12f)
-            canvas.drawRect(0f, top, leftWidth.toFloat(), safeBottom, fillPaint)
-            canvas.drawRect((width - rightWidth).toFloat(), top, width.toFloat(), safeBottom, fillPaint)
         }
 
         private fun drawCornerZone(canvas: Canvas, zone: GestureGeometry.HotZoneBounds, enabled: Boolean) {

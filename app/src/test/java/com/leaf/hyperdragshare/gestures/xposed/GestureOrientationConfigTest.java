@@ -53,20 +53,6 @@ public final class GestureOrientationConfigTest {
     }
 
     @Test
-    public void sideKeepsOneStageWithIndependentLayoutAndLaunchMode() {
-        GestureConfig config = GestureConfig.defaults();
-        config.sidePortraitLayoutMode = ConfigContract.SIDE_LAYOUT_RING;
-        config.sideLandscapeLayoutMode = ConfigContract.SIDE_LAYOUT_TASKS;
-        config.sidePortraitFullscreen = false;
-        config.sideLandscapeFullscreen = true;
-
-        assertEquals(ConfigContract.SIDE_LAYOUT_RING, config.sideLayoutModeFor(false));
-        assertEquals(ConfigContract.SIDE_LAYOUT_TASKS, config.sideLayoutModeFor(true));
-        assertFalse(config.sideFullscreenFor(false));
-        assertTrue(config.sideFullscreenFor(true));
-    }
-
-    @Test
     public void bottomCornerSettingsDefaultOnAndLoadIndependently() {
         GestureConfig defaults = GestureConfig.from(new Bundle());
         assertTrue(defaults.bottomLeftEnabled);
@@ -139,73 +125,4 @@ public final class GestureOrientationConfigTest {
         assertTrue(configured.removeFreeformCountLimit);
     }
 
-    @Test
-    public void sideEntryRequiresEnabledOrientationAndTargetsForSelectedLayout() {
-        Bundle values = new Bundle();
-        values.putBoolean(ConfigContract.KEY_SIDE_GESTURE_ENABLED, true);
-        values.putBoolean(ConfigContract.KEY_SIDE_PORTRAIT_ENABLED, true);
-        values.putBoolean(ConfigContract.KEY_SIDE_LANDSCAPE_ENABLED, false);
-        values.putInt(ConfigContract.KEY_SIDE_PORTRAIT_LAYOUT_MODE,
-                ConfigContract.SIDE_LAYOUT_FAN);
-        values.putInt(ConfigContract.KEY_SIDE_LANDSCAPE_LAYOUT_MODE,
-                ConfigContract.SIDE_LAYOUT_TASKS);
-        GestureConfig config = GestureConfig.from(values);
-
-        assertFalse(config.sideHasTargetsFor(false, 0, 0));
-        assertTrue(config.sideHasTargetsFor(false, 1, 0));
-        assertFalse(config.sideHasTargetsFor(true, 0, 0));
-
-        values.putBoolean(ConfigContract.KEY_SIDE_GESTURE_ENABLED, false);
-        GestureConfig masterDisabled = GestureConfig.from(values);
-        assertFalse(masterDisabled.sideHasTargetsFor(false, 1, 0));
-        values.putBoolean(ConfigContract.KEY_SIDE_GESTURE_ENABLED, true);
-
-        config.sideLandscapeEnabled = true;
-        assertTrue(config.sideHasTargetsFor(true, 0, 0));
-
-        config.sidePortraitLayoutMode = ConfigContract.SIDE_LAYOUT_HONEYCOMB;
-        assertFalse(config.sideHasTargetsFor(false, 3, 0));
-        assertTrue(config.sideHasTargetsFor(false, 0, 1));
-        values.putBoolean(ConfigContract.KEY_HONEYCOMB_ENABLED, false);
-        GestureConfig disabledHoneycomb = GestureConfig.from(values);
-        assertFalse(disabledHoneycomb.sideHasTargetsFor(false, 0, 1));
-    }
-
-    @Test
-    public void configReloadKeepsSideGesturesIndependentOfBottomTargetCount() {
-        Bundle values = new Bundle();
-        values.putBoolean(ConfigContract.KEY_ENABLED, true);
-        values.putBoolean(ConfigContract.KEY_SIDE_GESTURE_ENABLED, true);
-        values.putBoolean(ConfigContract.KEY_SIDE_PORTRAIT_ENABLED, true);
-        values.putBoolean(ConfigContract.KEY_SIDE_LANDSCAPE_ENABLED, false);
-        values.putInt(ConfigContract.KEY_SIDE_PORTRAIT_LAYOUT_MODE,
-                ConfigContract.SIDE_LAYOUT_FAN);
-        GestureConfig sideFan = GestureConfig.from(values);
-
-        assertFalse(sideFan.shouldResetGestureForConfig(true, false, false,
-                0, 1, 0));
-
-        values.putInt(ConfigContract.KEY_SIDE_PORTRAIT_LAYOUT_MODE,
-                ConfigContract.SIDE_LAYOUT_TASKS);
-        GestureConfig sideTasks = GestureConfig.from(values);
-        assertFalse(sideTasks.shouldResetGestureForConfig(true, false, false,
-                0, 0, 0));
-
-        assertTrue(sideTasks.shouldResetGestureForConfig(false, true, false,
-                0, 0, 0));
-        assertFalse(sideTasks.shouldResetGestureForConfig(false, false, false,
-                0, 0, 0));
-
-        values.putBoolean(ConfigContract.KEY_SIDE_GESTURE_ENABLED, false);
-        GestureConfig sideDisabled = GestureConfig.from(values);
-        assertTrue(sideDisabled.shouldResetGestureForConfig(true, false, false,
-                0, 0, 0));
-
-        values.putBoolean(ConfigContract.KEY_SIDE_GESTURE_ENABLED, true);
-        values.putInt(ConfigContract.KEY_SIDE_PORTRAIT_LAYOUT_MODE,
-                ConfigContract.SIDE_LAYOUT_FAN);
-        GestureConfig sideTargetsMissing = GestureConfig.from(values);
-        assertTrue(sideTargetsMissing.shouldResetGestureForConfig(true, false,
-                false, 0, 0, 0));
-    }
 }

@@ -70,7 +70,7 @@ persist { current ->
 - 双指触发为固定能力，无启用开关（2026-11-05 用户决定）；旧 `two_finger_long_press_enabled` 键与 `PortalPressSettings` 模式同步已删除，旧偏好里遗留的该键会被忽略。`two_finger_long_press_timeout_millis` 默认600、范围250–3000ms，经原Builder、SharedPreferences和Bundle；原单指键、默认值与合法范围保持。
 - `hot_bottom_gap_dp`属于独立手势配置，默认0、范围0–200dp；不改`hot_height_percent`高度语义。`ConfigStore`、`ConfigProvider`、`GestureConfig`维持原通知链。`GestureGeometry.hotZoneBounds`供`FanRuntime`、`FanTriggerCapture`与屏上预览共用：以屏幕物理底边为基线，上移间隔，极端尺寸限制有效间隔以保留区域高度。0保留既有区域位置。
 - 菜单边距沿用`simpleMenuEdgeDistanceDp`（8dp、0–64dp）；简洁和现代线性布局实际都使用`LinearMenuGeometry`，设置页可为两者调整。原生Portal和圆形布局不套用线性布局参数。
-- `GestureSettingsContent`在列表外持有`BottomCornerPreviewOverlay`，底角/侧滑类别复用开始/结束入口；滑块草稿先更新预览，松手仍按原路径保存。类别/路由、后台与销毁退出规则见[退出所有权](EXIT_LIFECYCLE.md)。
+- `GestureSettingsContent`在列表外持有`BottomCornerPreviewOverlay`，底角和蜂巢类别复用开始/结束入口；滑块草稿先更新预览，松手仍按原路径保存。类别/路由、后台与销毁退出规则见[退出所有权](EXIT_LIFECYCLE.md)。
 
 ## 验证入口
 

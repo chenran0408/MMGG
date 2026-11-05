@@ -22,23 +22,18 @@ final class FanRuntimeConfigLoader {
         GestureConfig config = GestureConfig.from(bundle);
         FanRuntimeTargetResolver.ResolvedTargets resolved =
                 new FanRuntimeTargetResolver(context).resolve(config);
-        return new LoadedConfig(config, resolved.targets, resolved.honeycombTargets,
-                resolved.sideTargets);
+        return new LoadedConfig(config, resolved.targets, resolved.honeycombTargets);
     }
 
     static final class LoadedConfig {
         final GestureConfig config;
         final List<RuntimeTarget> targets;
         final List<RuntimeTarget> honeycombTargets;
-        final List<RuntimeTarget> sideTargets;
-
         private LoadedConfig(GestureConfig config, List<RuntimeTarget> targets,
-                             List<RuntimeTarget> honeycombTargets,
-                             List<RuntimeTarget> sideTargets) {
+                             List<RuntimeTarget> honeycombTargets) {
             this.config = config;
             this.targets = targets;
             this.honeycombTargets = honeycombTargets;
-            this.sideTargets = sideTargets;
         }
     }
 }

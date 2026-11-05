@@ -27,22 +27,14 @@ public class ConfigUpgradePreservationTest {
         Map<String, Object> data = new HashMap<>();
         data.put(ConfigContract.KEY_COMPONENTS, "[{\"component\":\"my.app/.Main\"}]");
         data.put(ConfigContract.KEY_HONEYCOMB_COMPONENTS, "[]");
-        data.put(ConfigContract.KEY_SIDE_COMPONENTS, "[]");
         data.put(ConfigContract.KEY_PRESSURE_COMPONENTS, "[]");
         data.put(ConfigContract.KEY_PRESSURE_TRIGGERS, "[{\"id\":3}]");
-        data.put(ConfigContract.KEY_SIDE_FOLLOW_HONEYCOMB, true);
-        data.put(ConfigContract.KEY_SIDE_GESTURE_ENABLED, false);
-        data.put(ConfigContract.KEY_SIDE_PORTRAIT_ENABLED, false);
-        data.put(ConfigContract.KEY_SIDE_PORTRAIT_LAYOUT_MODE, ConfigContract.SIDE_LAYOUT_TASKS);
-        data.put(ConfigContract.KEY_SIDE_LANDSCAPE_LAYOUT_MODE, ConfigContract.SIDE_LAYOUT_RING);
-        data.put(ConfigContract.KEY_SIDE_ANIMATION_SPEED, 88);
         data.put(ConfigContract.KEY_BOTTOM_PORTRAIT_SECOND_STAGE_ENABLED, false);
         data.put(ConfigContract.KEY_BOTTOM_PORTRAIT_FULLSCREEN, true);
         data.put(ConfigContract.KEY_OUTSIDE_SINGLE_ACTION, ConfigContract.ACTION_NONE);
         data.put(ConfigContract.KEY_OUTSIDE_DOUBLE_ACTION, ConfigContract.ACTION_CLOSE);
         data.put("lower_double_action", ConfigContract.ACTION_EDGE_PIN);
         data.put(ConfigContract.KEY_SHOW_SELECTED_APP_NAME, false);
-        data.put(ConfigContract.KEY_SIDE_LAYOUT_MODE, ConfigContract.SIDE_LAYOUT_TASKS);
         data.put(ConfigContract.KEY_HONEYCOMB_APP_BACKGROUND_ENABLED, true);
         data.put(ConfigContract.KEY_HONEYCOMB_LIVE_BLUR_ENABLED, true);
         data.put(ConfigContract.KEY_HONEYCOMB_LIVE_BLUR_DP, 63);
@@ -70,13 +62,11 @@ public class ConfigUpgradePreservationTest {
         Map<String, Object> data = new HashMap<>();
         data.put(ConfigContract.KEY_COMPONENTS, "[]");
         data.put(ConfigContract.KEY_HONEYCOMB_COMPONENTS, "[saved-honeycomb]");
-        data.put(ConfigContract.KEY_SIDE_COMPONENTS, "[saved-side]");
         data.put(ConfigContract.KEY_BOTTOM_LEFT_ENABLED, false);
         // Null Context deliberately proves that no app query or reseeding occurs.
         ConfigStore.seedDefaultsIfNeeded(null, preferences(data));
         assertEquals("[]", data.get(ConfigContract.KEY_COMPONENTS));
         assertEquals("[saved-honeycomb]", data.get(ConfigContract.KEY_HONEYCOMB_COMPONENTS));
-        assertEquals("[saved-side]", data.get(ConfigContract.KEY_SIDE_COMPONENTS));
         assertEquals(false, data.get(ConfigContract.KEY_BOTTOM_LEFT_ENABLED));
         assertEquals(true, data.get(ConfigContract.KEY_BOTTOM_RIGHT_ENABLED));
     }
@@ -84,9 +74,7 @@ public class ConfigUpgradePreservationTest {
     private static void migrate(SharedPreferences prefs) {
         ConfigStore.migrateUnifiedActionsIfNeeded(prefs);
         ConfigStore.migrateDoubleTapPinIfNeeded(prefs);
-        ConfigStore.migrateSideLayoutModeIfNeeded(prefs);
         ConfigStore.migrateSelectedAppNameIfNeeded(prefs);
-        ConfigStore.migrateIndependentSideTargetsIfNeeded(prefs);
         ConfigStore.migrateOrientationBehaviorIfNeeded(prefs);
         ConfigStore.migrateHoneycombBackgroundIfNeeded(prefs);
         ConfigStore.migrateHoneycombWallpaperDefaultIfNeeded(prefs);

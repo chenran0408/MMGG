@@ -63,9 +63,7 @@ public final class ConfigProvider extends ContentProvider {
             ConfigStore.seedDefaultsIfNeeded(context, prefs);
             ConfigStore.migrateUnifiedActionsIfNeeded(prefs);
             ConfigStore.migrateDoubleTapPinIfNeeded(prefs);
-            ConfigStore.migrateSideLayoutModeIfNeeded(prefs);
             ConfigStore.migrateSelectedAppNameIfNeeded(prefs);
-            ConfigStore.migrateIndependentSideTargetsIfNeeded(prefs);
             ConfigStore.migrateOrientationBehaviorIfNeeded(prefs);
             ConfigStore.migrateHoneycombBackgroundIfNeeded(prefs);
             ConfigStore.migrateHoneycombWallpaperDefaultIfNeeded(prefs);
@@ -185,164 +183,9 @@ public final class ConfigProvider extends ContentProvider {
                     ConfigContract.DEFAULT_BOTTOM_HONEYCOMB_SETTLE_MS),
                     ConfigContract.MIN_BOTTOM_HONEYCOMB_SETTLE_MS,
                     ConfigContract.MAX_BOTTOM_HONEYCOMB_SETTLE_MS));
-            out.putBoolean(ConfigContract.KEY_SIDE_GESTURE_ENABLED, prefs.getBoolean(ConfigContract.KEY_SIDE_GESTURE_ENABLED, ConfigContract.DEFAULT_SIDE_GESTURE_ENABLED));
-            out.putBoolean(ConfigContract.KEY_SIDE_PORTRAIT_ENABLED, prefs.getBoolean(
-                    ConfigContract.KEY_SIDE_PORTRAIT_ENABLED,
-                    ConfigContract.DEFAULT_SIDE_PORTRAIT_ENABLED));
-            out.putBoolean(ConfigContract.KEY_SIDE_LANDSCAPE_ENABLED, prefs.getBoolean(
-                    ConfigContract.KEY_SIDE_LANDSCAPE_ENABLED,
-                    ConfigContract.DEFAULT_SIDE_LANDSCAPE_ENABLED));
-            out.putInt(ConfigContract.KEY_SIDE_PORTRAIT_LAYOUT_MODE, LayoutModeSanitizer.sideLayout(prefs.getInt(
-                    ConfigContract.KEY_SIDE_PORTRAIT_LAYOUT_MODE,
-                    ConfigContract.DEFAULT_SIDE_LAYOUT_MODE)));
-            out.putInt(ConfigContract.KEY_SIDE_LANDSCAPE_LAYOUT_MODE, LayoutModeSanitizer.sideLayout(prefs.getInt(
-                    ConfigContract.KEY_SIDE_LANDSCAPE_LAYOUT_MODE,
-                    ConfigContract.DEFAULT_SIDE_LAYOUT_MODE)));
-            out.putBoolean(ConfigContract.KEY_SIDE_PORTRAIT_FULLSCREEN,
-                    prefs.getBoolean(ConfigContract.KEY_SIDE_PORTRAIT_FULLSCREEN,
-                            ConfigContract.DEFAULT_SIDE_PORTRAIT_FULLSCREEN));
-            out.putBoolean(ConfigContract.KEY_SIDE_LANDSCAPE_FULLSCREEN,
-                    prefs.getBoolean(ConfigContract.KEY_SIDE_LANDSCAPE_FULLSCREEN,
-                            ConfigContract.DEFAULT_SIDE_LANDSCAPE_FULLSCREEN));
-            out.putBoolean(ConfigContract.KEY_SIDE_ANIMATIONS_ENABLED, prefs.getBoolean(
-                    ConfigContract.KEY_SIDE_ANIMATIONS_ENABLED,
-                    ConfigContract.DEFAULT_SIDE_ANIMATIONS_ENABLED));
-            out.putInt(ConfigContract.KEY_SIDE_ANIMATION_SPEED, clamp(prefs.getInt(
-                    ConfigContract.KEY_SIDE_ANIMATION_SPEED,
-                    ConfigContract.DEFAULT_SIDE_ANIMATION_SPEED),
-                    ConfigContract.MIN_FAN_ANIMATION_SPEED,
-                    ConfigContract.MAX_FAN_ANIMATION_SPEED));
-            out.putInt(ConfigContract.KEY_SIDE_REVEAL_AMOUNT, clamp(prefs.getInt(
-                    ConfigContract.KEY_SIDE_REVEAL_AMOUNT,
-                    ConfigContract.DEFAULT_SIDE_REVEAL_AMOUNT),
-                    ConfigContract.MIN_FAN_REVEAL_AMOUNT,
-                    ConfigContract.MAX_FAN_REVEAL_AMOUNT));
-            out.putInt(ConfigContract.KEY_SIDE_ROTATION_DEGREES, clamp(prefs.getInt(
-                    ConfigContract.KEY_SIDE_ROTATION_DEGREES,
-                    ConfigContract.DEFAULT_SIDE_ROTATION_DEGREES),
-                    ConfigContract.MIN_FAN_ROTATION_DEGREES,
-                    ConfigContract.MAX_FAN_ROTATION_DEGREES));
-            out.putInt(ConfigContract.KEY_SIDE_SELECTION_SCALE_PERCENT, clamp(prefs.getInt(
-                    ConfigContract.KEY_SIDE_SELECTION_SCALE_PERCENT,
-                    ConfigContract.DEFAULT_SIDE_SELECTION_SCALE_PERCENT),
-                    ConfigContract.MIN_FAN_SELECTION_SCALE_PERCENT,
-                    ConfigContract.MAX_FAN_SELECTION_SCALE_PERCENT));
-            out.putBoolean(ConfigContract.KEY_SIDE_SELECTION_RING, prefs.getBoolean(
-                    ConfigContract.KEY_SIDE_SELECTION_RING,
-                    ConfigContract.DEFAULT_SIDE_SELECTION_RING));
-            out.putInt(ConfigContract.KEY_SIDE_TRIGGER_PERCENT, clamp(prefs.getInt(
-                    ConfigContract.KEY_SIDE_TRIGGER_PERCENT,
-                    ConfigContract.DEFAULT_SIDE_TRIGGER_PERCENT),
-                    ConfigContract.MIN_SIDE_TRIGGER_PERCENT,
-                    ConfigContract.MAX_SIDE_TRIGGER_PERCENT));
-            out.putInt(ConfigContract.KEY_SIDE_ICON_SIZE_DP, prefs.getInt(
-                    ConfigContract.KEY_SIDE_ICON_SIZE_DP,
-                    prefs.getInt(ConfigContract.KEY_ICON_SIZE_DP,
-                            ConfigContract.DEFAULT_SIDE_ICON_SIZE_DP)));
-            out.putInt(ConfigContract.KEY_SIDE_TOP_SAFE_MARGIN_PERCENT, prefs.getInt(
-                    ConfigContract.KEY_SIDE_TOP_SAFE_MARGIN_PERCENT,
-                    ConfigContract.DEFAULT_SIDE_TOP_SAFE_MARGIN_PERCENT));
             out.putBoolean(ConfigContract.KEY_SHOW_SELECTED_APP_NAME, prefs.getBoolean(
                     ConfigContract.KEY_SHOW_SELECTED_APP_NAME,
                     ConfigContract.DEFAULT_SHOW_SELECTED_APP_NAME));
-            out.putBoolean(ConfigContract.KEY_SIDE_FOLLOW_FINGER, prefs.getBoolean(
-                    ConfigContract.KEY_SIDE_FOLLOW_FINGER,
-                    ConfigContract.DEFAULT_SIDE_FOLLOW_FINGER));
-            out.putBoolean(ConfigContract.KEY_SIDE_FAN_LIST, prefs.getBoolean(
-                    ConfigContract.KEY_SIDE_FAN_LIST,
-                    ConfigContract.DEFAULT_SIDE_FAN_LIST));
-            out.putInt(ConfigContract.KEY_SIDE_LAYOUT_MODE, LayoutModeSanitizer.sideLayout(prefs.getInt(
-                    ConfigContract.KEY_SIDE_LAYOUT_MODE,
-                    ConfigContract.DEFAULT_SIDE_LAYOUT_MODE)));
-            out.putInt(ConfigContract.KEY_SIDE_RING_SIZE_PERCENT, Math.max(
-                    ConfigContract.MIN_SIDE_RING_SIZE_PERCENT, Math.min(
-                            ConfigContract.MAX_SIDE_RING_SIZE_PERCENT, prefs.getInt(
-                                    ConfigContract.KEY_SIDE_RING_SIZE_PERCENT,
-                                    ConfigContract.DEFAULT_SIDE_RING_SIZE_PERCENT))));
-            out.putBoolean(ConfigContract.KEY_SIDE_WHEEL_MODE, prefs.getBoolean(
-                    ConfigContract.KEY_SIDE_WHEEL_MODE,
-                    ConfigContract.DEFAULT_SIDE_WHEEL_MODE));
-            out.putInt(ConfigContract.KEY_SIDE_REVERSE_CANCEL_PERCENT,
-                    Math.max(ConfigContract.MIN_SIDE_REVERSE_CANCEL_PERCENT,
-                            Math.min(ConfigContract.MAX_SIDE_REVERSE_CANCEL_PERCENT,
-                                    prefs.getInt(ConfigContract.KEY_SIDE_REVERSE_CANCEL_PERCENT,
-                                            ConfigContract.DEFAULT_SIDE_REVERSE_CANCEL_PERCENT))));
-            out.putBoolean(ConfigContract.KEY_SIDE_HOLD_ENABLED, prefs.getBoolean(
-                    ConfigContract.KEY_SIDE_HOLD_ENABLED,
-                    ConfigContract.DEFAULT_SIDE_HOLD_ENABLED));
-            out.putInt(ConfigContract.KEY_SIDE_HOLD_DELAY_MS, clamp(prefs.getInt(
-                    ConfigContract.KEY_SIDE_HOLD_DELAY_MS,
-                    ConfigContract.DEFAULT_SIDE_HOLD_DELAY_MS),
-                    ConfigContract.MIN_SIDE_HOLD_DELAY_MS,
-                    ConfigContract.MAX_SIDE_HOLD_DELAY_MS));
-            out.putInt(ConfigContract.KEY_SIDE_TASK_MAX_COUNT, clamp(prefs.getInt(
-                    ConfigContract.KEY_SIDE_TASK_MAX_COUNT,
-                    ConfigContract.DEFAULT_SIDE_TASK_MAX_COUNT),
-                    ConfigContract.MIN_SIDE_TASK_MAX_COUNT,
-                    ConfigContract.MAX_SIDE_TASK_MAX_COUNT));
-            out.putInt(ConfigContract.KEY_SIDE_TASK_CARD_SIZE_DP, clamp(prefs.getInt(
-                    ConfigContract.KEY_SIDE_TASK_CARD_SIZE_DP,
-                    ConfigContract.DEFAULT_SIDE_TASK_CARD_SIZE_DP),
-                    ConfigContract.MIN_SIDE_TASK_CARD_SIZE_DP,
-                    ConfigContract.MAX_SIDE_TASK_CARD_SIZE_DP));
-            int legacyTaskCardSize = prefs.getInt(ConfigContract.KEY_SIDE_TASK_CARD_SIZE_DP,
-                    ConfigContract.DEFAULT_SIDE_TASK_CARD_SIZE_DP);
-            out.putInt(ConfigContract.KEY_SIDE_TASK_CARD_WIDTH_DP, clamp(prefs.getInt(
-                    ConfigContract.KEY_SIDE_TASK_CARD_WIDTH_DP, legacyTaskCardSize),
-                    ConfigContract.MIN_SIDE_TASK_CARD_WIDTH_DP,
-                    ConfigContract.MAX_SIDE_TASK_CARD_WIDTH_DP));
-            out.putInt(ConfigContract.KEY_SIDE_TASK_CARD_HEIGHT_DP, clamp(prefs.getInt(
-                    ConfigContract.KEY_SIDE_TASK_CARD_HEIGHT_DP,
-                    Math.round(legacyTaskCardSize * 1.67f)),
-                    ConfigContract.MIN_SIDE_TASK_CARD_HEIGHT_DP,
-                    ConfigContract.MAX_SIDE_TASK_CARD_HEIGHT_DP));
-            out.putInt(ConfigContract.KEY_SIDE_TASK_CARD_CORNER_DP, clamp(prefs.getInt(
-                    ConfigContract.KEY_SIDE_TASK_CARD_CORNER_DP,
-                    ConfigContract.DEFAULT_SIDE_TASK_CARD_CORNER_DP),
-                    ConfigContract.MIN_SIDE_TASK_CARD_CORNER_DP,
-                    ConfigContract.MAX_SIDE_TASK_CARD_CORNER_DP));
-            out.putInt(ConfigContract.KEY_SIDE_TASK_ICON_SIZE_DP, clamp(prefs.getInt(
-                    ConfigContract.KEY_SIDE_TASK_ICON_SIZE_DP,
-                    ConfigContract.DEFAULT_SIDE_TASK_ICON_SIZE_DP),
-                    ConfigContract.MIN_SIDE_TASK_ICON_SIZE_DP,
-                    ConfigContract.MAX_SIDE_TASK_ICON_SIZE_DP));
-            out.putInt(ConfigContract.KEY_SIDE_TASK_ICON_GAP_DP, clamp(prefs.getInt(
-                    ConfigContract.KEY_SIDE_TASK_ICON_GAP_DP,
-                    ConfigContract.DEFAULT_SIDE_TASK_ICON_GAP_DP),
-                    ConfigContract.MIN_SIDE_TASK_ICON_GAP_DP,
-                    ConfigContract.MAX_SIDE_TASK_ICON_GAP_DP));
-            out.putInt(ConfigContract.KEY_SIDE_TASK_FINGER_OFFSET_DP, clamp(prefs.getInt(
-                    ConfigContract.KEY_SIDE_TASK_FINGER_OFFSET_DP,
-                    ConfigContract.DEFAULT_SIDE_TASK_FINGER_OFFSET_DP),
-                    ConfigContract.MIN_SIDE_TASK_FINGER_OFFSET_DP,
-                    ConfigContract.MAX_SIDE_TASK_FINGER_OFFSET_DP));
-            out.putInt(ConfigContract.KEY_SIDE_TASK_LAYOUT_MODE, LayoutModeSanitizer.taskLayout(prefs.getInt(
-                    ConfigContract.KEY_SIDE_TASK_LAYOUT_MODE,
-                    ConfigContract.DEFAULT_SIDE_TASK_LAYOUT_MODE)));
-            out.putBoolean(ConfigContract.KEY_SIDE_TASK_REVERSE_ORDER,
-                    prefs.getBoolean(ConfigContract.KEY_SIDE_TASK_REVERSE_ORDER,
-                            ConfigContract.DEFAULT_SIDE_TASK_REVERSE_ORDER));
-            out.putBoolean(ConfigContract.KEY_SIDE_TASK_SHOW_NAME, prefs.getBoolean(
-                    ConfigContract.KEY_SIDE_TASK_SHOW_NAME,
-                    ConfigContract.DEFAULT_SIDE_TASK_SHOW_NAME));
-            out.putInt(ConfigContract.KEY_SIDE_TASK_MOTION_MODE, clamp(prefs.getInt(
-                    ConfigContract.KEY_SIDE_TASK_MOTION_MODE,
-                    ConfigContract.DEFAULT_SIDE_TASK_MOTION_MODE),
-                    ConfigContract.SIDE_TASK_MOTION_APPLE,
-                    ConfigContract.SIDE_TASK_MOTION_MARBLE));
-            out.putInt(ConfigContract.KEY_SIDE_TASK_SWIPE_SPEED_PERCENT,
-                    clamp(prefs.getInt(ConfigContract.KEY_SIDE_TASK_SWIPE_SPEED_PERCENT,
-                                    ConfigContract.DEFAULT_SIDE_TASK_SWIPE_SPEED_PERCENT),
-                            ConfigContract.MIN_SIDE_TASK_SWIPE_SPEED_PERCENT,
-                            ConfigContract.MAX_SIDE_TASK_SWIPE_SPEED_PERCENT));
-            out.putInt(ConfigContract.KEY_SIDE_TASK_ANIMATION_SPEED,
-                    clamp(prefs.getInt(ConfigContract.KEY_SIDE_TASK_ANIMATION_SPEED,
-                                    ConfigContract.DEFAULT_SIDE_TASK_ANIMATION_SPEED),
-                            0, 4));
-            out.putBoolean(ConfigContract.KEY_SIDE_TASK_EXTENDED_DOWNWARD_TOLERANCE,
-                    prefs.getBoolean(
-                            ConfigContract.KEY_SIDE_TASK_EXTENDED_DOWNWARD_TOLERANCE,
-                            ConfigContract.DEFAULT_SIDE_TASK_EXTENDED_DOWNWARD_TOLERANCE));
             out.putBoolean(ConfigContract.KEY_HIDE_SYSTEM_RECENTS_CLEAR,
                     prefs.getBoolean(ConfigContract.KEY_HIDE_SYSTEM_RECENTS_CLEAR,
                             ConfigContract.DEFAULT_HIDE_SYSTEM_RECENTS_CLEAR));
@@ -500,23 +343,6 @@ public final class ConfigProvider extends ContentProvider {
             out.putInt(ConfigContract.KEY_HONEYCOMB_MAX_TARGETS, clamp(prefs.getInt(
                     ConfigContract.KEY_HONEYCOMB_MAX_TARGETS,
                     ConfigContract.DEFAULT_HONEYCOMB_MAX_TARGETS), 1, 60));
-            out.putString(ConfigContract.KEY_SIDE_COMPONENTS, prefs.getString(
-                    ConfigContract.KEY_SIDE_COMPONENTS, "[]"));
-            out.putBoolean(ConfigContract.KEY_SIDE_FOLLOW_HONEYCOMB, prefs.getBoolean(
-                    ConfigContract.KEY_SIDE_FOLLOW_HONEYCOMB,
-                    ConfigContract.DEFAULT_SIDE_FOLLOW_HONEYCOMB));
-            out.putInt(ConfigContract.KEY_SIDE_MAX_TARGETS, clamp(prefs.getInt(
-                    ConfigContract.KEY_SIDE_MAX_TARGETS,
-                    ConfigContract.DEFAULT_SIDE_MAX_TARGETS), 1, 36));
-            out.putBoolean(ConfigContract.KEY_SIDE_DIRECTION_HORIZONTAL, prefs.getBoolean(
-                    ConfigContract.KEY_SIDE_DIRECTION_HORIZONTAL, true));
-            out.putBoolean(ConfigContract.KEY_SIDE_DIRECTION_UP, prefs.getBoolean(
-                    ConfigContract.KEY_SIDE_DIRECTION_UP, true));
-            out.putBoolean(ConfigContract.KEY_SIDE_DIRECTION_DOWN, prefs.getBoolean(
-                    ConfigContract.KEY_SIDE_DIRECTION_DOWN, true));
-            out.putBoolean(ConfigContract.KEY_SIDE_FULLSCREEN, prefs.getBoolean(
-                    ConfigContract.KEY_SIDE_FULLSCREEN,
-                    ConfigContract.DEFAULT_SIDE_FULLSCREEN));
             out.putBoolean(ConfigContract.KEY_BOTTOM_FULLSCREEN, prefs.getBoolean(
                     ConfigContract.KEY_BOTTOM_FULLSCREEN,
                     ConfigContract.DEFAULT_BOTTOM_FULLSCREEN));
@@ -707,7 +533,7 @@ public final class ConfigProvider extends ContentProvider {
         SharedPreferences prefs = context.getSharedPreferences(ConfigContract.PREFS,
                 Context.MODE_PRIVATE);
         for (String targetKey : new String[] { ConfigContract.KEY_COMPONENTS,
-                ConfigContract.KEY_HONEYCOMB_COMPONENTS, ConfigContract.KEY_SIDE_COMPONENTS }) {
+                ConfigContract.KEY_HONEYCOMB_COMPONENTS }) {
             try {
                 JSONArray targets = new JSONArray(prefs.getString(targetKey, "[]"));
                 for (int index = 0; index < targets.length(); index++) {

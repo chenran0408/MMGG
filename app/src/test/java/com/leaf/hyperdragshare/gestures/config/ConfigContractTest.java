@@ -14,59 +14,10 @@ public final class ConfigContractTest {
     }
 
     @Test
-    public void keepsSideCancellationRangeStable() {
-        assertEquals(11, ConfigContract.DEFAULT_SIDE_REVERSE_CANCEL_PERCENT);
-        assertEquals(5, ConfigContract.MIN_SIDE_REVERSE_CANCEL_PERCENT);
-        assertEquals(25, ConfigContract.MAX_SIDE_REVERSE_CANCEL_PERCENT);
-    }
-
-    @Test
-    public void sideTriggerCanUseTheWholeScreenWidth() {
-        assertEquals(20, ConfigContract.MIN_SIDE_TRIGGER_PERCENT);
-        assertEquals(100, ConfigContract.MAX_SIDE_TRIGGER_PERCENT);
-        assertEquals(true, ConfigContract.DEFAULT_SIDE_HOLD_ENABLED);
-        assertEquals(150, ConfigContract.MIN_SIDE_HOLD_DELAY_MS);
-        assertEquals(458, ConfigContract.DEFAULT_SIDE_HOLD_DELAY_MS);
-        assertEquals(1200, ConfigContract.MAX_SIDE_HOLD_DELAY_MS);
-    }
-
-    @Test
-    public void taskSwitcherIsAnIndependentSideLayout() {
-        assertEquals(4, ConfigContract.SIDE_LAYOUT_TASKS);
-        assertEquals(5, ConfigContract.SIDE_LAYOUT_SYSTEM_RECENTS);
-        assertEquals(2, ConfigContract.MIN_SIDE_TASK_MAX_COUNT);
-        assertEquals(6, ConfigContract.DEFAULT_SIDE_TASK_MAX_COUNT);
-        assertEquals(10, ConfigContract.MAX_SIDE_TASK_MAX_COUNT);
-        assertEquals(100, ConfigContract.MIN_SIDE_TASK_SWIPE_SPEED_PERCENT);
-        assertEquals(115, ConfigContract.DEFAULT_SIDE_TASK_SWIPE_SPEED_PERCENT);
-        assertEquals(300, ConfigContract.MAX_SIDE_TASK_SWIPE_SPEED_PERCENT);
-        assertEquals(true, ConfigContract.DEFAULT_SIDE_TASK_EXTENDED_DOWNWARD_TOLERANCE);
-        assertEquals(0, ConfigContract.SIDE_TASK_LAYOUT_FLAT);
-        assertEquals(1, ConfigContract.SIDE_TASK_LAYOUT_ICONS);
-        assertEquals(32, ConfigContract.MIN_SIDE_TASK_ICON_SIZE_DP);
-        assertEquals(60, ConfigContract.DEFAULT_SIDE_TASK_ICON_SIZE_DP);
-        assertEquals(120, ConfigContract.MAX_SIDE_TASK_ICON_SIZE_DP);
-        assertEquals(0, ConfigContract.MIN_SIDE_TASK_ICON_GAP_DP);
-        assertEquals(5, ConfigContract.DEFAULT_SIDE_TASK_ICON_GAP_DP);
-        assertEquals(80, ConfigContract.MAX_SIDE_TASK_ICON_GAP_DP);
-        assertEquals(false, ConfigContract.DEFAULT_HIDE_SYSTEM_RECENTS_CLEAR);
-    }
-
-    @Test
     public void doublesFanAnimationAdjustmentCeilings() {
         assertEquals(130, ConfigContract.MAX_FAN_REVEAL_AMOUNT);
         assertEquals(90, ConfigContract.MAX_FAN_ROTATION_DEGREES);
         assertEquals(40, ConfigContract.MAX_FAN_SELECTION_SCALE_PERCENT);
-    }
-
-    @Test
-    public void keepsRingSizingRangeAndUnifiedNameDefaultStable() {
-        assertEquals(60, ConfigContract.MIN_SIDE_RING_SIZE_PERCENT);
-        assertEquals(97, ConfigContract.DEFAULT_SIDE_RING_SIZE_PERCENT);
-        assertEquals(180, ConfigContract.MAX_SIDE_RING_SIZE_PERCENT);
-        assertEquals(false,
-                ConfigContract.DEFAULT_SIDE_SHOW_APP_NAMES);
-        assertEquals(false, ConfigContract.DEFAULT_SIDE_FOLLOW_HONEYCOMB);
     }
 
     @Test
@@ -85,8 +36,6 @@ public final class ConfigContractTest {
         assertEquals(true, ConfigContract.DEFAULT_BOTTOM_RIGHT_ENABLED);
         assertEquals(true, ConfigContract.DEFAULT_BOTTOM_PORTRAIT_SECOND_STAGE_ENABLED);
         assertEquals(false, ConfigContract.DEFAULT_BOTTOM_LANDSCAPE_SECOND_STAGE_ENABLED);
-        assertEquals(true, ConfigContract.DEFAULT_SIDE_PORTRAIT_ENABLED);
-        assertEquals(false, ConfigContract.DEFAULT_SIDE_LANDSCAPE_ENABLED);
         assertEquals(false, ConfigContract.DEFAULT_HONEYCOMB_LANDSCAPE_ENABLED);
         assertEquals(false, ConfigContract.DEFAULT_FAN_FIXED_SEVEN_ROWS);
     }
@@ -103,10 +52,6 @@ public final class ConfigContractTest {
         assertEquals(62, ConfigContract.DEFAULT_HONEYCOMB_FIXED_Y_PERCENT);
         assertEquals(false, ConfigContract.DEFAULT_BOTTOM_HONEYCOMB_FREEFORM);
         assertEquals(false, ConfigContract.DEFAULT_BOTTOM_FULLSCREEN);
-        assertEquals(true, ConfigContract.DEFAULT_SIDE_FULLSCREEN);
-        assertEquals(false, ConfigContract.DEFAULT_SIDE_PORTRAIT_FULLSCREEN);
-        assertEquals(true, ConfigContract.DEFAULT_SIDE_LANDSCAPE_FULLSCREEN);
-        assertEquals(true, ConfigContract.DEFAULT_SIDE_ANIMATIONS_ENABLED);
     }
 
     @Test

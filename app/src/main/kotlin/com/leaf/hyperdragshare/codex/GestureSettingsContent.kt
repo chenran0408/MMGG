@@ -93,8 +93,6 @@ internal fun gestureSettingEntries(
     val landscape = LocalConfiguration.current.orientation == Configuration.ORIENTATION_LANDSCAPE
     val bottomOrientationKey = if (landscape) C.KEY_BOTTOM_LANDSCAPE_ENABLED else C.KEY_BOTTOM_PORTRAIT_ENABLED
     val bottomOrientationDefault = if (landscape) C.DEFAULT_BOTTOM_LANDSCAPE_ENABLED else C.DEFAULT_BOTTOM_PORTRAIT_ENABLED
-    val sideOrientationKey = if (landscape) C.KEY_SIDE_LANDSCAPE_ENABLED else C.KEY_SIDE_PORTRAIT_ENABLED
-    val sideOrientationDefault = if (landscape) C.DEFAULT_SIDE_LANDSCAPE_ENABLED else C.DEFAULT_SIDE_PORTRAIT_ENABLED
     fun previewData() = BottomCornerPreviewOverlay.PreviewData(
         hotWidthPercent = (sliderPreviewValues[C.KEY_HOT_WIDTH_PERCENT]
             ?: ((localValues[C.KEY_HOT_WIDTH_PERCENT] as? Int)
@@ -108,12 +106,6 @@ internal fun gestureSettingEntries(
         fanDistancePercent = (sliderPreviewValues[C.KEY_TRIGGER_PERCENT]
             ?: ((localValues[C.KEY_TRIGGER_PERCENT] as? Int)
                 ?: prefs.getInt(C.KEY_TRIGGER_PERCENT, C.DEFAULT_TRIGGER_PERCENT)).toFloat()).toInt(),
-        sideDistancePercent = (sliderPreviewValues[C.KEY_SIDE_TRIGGER_PERCENT]
-            ?: ((localValues[C.KEY_SIDE_TRIGGER_PERCENT] as? Int)
-                ?: prefs.getInt(C.KEY_SIDE_TRIGGER_PERCENT, C.DEFAULT_SIDE_TRIGGER_PERCENT)).toFloat()).toInt(),
-        sideTopSafeMarginPercent = (sliderPreviewValues[C.KEY_SIDE_TOP_SAFE_MARGIN_PERCENT]
-            ?: ((localValues[C.KEY_SIDE_TOP_SAFE_MARGIN_PERCENT] as? Int)
-                ?: prefs.getInt(C.KEY_SIDE_TOP_SAFE_MARGIN_PERCENT, C.DEFAULT_SIDE_TOP_SAFE_MARGIN_PERCENT)).toFloat()).toInt(),
         leftCornerEnabled = ((localValues[C.KEY_BOTTOM_LEFT_ENABLED] as? Boolean)
             ?: prefs.getBoolean(C.KEY_BOTTOM_LEFT_ENABLED, C.DEFAULT_BOTTOM_LEFT_ENABLED))
             && ((localValues[bottomOrientationKey] as? Boolean)
@@ -122,14 +114,6 @@ internal fun gestureSettingEntries(
             ?: prefs.getBoolean(C.KEY_BOTTOM_RIGHT_ENABLED, C.DEFAULT_BOTTOM_RIGHT_ENABLED))
             && ((localValues[bottomOrientationKey] as? Boolean)
                 ?: prefs.getBoolean(bottomOrientationKey, bottomOrientationDefault)),
-        sideEnabled = ((localValues[C.KEY_SIDE_GESTURE_ENABLED] as? Boolean)
-            ?: prefs.getBoolean(C.KEY_SIDE_GESTURE_ENABLED, C.DEFAULT_SIDE_GESTURE_ENABLED))
-            && ((localValues[sideOrientationKey] as? Boolean)
-                ?: prefs.getBoolean(sideOrientationKey, sideOrientationDefault)),
-        sideDirectionHorizontal = prefs.getBoolean(C.KEY_SIDE_DIRECTION_HORIZONTAL,
-            C.DEFAULT_SIDE_DIRECTION_HORIZONTAL),
-        sideDirectionUp = prefs.getBoolean(C.KEY_SIDE_DIRECTION_UP, C.DEFAULT_SIDE_DIRECTION_UP),
-        sideDirectionDown = prefs.getBoolean(C.KEY_SIDE_DIRECTION_DOWN, C.DEFAULT_SIDE_DIRECTION_DOWN),
         primaryColor = scheme.primary.toArgb(),
         surfaceColor = scheme.surfaceContainer.toArgb(),
         textColor = scheme.onSurface.toArgb(),
@@ -152,9 +136,6 @@ internal fun gestureSettingEntries(
         if (currentModule == SettingModule.GENERAL || key == C.KEY_ENABLED) return emptyList()
         val result = mutableListOf<String>()
         if (currentModule == SettingModule.GESTURES) result += C.KEY_ENABLED
-        if (key.startsWith("side_") && key != C.KEY_SIDE_GESTURE_ENABLED) {
-            result += C.KEY_SIDE_GESTURE_ENABLED
-        }
         when {
             key.startsWith("honeycomb_") && key != C.KEY_HONEYCOMB_ENABLED -> result += C.KEY_HONEYCOMB_ENABLED
             key == C.KEY_BOTTOM_PORTRAIT_SECOND_STAGE_ENABLED -> {
@@ -173,11 +154,6 @@ internal fun gestureSettingEntries(
                 result += C.KEY_BOTTOM_LANDSCAPE_ENABLED
                 result += C.KEY_BOTTOM_LANDSCAPE_SECOND_STAGE_ENABLED
             }
-            key == C.KEY_SIDE_HOLD_DELAY_MS -> result += C.KEY_SIDE_HOLD_ENABLED
-            key == C.KEY_SIDE_PORTRAIT_LAYOUT_MODE ||
-                    key == C.KEY_SIDE_PORTRAIT_FULLSCREEN -> result += C.KEY_SIDE_PORTRAIT_ENABLED
-            key == C.KEY_SIDE_LANDSCAPE_LAYOUT_MODE ||
-                    key == C.KEY_SIDE_LANDSCAPE_FULLSCREEN -> result += C.KEY_SIDE_LANDSCAPE_ENABLED
         }
         if (currentModule == SettingModule.FREEFORM) {
             when (key) {
@@ -216,10 +192,6 @@ internal fun gestureSettingEntries(
 
     fun dependencyDefault(key: String): Boolean = when (key) {
         C.KEY_ENABLED -> C.DEFAULT_ENABLED
-        C.KEY_SIDE_GESTURE_ENABLED -> C.DEFAULT_SIDE_GESTURE_ENABLED
-        C.KEY_SIDE_PORTRAIT_ENABLED -> C.DEFAULT_SIDE_PORTRAIT_ENABLED
-        C.KEY_SIDE_LANDSCAPE_ENABLED -> C.DEFAULT_SIDE_LANDSCAPE_ENABLED
-        C.KEY_SIDE_HOLD_ENABLED -> C.DEFAULT_SIDE_HOLD_ENABLED
         C.KEY_HONEYCOMB_ENABLED -> C.DEFAULT_HONEYCOMB_ENABLED
         C.KEY_BOTTOM_PORTRAIT_ENABLED -> C.DEFAULT_BOTTOM_PORTRAIT_ENABLED
         C.KEY_BOTTOM_LANDSCAPE_ENABLED -> C.DEFAULT_BOTTOM_LANDSCAPE_ENABLED
@@ -237,10 +209,6 @@ internal fun gestureSettingEntries(
         ?.joinToString("、") { key ->
             when (key) {
                 C.KEY_ENABLED -> "启用手势总开关"
-                C.KEY_SIDE_GESTURE_ENABLED -> "启用侧滑手势"
-                C.KEY_SIDE_PORTRAIT_ENABLED -> "竖屏侧滑手势"
-                C.KEY_SIDE_LANDSCAPE_ENABLED -> "横屏侧滑手势"
-                C.KEY_SIDE_HOLD_ENABLED -> "侧滑停留打开列表"
                 C.KEY_HONEYCOMB_ENABLED -> "启用蜂巢"
                 C.KEY_BOTTOM_PORTRAIT_ENABLED -> "竖屏底角手势"
                 C.KEY_BOTTOM_LANDSCAPE_ENABLED -> "横屏底角手势"
@@ -356,26 +324,6 @@ internal fun gestureSettingEntries(
     bool("横屏底角手势", "启用横屏底部触发", C.KEY_BOTTOM_LANDSCAPE_ENABLED, C.DEFAULT_BOTTOM_LANDSCAPE_ENABLED)
     bool("竖屏二段蜂巢", "底角扇形外继续上滑打开蜂巢", C.KEY_BOTTOM_PORTRAIT_SECOND_STAGE_ENABLED, C.DEFAULT_BOTTOM_PORTRAIT_SECOND_STAGE_ENABLED)
     bool("横屏二段蜂巢", "底角扇形外继续上滑打开蜂巢", C.KEY_BOTTOM_LANDSCAPE_SECOND_STAGE_ENABLED, C.DEFAULT_BOTTOM_LANDSCAPE_SECOND_STAGE_ENABLED)
-    currentGroup = "侧边手势"
-    bool("启用侧滑列表", "从屏幕侧边滑动打开所选布局；不会更改安全中心的侧栏开关。", C.KEY_SIDE_GESTURE_ENABLED, C.DEFAULT_SIDE_GESTURE_ENABLED)
-    bool("竖屏侧滑", "允许竖屏时从屏幕左右边缘触发", C.KEY_SIDE_PORTRAIT_ENABLED, C.DEFAULT_SIDE_PORTRAIT_ENABLED)
-    bool("横屏侧滑", "允许横屏时从屏幕左右边缘触发", C.KEY_SIDE_LANDSCAPE_ENABLED, C.DEFAULT_SIDE_LANDSCAPE_ENABLED)
-    bool("侧滑停留打开列表", "滑入后达到触发距离并停留；可关闭以只使用侧滑。不会更改安全中心侧栏开关。", C.KEY_SIDE_HOLD_ENABLED, C.DEFAULT_SIDE_HOLD_ENABLED)
-    slider("侧滑停留时间", C.KEY_SIDE_HOLD_DELAY_MS, C.MIN_SIDE_HOLD_DELAY_MS, C.MAX_SIDE_HOLD_DELAY_MS, " ms")
-    slider("侧滑触发距离", C.KEY_SIDE_TRIGGER_PERCENT, C.MIN_SIDE_TRIGGER_PERCENT, C.MAX_SIDE_TRIGGER_PERCENT, "%")
-    register("side_gesture_preview", "屏幕手势预览", "查看侧滑方向与触发范围的屏幕叠加预览", MiuixIcons.Info) { _ ->
-        BottomCornerTriggerPreview(
-            visible = previewVisible,
-            enabled = previewPageActive,
-            onStart = startPreview,
-            onStop = stopPreview,
-        )
-    }
-    chooser("竖屏侧滑布局", listOf("列表", "圆环", "扇形", "蜂巢", "任务切换", "系统最近任务"), C.KEY_SIDE_PORTRAIT_LAYOUT_MODE, C.DEFAULT_SIDE_LAYOUT_MODE, values = listOf(C.SIDE_LAYOUT_LIST, C.SIDE_LAYOUT_RING, C.SIDE_LAYOUT_FAN, C.SIDE_LAYOUT_HONEYCOMB, C.SIDE_LAYOUT_TASKS, C.SIDE_LAYOUT_SYSTEM_RECENTS))
-    chooser("横屏侧滑布局", listOf("列表", "圆环", "扇形", "蜂巢", "任务切换", "系统最近任务"), C.KEY_SIDE_LANDSCAPE_LAYOUT_MODE, C.DEFAULT_SIDE_LAYOUT_MODE, values = listOf(C.SIDE_LAYOUT_LIST, C.SIDE_LAYOUT_RING, C.SIDE_LAYOUT_FAN, C.SIDE_LAYOUT_HONEYCOMB, C.SIDE_LAYOUT_TASKS, C.SIDE_LAYOUT_SYSTEM_RECENTS))
-    bool("竖屏侧滑全屏启动", "关闭时以小窗启动", C.KEY_SIDE_PORTRAIT_FULLSCREEN, C.DEFAULT_SIDE_PORTRAIT_FULLSCREEN)
-    bool("横屏侧滑全屏启动", "关闭时以小窗启动", C.KEY_SIDE_LANDSCAPE_FULLSCREEN, C.DEFAULT_SIDE_LANDSCAPE_FULLSCREEN)
-    slider("侧滑目标上限", C.KEY_SIDE_MAX_TARGETS, C.MIN_SIDE_MAX_TARGETS, C.MAX_SIDE_MAX_TARGETS, " 个")
     currentGroup = "动作与目标"
     bool("竖屏扇形全屏启动", "第一段手势启动应用", C.KEY_BOTTOM_PORTRAIT_FULLSCREEN, C.DEFAULT_BOTTOM_PORTRAIT_FULLSCREEN)
     bool("横屏扇形全屏启动", "第一段手势启动应用", C.KEY_BOTTOM_LANDSCAPE_FULLSCREEN, C.DEFAULT_BOTTOM_LANDSCAPE_FULLSCREEN)
@@ -476,7 +424,6 @@ internal fun gestureSettingEntries(
     currentGroup = "动作与目标"
     targetAction("bottom_targets", "底角应用与快捷方式", "选择底角扇形可打开的应用和快捷方式", "bottom")
     targetAction("honeycomb_targets", "蜂巢应用与快捷方式", "选择蜂巢可打开的应用和快捷方式", "honeycomb")
-    targetAction("side_targets", "侧滑应用与快捷方式", "选择侧滑列表可打开的应用和快捷方式", "side")
     addUtilityEntries()
     return entries
 }
@@ -602,7 +549,7 @@ private fun BottomCornerTriggerPreview(
     ) {
         Text("屏幕实时预览", fontSize = 14.sp, color = MiuixTheme.colorScheme.onSurface)
         Text(
-            "显示斜滑、侧滑方向、触发范围和菜单位置；叠加层不会拦截触摸，菜单仅作示意。",
+            "显示底角触发范围和菜单位置；叠加层不会拦截触摸，菜单仅作示意。",
             fontSize = 12.sp,
             color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
         )
@@ -684,13 +631,6 @@ private fun gestureSettingDefault(key: String, fallback: Int): Int = when (key) 
     C.KEY_FAN_CUSTOM_INNER_COUNT -> C.DEFAULT_FAN_CUSTOM_INNER_COUNT
     C.KEY_FAN_CUSTOM_MIDDLE_COUNT -> C.DEFAULT_FAN_CUSTOM_MIDDLE_COUNT
     C.KEY_FAN_CUSTOM_OUTER_COUNT -> C.DEFAULT_FAN_CUSTOM_OUTER_COUNT
-    C.KEY_SIDE_TOP_SAFE_MARGIN_PERCENT -> C.DEFAULT_SIDE_TOP_SAFE_MARGIN_PERCENT
-    C.KEY_SIDE_TRIGGER_PERCENT -> C.DEFAULT_SIDE_TRIGGER_PERCENT
-    C.KEY_SIDE_REVERSE_CANCEL_PERCENT -> C.DEFAULT_SIDE_REVERSE_CANCEL_PERCENT
-    C.KEY_SIDE_HOLD_DELAY_MS -> C.DEFAULT_SIDE_HOLD_DELAY_MS
-    C.KEY_SIDE_MAX_TARGETS -> C.DEFAULT_SIDE_MAX_TARGETS
-    C.KEY_SIDE_ICON_SIZE_DP -> C.DEFAULT_SIDE_ICON_SIZE_DP
-    C.KEY_SIDE_RING_SIZE_PERCENT -> C.DEFAULT_SIDE_RING_SIZE_PERCENT
     C.KEY_HONEYCOMB_FIXED_X_PERCENT -> C.DEFAULT_HONEYCOMB_FIXED_X_PERCENT
     C.KEY_HONEYCOMB_FIXED_Y_PERCENT -> C.DEFAULT_HONEYCOMB_FIXED_Y_PERCENT
     C.KEY_HONEYCOMB_MAX_TARGETS -> C.DEFAULT_HONEYCOMB_MAX_TARGETS
@@ -706,14 +646,6 @@ private fun gestureSettingDefault(key: String, fallback: Int): Int = when (key) 
     C.KEY_HONEYCOMB_CENTER_SCALE -> C.DEFAULT_HONEYCOMB_CENTER_SCALE
     C.KEY_HONEYCOMB_EDGE_SCALE -> C.DEFAULT_HONEYCOMB_EDGE_SCALE
     C.KEY_HONEYCOMB_SELECTION_SCALE -> C.DEFAULT_HONEYCOMB_SELECTION_SCALE
-    C.KEY_SIDE_TASK_MAX_COUNT -> C.DEFAULT_SIDE_TASK_MAX_COUNT
-    C.KEY_SIDE_TASK_CARD_WIDTH_DP -> C.DEFAULT_SIDE_TASK_CARD_WIDTH_DP
-    C.KEY_SIDE_TASK_CARD_HEIGHT_DP -> C.DEFAULT_SIDE_TASK_CARD_HEIGHT_DP
-    C.KEY_SIDE_TASK_CARD_CORNER_DP -> C.DEFAULT_SIDE_TASK_CARD_CORNER_DP
-    C.KEY_SIDE_TASK_ICON_SIZE_DP -> C.DEFAULT_SIDE_TASK_ICON_SIZE_DP
-    C.KEY_SIDE_TASK_ICON_GAP_DP -> C.DEFAULT_SIDE_TASK_ICON_GAP_DP
-    C.KEY_SIDE_TASK_FINGER_OFFSET_DP -> C.DEFAULT_SIDE_TASK_FINGER_OFFSET_DP
-    C.KEY_SIDE_TASK_SWIPE_SPEED_PERCENT -> C.DEFAULT_SIDE_TASK_SWIPE_SPEED_PERCENT
     C.KEY_WIDTH_PERCENT -> C.DEFAULT_WIDTH_PERCENT
     C.KEY_HEIGHT_PERCENT -> C.DEFAULT_HEIGHT_PERCENT
     C.KEY_POSITION_X -> C.DEFAULT_POSITION_X
@@ -726,12 +658,8 @@ private fun gestureSettingDefault(key: String, fallback: Int): Int = when (key) 
     C.KEY_LANDSCAPE_NATIVE_SCALE_PERCENT -> C.DEFAULT_NATIVE_WINDOW_SCALE_PERCENT
     C.KEY_OUTSIDE_TAP_WINDOW_MS -> C.DEFAULT_OUTSIDE_TAP_WINDOW_MS
     C.KEY_BOTTOM_ANIMATION_SPEED -> C.DEFAULT_BOTTOM_ANIMATION_SPEED
-    C.KEY_SIDE_ANIMATION_SPEED -> C.DEFAULT_SIDE_ANIMATION_SPEED
     C.KEY_FAN_REVEAL_AMOUNT -> C.DEFAULT_FAN_REVEAL_AMOUNT
-    C.KEY_SIDE_REVEAL_AMOUNT -> C.DEFAULT_SIDE_REVEAL_AMOUNT
     C.KEY_FAN_ROTATION_DEGREES -> C.DEFAULT_FAN_ROTATION_DEGREES
-    C.KEY_SIDE_ROTATION_DEGREES -> C.DEFAULT_SIDE_ROTATION_DEGREES
     C.KEY_FAN_SELECTION_SCALE_PERCENT -> C.DEFAULT_FAN_SELECTION_SCALE_PERCENT
-    C.KEY_SIDE_SELECTION_SCALE_PERCENT -> C.DEFAULT_SIDE_SELECTION_SCALE_PERCENT
     else -> fallback
 }

@@ -30,9 +30,7 @@ final class FanRuntimeTargetResolver {
                         "Configured target is unavailable", targetCache),
                 resolveTargets(packageManager, config.honeycombTargets,
                         config.honeycombMaxTargets, "Configured honeycomb target is unavailable",
-                        targetCache),
-                resolveTargets(packageManager, config.sideTargets, config.sideMaxTargets,
-                        "Configured side target is unavailable", targetCache));
+                        targetCache));
     }
 
     private List<RuntimeTarget> resolveTargets(PackageManager packageManager,
@@ -131,14 +129,10 @@ final class FanRuntimeTargetResolver {
     static final class ResolvedTargets {
         final List<RuntimeTarget> targets;
         final List<RuntimeTarget> honeycombTargets;
-        final List<RuntimeTarget> sideTargets;
-
         private ResolvedTargets(List<RuntimeTarget> targets,
-                                List<RuntimeTarget> honeycombTargets,
-                                List<RuntimeTarget> sideTargets) {
+                                List<RuntimeTarget> honeycombTargets) {
             this.targets = targets;
             this.honeycombTargets = honeycombTargets;
-            this.sideTargets = sideTargets;
         }
     }
 }

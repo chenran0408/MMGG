@@ -87,7 +87,7 @@
 
 ## 已知未完成
 
-- 没有完成真实 HyperOS 设备的完整回归：微信/QQ 中转站接收、长按菜单后的 MOVE/CANCEL、输入法与小窗、AICR、底角/侧滑、深浅色和玻璃背景仍需要设备证据。
+- 没有完成真实 HyperOS 设备的完整回归：微信/QQ 中转站接收、长按菜单后的 MOVE/CANCEL、输入法与小窗、AICR、底角、深浅色和玻璃背景仍需要设备证据。
 - 设备端双指候选仍保留 `DEVICE NO-GO` 结论；Candidate B 不得直接当作当前修复已验收。
 - `DragShareController` 和 `HyperOsFreeformBridge` 仍偏重；后续只在存在行为护栏时继续抽取，不做机械拆文件。
 - UI 仍缺少稳定的真实渲染矩阵，尤其是窄屏、大字体、底部安全区、输入法和毛玻璃背景。

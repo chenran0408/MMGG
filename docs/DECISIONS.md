@@ -14,7 +14,7 @@
 | D08 | 代码事实；已替代 | jieba/JNI/字典预载、MLKit/ZXing双引擎计划 | `0002541`系统ICU分词＋AICR条码；app/build.gradle/TextSegmenter/AicrBarcodeClient无这些引擎依赖。旧OCR/扫码/分词计划不等于现用实现；不重新打包这些依赖 |
 | D09 | 用户要求更新＋代码事实；原图仍未完成 | 将截图/OCR区域当微信原图 | 微信节点缩略图兼容拖拽、专用来源标记和窗口回退已移除；泛OCR/UNKNOWN继续拒绝，Portal媒体仍单独作为原媒体来源。真正原媒体没有闭环；参考与当前边界见[微信图片对照](WECHAT_IMAGE_REFERENCE.md) |
 | D10 | 用户要求；未完成，不能称废弃 | 指定Leaf项目分词完整样式/排布/体验复用 | 用户多次要求直接采用，不能以Miuix局部改栏替代验收。`fd80f87`资源/排布和`4dcd4d5/1bcabc6`冻结只是部分；Compose外壳＋BoomChipPage/SwipeSelectView仍在。上游已在对象库，不等于全部交互移植完成 |
-| D11 | 用户要求更新＋代码事实；旧规则被替代 | 近手只按按压起点半屏选边、只留跟随四边；空侧滑停留开关 | `6ff3414`按左右拖向选边/抖动过滤，六位置保留；`83048f8`恢复FanFreeform侧滑DOWN/目标与窗外master AND方向键。旧“侧滑已交给系统所以删除”不是当前要求 |
+| D11 | 用户要求更新＋代码事实 | 删除 MMGG 侧滑手势、侧滑目标和任务切换专用运行时代码；保留原生系统侧栏入口与系统返回边缘保护 | 当前运行时只保留底角扇形、蜂巢和窗外手势 |
 | D12 | 代码事实；回退修复 | `db41204`把enabled过滤扩到原语音/倍速规则 | `585c162`恢复明确hold控件disabled态避让；2个用例修前失败，46定向修后过。滑条/拍摄规则仍要求对应启用语义；不以误触为由屏蔽正文/整包应用 |
 | D13 | 代码事实；已替代 | 213自绘复制气泡、全局剪贴板Hook或测试Activity代替原生复制链 | `089800d`等使用系统原生提醒；AicrCopyHooks/原页分词保留。通知权限与copy_direct频道悬浮开关不同；不绕过小米翻译CTA，翻译静态接口未接入 |
 | D14 | 代码事实；已替代 | 全局ServiceManager.waitForService Hook、扩大系统进程保护/强停contentcatcher | `5c0761f`精确MiTrust DexKit风险入口；RootProcessFrameworkHooks只裁自有Root helper相关数量；ProcessManager锁定只模块/Portal。范围失配保留原行为，不全局绕过/批量杀进程 |
