@@ -37,6 +37,11 @@ import de.robv.android.xposed.XposedHelpers;
 
 final class FanRuntime {
 
+    private static final int EXTERNAL_INTENT_TASK_FLAGS_TO_STRIP =
+            Intent.FLAG_ACTIVITY_MULTIPLE_TASK
+                    | Intent.FLAG_ACTIVITY_NEW_DOCUMENT
+                    | Intent.FLAG_ACTIVITY_CLEAR_TASK;
+
     private static final float BOTTOM_HONEYCOMB_SETTLE_DP = 8f;
 
     private static final float BOTTOM_HONEYCOMB_FAN_GAP_DP = 10f;
@@ -534,8 +539,15 @@ final class FanRuntime {
         if (launch.getComponent() == null && launch.getPackage() == null) {
             launch.setPackage(packageName);
         }
-        launch.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_NO_ANIMATION);
+        launch.setFlags(sanitizeExternalIntentFlags(launch.getFlags()));
         return launch;
+    }
+
+    /** Keeps deep-link semantics while preventing a parsed URI from forcing a new task. */
+    static int sanitizeExternalIntentFlags(int flags) {
+        return (flags & ~EXTERNAL_INTENT_TASK_FLAGS_TO_STRIP)
+                | Intent.FLAG_ACTIVITY_NEW_TASK
+                | Intent.FLAG_ACTIVITY_NO_ANIMATION;
     }
 
     void onTaskAppeared(int taskId) {
