@@ -5,9 +5,10 @@ import android.os.Bundle;
 import android.os.SystemClock;
 
 /**
- * Owns the WeChat press-candidate state: direct OCR, text delivery, drag
- * takeover and screen-capture rejection. Generation checks and Root authority
- * stay with {@link PressCaptureSource}; this class reads them only via Host.
+ * Owns the WeChat press-candidate state: direct OCR, text delivery and
+ * screen-capture rejection. Drag routing follows the shared gesture semantics;
+ * generation checks and Root authority stay with {@link PressCaptureSource}
+ * and this class reads them only via Host.
  */
 final class WeChatPressFlow {
     /** Keeps the historical log tag so existing diagnostic greps stay valid. */
@@ -39,8 +40,6 @@ final class WeChatPressFlow {
         long confirmedAt();
 
         long generation();
-
-        void bumpGeneration();
 
         String operationId();
 
@@ -80,7 +79,6 @@ final class WeChatPressFlow {
 
     private final Host host;
     private Candidate candidate;
-    private boolean imageDragIntent;
 
     WeChatPressFlow(Host host) {
         this.host = host;
@@ -94,18 +92,9 @@ final class WeChatPressFlow {
         return candidate;
     }
 
-    boolean imageDragIntent() {
-        return imageDragIntent;
-    }
-
-    void noteImageDragIntent() {
-        imageDragIntent = true;
-    }
-
     void acceptPortalTakeover() {
         Candidate pending = candidate;
         candidate = null;
-        imageDragIntent = false;
         if (pending != null && pending.ocrComplete) host.recycleContent(pending.content);
         host.cancelActiveOcr();
     }
@@ -113,15 +102,10 @@ final class WeChatPressFlow {
     Candidate clearForCancel() {
         Candidate pending = candidate;
         candidate = null;
-        imageDragIntent = false;
         return pending;
     }
 
     void startOcrDirect(long request, CapturedContent content) {
-        if (imageDragIntent) {
-            rejectScreenCapture(content, "drag_before_ocr");
-            return;
-        }
         OperationTrace.event(host.operationId(), "wechat_ocr", "started");
         Candidate pending = new Candidate(content, request, host.operationId());
         candidate = pending;
@@ -143,68 +127,6 @@ final class WeChatPressFlow {
                     + " characters=" + (text == null ? 0 : text.length()));
             deliverText();
         }));
-    }
-
-    void dragCandidate(float x, float y) {
-        Candidate pending = candidate;
-        if (pending.ocrComplete && pending.textWindowAccepted
-                && host.settings().isSharingEnabled(false)
-                && pending.text != null && !pending.text.isBlank()) {
-            if (pending.textWindowAccepted && !dismissTextWindow()) {
-                OperationTrace.event(pending.operation, "wechat_drag", "rejected_window_not_dismissed");
-                host.showFailure("无法收起本次分词窗口，文字拖拽未接管");
-                return;
-            }
-            CapturedContent text = CapturedContent.text(
-                    pending.text, pending.content.sourcePackage, pending.content.sourceBounds);
-            candidate = null;
-            host.bumpGeneration();
-            imageDragIntent = false;
-            host.blocker().stopAsync();
-            host.recycleContent(pending.content);
-            DragShareLog.i(TAG, "WeChat OCR text moved to drag menu elapsedFromConfirmMs="
-                    + (SystemClock.uptimeMillis() - host.confirmedAt()));
-            OperationTrace.event(pending.operation, "wechat_drag", "ocr_text_takeover");
-            // The takeover API accepts either payload kind; it restores this Root press
-            // after the BigBang text window handed it off.
-            host.controller().showContentForPressTakeover(text, x, y, host.settings(), host.downTime());
-            return;
-        }
-        if (pending.textWindowAccepted && !dismissTextWindow()) {
-            OperationTrace.event(pending.operation, "wechat_drag", "rejected_window_not_dismissed");
-            host.showFailure("无法收起本次分词窗口，图片拖拽未接管");
-            return;
-        }
-        CapturedContent source = pending.content;
-        if (isUnverifiedImage(source)) {
-            candidate = null;
-            host.bumpGeneration();
-            imageDragIntent = false;
-            if (!pending.ocrComplete) host.cancelActiveOcr();
-            host.blocker().stopAsync();
-            rejectScreenCapture(source, "ocr_region_drag");
-            return;
-        }
-        android.graphics.Bitmap bitmap = pending.ocrComplete
-                ? source.bitmap
-                : source.bitmap.copy(android.graphics.Bitmap.Config.ARGB_8888, false);
-        candidate = null;
-        host.bumpGeneration();
-        imageDragIntent = false;
-        if (!pending.ocrComplete) host.cancelActiveOcr();
-        host.blocker().stopAsync();
-        if (bitmap == null) {
-            OperationTrace.event(pending.operation, "wechat_drag", "image_copy_failed");
-            if (pending.ocrComplete) host.recycleContent(source);
-            host.controller().endPressPipeline(host.downTime());
-            host.showFailure("无法准备拖拽图片");
-            return;
-        }
-        CapturedContent image = CapturedContent.image(bitmap, source.sourcePackage,
-                source.sourceBounds, true);
-        DragShareLog.i(TAG, "WeChat press moved to image drag elapsedFromConfirmMs="
-                + (SystemClock.uptimeMillis() - host.confirmedAt()));
-        host.controller().showContentForPressTakeover(image, x, y, host.settings(), host.downTime());
     }
 
     private void deliverText() {
