@@ -215,22 +215,4 @@ final class WeChatPressFlow {
         }
     }
 
-    static boolean isUnverifiedImage(CapturedContent content) {
-        return content != null && "com.tencent.mm".equals(content.sourcePackage)
-                && content.isImage()
-                && content.imageOrigin != CapturedContent.ImageOrigin.PORTAL_MEDIA
-                && !content.isWeChatThumbnail();
-    }
-
-    void rejectScreenCapture(CapturedContent content, String stage) {
-        OperationTrace.event(host.operationId(), "image_drag", "rejected_" + stage + "_"
-                + (content == null ? "unknown" : content.imageOrigin.name().toLowerCase(java.util.Locale.ROOT)));
-        DragShareLog.i(TAG, "WeChat image drag rejected source="
-                + (content == null ? "unknown" : content.imageOrigin.name())
-                + " stage=" + stage);
-        host.recycleContent(content);
-        host.showFailure("没有取得原图，也未能识别图片边界，请通过传送门选图");
-        host.controller().endPressPipeline(host.downTime());
-        host.blocker().stopAsync();
-    }
 }

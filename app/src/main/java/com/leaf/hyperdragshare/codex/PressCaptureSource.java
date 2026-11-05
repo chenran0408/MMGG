@@ -317,7 +317,7 @@ final class PressCaptureSource implements RootTouchSource.ContactListener, WeCha
                 && Math.hypot(x - downX, y - downY) > DIRECT_DRAG_DISTANCE_DP
                         * context.getResources().getDisplayMetrics().density) {
             directDragArmed = true;
-            if (cached != null && cached.isImage() && !released) display();
+            if (cached != null && !released) display();
             else controller.takeoverHoldingImagePreview(latestX, latestY, downTime);
         }
         if (action == MotionEvent.ACTION_UP) weChatPress.finishPress();
@@ -475,18 +475,12 @@ final class PressCaptureSource implements RootTouchSource.ContactListener, WeCha
     }
 
     /** Prefer the host's actual text/image result over the same press's approximate OCR region. */
-    boolean acceptWeChatPortalContent(CapturedContent content) {
+    boolean acceptPortalContent(CapturedContent content) {
         boolean ownsCurrentPress = Looper.myLooper() == Looper.getMainLooper()
                 && !stopped && pointerDown && detector.isActive()
                 && controller.canContinuePress(downTime);
-        boolean isWeChatSource = content != null
-                && "com.tencent.mm".equals(content.sourcePackage);
         if (!ownsCurrentPress) {
             OperationTrace.event(operationId(), "portal_capture", "rejected_press_not_owned");
-            return false;
-        }
-        if (!isWeChatSource) {
-            OperationTrace.event(operationId(), "portal_capture", "rejected_other_source");
             return false;
         }
         if (!settings.isSharingEnabled(content.isImage())) {
@@ -500,7 +494,7 @@ final class PressCaptureSource implements RootTouchSource.ContactListener, WeCha
             // a second text result, and keep its screenshot available for an image drag.
             return true;
         }
-        boolean imageTakeover = content.isImage() && isWeChatSource && ownsCurrentPress
+        boolean imageTakeover = content.isImage() && ownsCurrentPress
                 && (!twoFingerModeForGesture || detector.isFired())
                 && (pending != null || controller.isActive());
         if (imageTakeover && pending != null && pending.textWindowAccepted
@@ -518,7 +512,7 @@ final class PressCaptureSource implements RootTouchSource.ContactListener, WeCha
         if (!twoFingerModeForGesture || detector.isFired()) {
             controller.notePressPipeline(downTime);
         }
-        DragShareLog.i(TAG, "press accepted native portal source=com.tencent.mm kind="
+        DragShareLog.i(TAG, "press accepted native portal kind="
                 + (content.isImage() ? "image" : "text"));
         if (imageTakeover) {
             cached = null;
@@ -573,9 +567,8 @@ final class PressCaptureSource implements RootTouchSource.ContactListener, WeCha
     private void showHoldingImagePreviewIfReady() {
         if (released || directDragArmed || twoFingerModeForGesture) return;
         CapturedContent content = cached;
-        if (content == null || !content.isImage()) return;
-        if (WeChatPressFlow.isUnverifiedImage(content)) return;
-        if (!settings.isSharingEnabled(true)) return;
+        if (content == null) return;
+        if (!settings.isSharingEnabled(content.isImage())) return;
         cached = null;
         controller.showPendingImagePreview(content, controller.latestPointerX(),
                 controller.latestPointerY(), settings, downTime, true);
@@ -647,11 +640,10 @@ final class PressCaptureSource implements RootTouchSource.ContactListener, WeCha
                         if (releaseMode != PressReleaseMode.Mode.NONE) display();
                         else cancelGesture();
                     } else if (directDragArmed && detector.isFired()
-                            && !twoFingerModeForGesture && content.isImage()) {
+                            && !twoFingerModeForGesture) {
                         display();
                     } else if (detector.isFired() && !twoFingerModeForGesture && !directDragArmed
-                            && content.isImage() && !WeChatPressFlow.isUnverifiedImage(content)
-                            && settings.isSharingEnabled(true)) {
+                            && settings.isSharingEnabled(content.isImage())) {
                         cached = null;
                         controller.showPendingImagePreview(content, controller.latestPointerX(),
                                 controller.latestPointerY(), settings, requestDownTime, true);
@@ -711,6 +703,13 @@ final class PressCaptureSource implements RootTouchSource.ContactListener, WeCha
     }
 
     private void openText(long request, CapturedContent content) {
+        if (releaseMode == PressReleaseMode.Mode.DRAG_PREVIEW
+                || (directDragArmed && !released && !twoFingerModeForGesture)) {
+            OperationTrace.event(operationId(), "text_decision", "drag_preview");
+            controller.showPendingImagePreview(content, controller.latestPointerX(),
+                    controller.latestPointerY(), settings, downTime, false);
+            return;
+        }
         String operation = operationId();
         Bundle text = new Bundle();
         text.putString("text", content.text);
@@ -759,25 +758,15 @@ final class PressCaptureSource implements RootTouchSource.ContactListener, WeCha
 
     private void openImage(long request, CapturedContent content) {
         if (pointerDown && detector.isFired() && !twoFingerModeForGesture && directDragArmed) {
-            if (WeChatPressFlow.isUnverifiedImage(content)) {
-                // The confirmed hold already started moving, but this press only
-                // produced a screenshot: keep the no-fake-original rule.
-                weChatPress.rejectScreenCapture(content, "direct_drag");
-                return;
-            }
             OperationTrace.event(operationId(), "image_decision", "direct_drag_takeover");
             blocker.stopAsync();
             controller.showContentForPressTakeover(content, controller.latestPointerX(),
                     controller.latestPointerY(), settings, downTime);
             return;
         }
-        if (content.pressOcrRegion && "com.tencent.mm".equals(content.sourcePackage)) {
+        if (content.pressOcrRegion) {
             OperationTrace.event(operationId(), "image_decision", "wechat_ocr_region");
             weChatPress.startOcrDirect(request, content);
-            return;
-        }
-        if (WeChatPressFlow.isUnverifiedImage(content)) {
-            weChatPress.rejectScreenCapture(content, "image_candidate");
             return;
         }
         if (!pointerDown && !released) {

@@ -368,7 +368,7 @@ public final class TwoFingerPressTest {
 
             CapturedContent portalImage = CapturedContent.portalMediaImage(
                     bitmap, "com.tencent.mm", new Rect(0, 0, 2, 2));
-            boolean handled = source.acceptWeChatPortalContent(portalImage);
+            boolean handled = source.acceptPortalContent(portalImage);
             ShadowLooper.shadowMainLooper().idle();
 
             assertTrue("MMGG must handle the owned early callback to prevent host fallback", handled);
@@ -419,7 +419,7 @@ public final class TwoFingerPressTest {
             setWeChatCandidate(source, pending);
             CapturedContent portalImage = CapturedContent.portalMediaImage(
                     bitmap, "com.tencent.mm", new Rect(0, 0, 2, 2));
-            assertTrue(source.acceptWeChatPortalContent(portalImage));
+            assertTrue(source.acceptPortalContent(portalImage));
             ShadowLooper.shadowMainLooper().idle();
 
             assertTrue("the image should be cached while the two-finger timer is pending",
@@ -576,12 +576,10 @@ public final class TwoFingerPressTest {
             new Handler(Looper.getMainLooper()).post(() ->
                     activeSource.onPointerEvent(MotionEvent.ACTION_UP, 20f, 30f, downTime + 701L));
             ShadowLooper.shadowMainLooper().idle();
-            assertNotNull(provider.bigBangRequest);
-            assertEquals("selected text", provider.bigBangRequest.getString("text"));
-            assertTrue("single-finger release opens the drag-preview flow",
-                    provider.bigBangRequest.getBoolean("drag_preview"));
-            assertEquals("confirmed single-finger release opens BigBang exactly once",
-                    1, provider.bigBangOpenCount);
+            assertNull("single-finger text release no longer opens segmentation",
+                    provider.bigBangRequest);
+            assertTrue("single-finger text release keeps a visible drag preview",
+                    controller.hasPendingImagePreview());
         } finally {
             if (source != null) source.stop();
             controller.destroy();

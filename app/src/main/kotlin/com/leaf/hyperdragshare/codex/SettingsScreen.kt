@@ -920,9 +920,9 @@ private fun portalSettingEntries(
         )
     }
 
-    row("drag.twoFingerLongPressTimeout", "双指长按时长", SettingModule.PORTAL, "拖拽触摸与滚动",
-        summary = "单指长按进入拖拽，双指按住达到此时长后打开分词",
-        keywords = "双指 长按 时间 毫秒 分词 大爆炸 触发 拖拽 单指",
+    row("drag.twoFingerLongPressTimeout", "双指分词确认时间", SettingModule.PORTAL, "触发与识别",
+        summary = "第二指加入后开始计时；达到此时长后打开分词与大爆炸。单指使用独立确认时间，两种触发同时可用",
+        keywords = "双指 长按 时间 毫秒 分词 大爆炸 触发 拖拽 单指 第二指",
     ) { title, summary, enabled ->
         SliderPreference(
             title = title,

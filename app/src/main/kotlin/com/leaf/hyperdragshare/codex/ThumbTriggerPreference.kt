@@ -45,19 +45,19 @@ internal fun thumbTriggerEntries(context: Context,
         portalInjection = ModuleActivation.injectionStatus(context)
         portalRoot = ModuleActivation.portalRootStatus(context)
     }
-    val triggerTitle = "按住取词与识字"
-    val durationTitle = "按住确认时间"
+    val triggerTitle = "按住取词、分词与拖拽"
+    val durationTitle = "单指拖拽确认时间"
     val tileTitle = "添加“点取内容”磁贴"
-    val keywords = "按压 长按 evdev 点取 识字"
+    val keywords = "按压 长按 evdev 点取 识字 分词 双指 单指 拖拽"
     val triggerSummary = when {
         portalInjection == ModuleActivation.ReportedStatus.UNAVAILABLE -> "传送门需要重载；可先保存开关"
         portalInjection == ModuleActivation.ReportedStatus.UNKNOWN -> "传送门状态待确认；可先保存开关，再查看运行诊断"
         portalRoot == ModuleActivation.ReportedStatus.UNAVAILABLE -> "传送门 Root 检查未通过；已授权时请查看运行诊断"
         portalRoot == ModuleActivation.ReportedStatus.UNKNOWN -> "传送门 Root 暂时无法确认；可先保存开关，再查看运行诊断"
-        else -> "静止按住取词，移动取消"
+        else -> "单指长按进入文字或图片拖拽；双指长按打开分词与大爆炸"
     }
     val durationEnabled = thumb.enabled
-    val durationPrerequisite = if (durationEnabled) null else "请先开启按住取词与识字"
+    val durationPrerequisite = if (durationEnabled) null else "请先开启按住取词、分词与拖拽"
     val tileSummary = tileMessage ?: "从控制中心点取文字或图片"
 
     return listOf(
@@ -98,14 +98,14 @@ internal fun thumbTriggerEntries(context: Context,
             title = durationTitle,
             module = SettingModule.PORTAL,
             group = "触发与识别",
-            summary = "250–3000 ms，默认 600 ms；时间越短越容易误触",
+            summary = "单指按住达到此时长后进入拖拽；双指使用独立时长。范围 250–3000 ms，默认 600 ms",
             keywords = keywords,
             enabled = durationEnabled,
             prerequisite = durationPrerequisite,
             content = { enabled ->
                 SliderPreference(
                     title = durationTitle,
-                    summary = "250–3000 ms，默认 600 ms；时间越短越容易误触",
+                    summary = "单指按住达到此时长后进入拖拽；双指使用独立时长。范围 250–3000 ms，默认 600 ms",
                     enabled = enabled && durationEnabled,
                     value = duration,
                     valueText = "${duration.roundToInt()} ms",

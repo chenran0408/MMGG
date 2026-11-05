@@ -695,6 +695,19 @@ public final class DragShareSettingsTest {
     }
 
     @Test
+    public void singleAndTwoFingerConfirmationTimesRemainIndependent() {
+        DragShareSettings settings = DragShareSettings.defaults().toBuilder()
+                .setAccessibilityLongPressTimeoutMillis(900)
+                .setTwoFingerLongPressTimeoutMillis(1400)
+                .build();
+
+        DragShareSettings restored = DragShareSettings.fromBundle(settings.toBundle());
+
+        assertEquals(900, restored.resolvePressConfirmationTimeoutMillis());
+        assertEquals(1400, restored.resolveTwoFingerPressConfirmationTimeoutMillis());
+    }
+
+    @Test
     public void customPressConfirmationClampsToExpandedEndpoints() {
         Bundle below = new Bundle();
         below.putInt("accessibility_long_press_timeout_millis", 120);

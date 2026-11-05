@@ -404,7 +404,7 @@ final class DragShareController {
         });
     }
 
-    /** Holds an image as a bounded, touchable preview until the user starts a second drag. */
+    /** Holds a bounded preview until the user starts the drag. */
     void showPendingImagePreview(CapturedContent content, float x, float y,
                                  DragShareSettings loadedSettings, long originDownTime) {
         showPendingImagePreview(content, x, y, loadedSettings, originDownTime, false);
@@ -418,7 +418,7 @@ final class DragShareController {
     void showPendingImagePreview(CapturedContent content, float x, float y,
                                  DragShareSettings loadedSettings, long originDownTime,
                                  boolean whileHolding) {
-        if (content == null || !content.isImage()) return;
+        if (content == null) return;
         runOnMain(() -> {
             boolean ownsRootRelease = isRootPressCurrentOrReleased(originDownTime);
             if (!ownsRootRelease) {

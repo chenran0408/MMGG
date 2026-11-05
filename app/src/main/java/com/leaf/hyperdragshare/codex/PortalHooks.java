@@ -288,7 +288,7 @@ final class PortalHooks {
                 if (current != null) {
                     PressCaptureSource press = thumbCaptureSource;
                     CapturedContent content = PortalContentCaptureSource.capture(param.thisObject, settings);
-                    if (content != null && press != null && press.acceptWeChatPortalContent(content)) {
+                    if (content != null && press != null && press.acceptPortalContent(content)) {
                         return;
                     }
                     if (current.isAwaitingRootRelease()) {

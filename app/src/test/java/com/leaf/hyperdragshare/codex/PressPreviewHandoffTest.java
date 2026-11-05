@@ -192,7 +192,7 @@ public final class PressPreviewHandoffTest {
                 bitmap, "com.tencent.mm", new Rect(0, 0, 2, 2));
 
         try {
-            assertTrue(source.acceptWeChatPortalContent(content));
+            assertTrue(source.acceptPortalContent(content));
             assertTrue((boolean) field(rootSession, "cancelled").get(rootSession));
         } finally {
             source.stop();
@@ -286,7 +286,7 @@ public final class PressPreviewHandoffTest {
                 portalBitmap, "com.tencent.mm", new Rect(0, 0, 3, 3));
 
         try {
-            assertTrue(source.acceptWeChatPortalContent(portal));
+            assertTrue(source.acceptPortalContent(portal));
             ShadowLooper.shadowMainLooper().idle();
 
             assertTrue((boolean) field(thumbnailSession, "cancelled").get(thumbnailSession));
@@ -327,7 +327,7 @@ public final class PressPreviewHandoffTest {
                 portalImage, "com.tencent.mm", new Rect(10, 20, 200, 220));
 
         try {
-            assertTrue(source.acceptWeChatPortalContent(actualPortalImage));
+            assertTrue(source.acceptPortalContent(actualPortalImage));
             ShadowLooper.shadowMainLooper().idle();
 
             Object session = field(controller, "session").get(controller);
@@ -514,37 +514,6 @@ public final class PressPreviewHandoffTest {
         }
     }
 
-    @Test public void accessibilityImageScreenshotIsNotPresentedAsAWeChatOriginal() throws Exception {
-        DragShareLog.configure(DragShareSettings.defaults());
-        ShadowLog.clear();
-        DragShareController controller = controller();
-        down(controller, 100L);
-        PressCaptureSource source = new PressCaptureSource(
-                RuntimeEnvironment.getApplication(), null, controller, DragShareSettings.defaults());
-        Bitmap screenshot = Bitmap.createBitmap(3, 3, Bitmap.Config.ARGB_8888);
-        CapturedContent candidate = CapturedContent.screenCaptureImage(
-                screenshot, "com.tencent.mm", new Rect(10, 20, 300, 500));
-
-        try {
-            java.lang.reflect.Method openImage = PressCaptureSource.class.getDeclaredMethod(
-                    "openImage", long.class, CapturedContent.class);
-            openImage.setAccessible(true);
-            openImage.invoke(source, 8L, candidate);
-            ShadowLooper.shadowMainLooper().idle();
-
-            assertNull(field(controller, "session").get(controller));
-            assertTrue(screenshot.isRecycled());
-            assertTrue(operationMessages().contains(
-                    "stage=image_drag outcome=rejected_image_candidate_screen_capture"));
-            assertFalse(operationMessages().contains("com.tencent.mm"));
-        } finally {
-            source.stop();
-            controller.destroy();
-            if (!screenshot.isRecycled()) screenshot.recycle();
-            ShadowLooper.shadowMainLooper().idle();
-        }
-    }
-
     @Test public void unclassifiedWeChatImageIsNotPresentedAsAnOriginal() throws Exception {
         DragShareController controller = controller();
         down(controller, 100L);
@@ -618,7 +587,7 @@ public final class PressPreviewHandoffTest {
                 bitmap, "com.tencent.mm", new Rect(0, 0, 2, 2), true);
 
         try {
-            assertFalse(source.acceptWeChatPortalContent(content));
+            assertFalse(source.acceptPortalContent(content));
             assertTrue(controller.canContinuePress(1000L));
         } finally {
             source.stop();

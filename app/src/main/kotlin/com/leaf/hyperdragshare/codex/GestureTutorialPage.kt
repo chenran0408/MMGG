@@ -83,7 +83,7 @@ internal fun GestureTutorialPage(onBack: () -> Unit) {
                         summary = if (mode == 0) {
                             "长按后松手会打开分词面板。选中一个或多个词，抓住面板底部的文字预览并移动即可拖出。"
                         } else {
-                            "长按图片达到两倍时长后松手，图片预览会保留。再次按住预览并移动即可拖出。"
+                            "单指长按图片确认后会显示待拖预览。继续移动即可开始拖出；也可以松手后再次按住预览移动。"
                         },
                     )
                     BasicComponent(
