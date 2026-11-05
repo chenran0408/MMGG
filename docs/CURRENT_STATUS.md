@@ -1,6 +1,6 @@
 # MMGG 当前状态与接手入口
 
-核对日期：2026-11-05。本文只维护当前事实；历史批次原文已归档到 `docs/archive/2026-10-30/CURRENT_STATUS_2026-10-30_before_compaction.md`，任务级证据仍保留在各任务目录。
+核对日期：2026-11-06。本文只维护当前事实；历史批次原文已归档到 `docs/archive/2026-10-30/CURRENT_STATUS_2026-10-30_before_compaction.md`，任务级证据仍保留在各任务目录。
 
 ## 工作线
 
@@ -19,7 +19,13 @@
 - Activation 首页与诊断页共用 `ActivationPresentation`；`UNKNOWN` 不转换为权限缺失。
 - 跨进程追踪只报告最后一个可观察阶段。`startActivity` 返回、拖放接受和 Provider descriptor 打开都不代表接收方已经读取或发送。
 
-## 最新验证
+### 2026-11-06 分词面板精简与 Beta42 交付
+
+- 分词面板移除重复的“全文操作/选中内容操作”状态标题；无拖拽预览或选区时不显示多余分隔线。
+- 窗口外观弹窗直接使用“窗口外观”标题，去掉重复的小标题；识别提示改为通用“正在识别文字…”。
+- 源码提交：`12b47b0`、`b6664a5`、`4fcc79b`；候选 tag：`delivered/mmgg-1.7.219-beta.42`。
+- `assembleBeta`（R8、资源收缩）通过；版本 `1.7.219-beta.42` / versionCode `284`；APK SHA-256 `4C3DF565B74D41785B89AEEB3F8030E626271E18DEEACDA516991433EFB0D972`，v2 签名通过，Android Debug 证书。
+- GitHub Beta 预发布：[MMGG 1.7.219-beta.42](https://github.com/chenran0408/MMGG/releases/tag/delivered/mmgg-1.7.219-beta.42)。本轮未执行设备验收。`r`n`r`n## 最新验证
 
 ### 2026-11-05 工程化解耦轮（E1–E6）
 
@@ -45,7 +51,7 @@
 - `PressPreviewHandoffTest` 删除 3 个 `dragCandidate` 用例，新增"松手开分词窗口（drag_preview=true、截图回收、候选清空）"与"按住直接接管建立会话"两个行为测试。
 - 全量验证：893 项单测 0 失败、Lint 0 errors/190 warnings/2 hints、assembleDebug、assembleBeta（R8）通过。未操作设备；微信按住直接拖拽、非微信应用直接拖拽与真实触摸窗口路由待实机验证。
 
-当前开发源码版本为 `1.7.219-beta.39` / versionCode `281`；Beta38 日志导出增量已提交为 `d1f35d0`，此前 Beta37 交付的功能提交为 `5bf92fe`、`4b7257a`。组合触发及模式移除后全量验证：876 项单测 0 失败、Lint 0 errors/190 warnings、assembleDebug 通过；`d9d69ba` 清理恒真双指资格状态，`161a171` 固定单指=拖拽、双指=分词并删除模式选择。
+当前开发源码版本为 `1.7.219-beta.42` / versionCode `284`；Beta38 日志导出增量已提交为 `d1f35d0`，此前 Beta37 交付的功能提交为 `5bf92fe`、`4b7257a`。组合触发及模式移除后全量验证：876 项单测 0 失败、Lint 0 errors/190 warnings、assembleDebug 通过；`d9d69ba` 清理恒真双指资格状态，`161a171` 固定单指=拖拽、双指=分词并删除模式选择。
 
 ### 2026-11-02 诊断打码红线与 FanRuntime 拆分
 
