@@ -254,7 +254,7 @@ final class FanRuntime {
         fullscreenLauncher = new FullscreenAppLauncher(context);
         moreAppsTarget = RuntimeTarget.moreApps("更多应用",
                 context.getDrawable(android.R.drawable.ic_menu_more));
-        moreAppsOverlay = new MoreAppsOverlayController(context, mainHandler, fullscreenLauncher);
+        moreAppsOverlay = new MoreAppsOverlayController(context, mainHandler);
         triggerCapture = new FanTriggerCapture(context, mainHandler, new FanTriggerCapture.Listener() {
 
             @Override
@@ -1038,7 +1038,16 @@ final class FanRuntime {
                         outsideCapture.remove();
                         outsideGestures.clearAll();
                         resetFan(false);
-                        moreAppsOverlay.show();
+                        final GestureConfig launchConfig = config;
+                        final boolean fullscreenLaunch = launchConfig.bottomFullscreenFor(isLandscape());
+                        moreAppsOverlay.show(moreTarget -> {
+                            if (fullscreenLaunch) {
+                                launchFullscreenTarget(moreTarget, false);
+                            } else {
+                                freeform.launch(moreTarget, launchConfig, this::refreshOutsideCapture);
+                                refreshOutsideCaptureAfterLaunch();
+                            }
+                        });
                         return;
                     }
                     boolean fullscreen = config.bottomFullscreenFor(isLandscape());
@@ -1107,7 +1116,17 @@ final class FanRuntime {
                 if (target.isMoreApps()) {
                     honeycombOverlay.dismiss();
                     resetFan(false);
-                    moreAppsOverlay.show();
+                    final GestureConfig launchConfig = config;
+                    final boolean freeformLaunch = launchConfig.bottomHoneycombFreeformFor(isLandscape());
+                    final boolean centeredFullscreen = launchConfig.honeycombCenteredSystemAnimation;
+                    moreAppsOverlay.show(moreTarget -> {
+                        if (freeformLaunch) {
+                            freeform.launch(moreTarget, launchConfig, FanRuntime.this::refreshOutsideCapture);
+                            refreshOutsideCaptureAfterLaunch();
+                        } else {
+                            launchFullscreenTarget(moreTarget, centeredFullscreen);
+                        }
+                    });
                     return;
                 }
                 if (config.bottomHoneycombFreeformFor(isLandscape())) {

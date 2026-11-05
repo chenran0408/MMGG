@@ -46,21 +46,21 @@ final class MoreAppsOverlayController {
     private final Context context;
     private final Handler handler;
     private final WindowManager windowManager;
-    private final FullscreenAppLauncher launcher;
     private final ArrayList<RuntimeTarget> recent = new ArrayList<>();
     private View attached;
+    private LaunchAction launchAction;
 
-    MoreAppsOverlayController(Context context, Handler handler, FullscreenAppLauncher launcher) {
+    MoreAppsOverlayController(Context context, Handler handler) {
         this.context = context;
         this.handler = handler;
         this.windowManager = context.getSystemService(WindowManager.class);
-        this.launcher = launcher;
     }
 
     boolean isVisible() { return attached != null; }
 
-    void show() {
+    void show(LaunchAction action) {
         removeNow();
+        launchAction = action;
         if (windowManager == null) return;
         final FrameLayout root = new FrameLayout(context);
         root.setBackgroundColor(0x99000000);
@@ -115,8 +115,9 @@ final class MoreAppsOverlayController {
             Entry entry = adapter.getItem(position);
             if (entry == null) return;
             addRecent(entry.target);
+            LaunchAction selectedAction = launchAction;
             removeNow();
-            launcher.launch(entry.target, true);
+            if (selectedAction != null) selectedAction.launch(entry.target);
         });
         TextWatcher filter = new TextWatcher() {
             @Override public void beforeTextChanged(CharSequence s, int start, int count, int after) { }
@@ -157,9 +158,14 @@ final class MoreAppsOverlayController {
     void removeNow() {
         View view = attached;
         attached = null;
+        launchAction = null;
         if (view == null || windowManager == null) return;
         try { windowManager.removeViewImmediate(view); }
         catch (Throwable error) { Log.e("Cannot remove more-apps overlay", error); }
+    }
+
+    interface LaunchAction {
+        void launch(RuntimeTarget target);
     }
 
     private ArrayList<Entry> loadEntries() {
