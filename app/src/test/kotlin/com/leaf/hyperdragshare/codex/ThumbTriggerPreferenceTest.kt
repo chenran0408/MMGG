@@ -61,7 +61,7 @@ class ThumbTriggerPreferenceTest {
         report(ModuleActivation.RootAccessOutcome.DENIED)
         await { entries.first().summary.contains("Root") }
         report(ModuleActivation.RootAccessOutcome.GRANTED)
-        await { entries.first().summary == "静止按住取词，移动取消" }
+        await { entries.first().summary.contains("单指长按") && entries.first().summary.contains("双指长按") }
         assertNull(entries.first().prerequisite)
         report(ModuleActivation.RootAccessOutcome.UNKNOWN)
         await { entries.first().summary.contains("暂时无法确认") }
