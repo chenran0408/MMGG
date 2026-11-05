@@ -9,11 +9,24 @@ import android.os.Parcelable;
 
 import java.net.URI;
 import java.util.Map;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 
 import de.robv.android.xposed.XposedHelpers;
 
 /** The only adapter allowed to read Taplus' private fields and methods. */
 final class PortalContentCaptureSource {
+    private static final long ORIGINAL_IMAGE_WAIT_MS = 250L;
+    private static final ExecutorService ORIGINAL_IMAGE_EXECUTOR =
+            Executors.newCachedThreadPool(runnable -> {
+                Thread thread = new Thread(runnable, "dragshare-portal-image");
+                thread.setDaemon(true);
+                return thread;
+            });
+
     private PortalContentCaptureSource() {}
 
     static String clipboardCardText(Class<?> serviceClass) {
@@ -235,6 +248,25 @@ final class PortalContentCaptureSource {
     private static Bitmap loadPortalImage(Object taplusService, String url) {
         if (!(taplusService instanceof android.content.Context)) return null;
         String normalized = url.startsWith("//") ? "http:" + url : url;
+        Future<Bitmap> request = ORIGINAL_IMAGE_EXECUTOR.submit(
+                () -> loadPortalImageUnbounded(taplusService, normalized));
+        try {
+            return request.get(ORIGINAL_IMAGE_WAIT_MS, TimeUnit.MILLISECONDS);
+        } catch (TimeoutException timeout) {
+            request.cancel(true);
+            DragShareLog.i("DragShare/PortalCapture",
+                    "Portal original image timed out after " + ORIGINAL_IMAGE_WAIT_MS + "ms");
+            return null;
+        } catch (InterruptedException interrupted) {
+            request.cancel(true);
+            Thread.currentThread().interrupt();
+            return null;
+        } catch (java.util.concurrent.ExecutionException error) {
+            return null;
+        }
+    }
+
+    private static Bitmap loadPortalImageUnbounded(Object taplusService, String normalized) {
         try {
             Class<?> iconManager = XposedHelpers.findClassIfExists(
                     "com.miui.contentextension.utils.IconManager",

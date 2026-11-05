@@ -122,14 +122,6 @@
         </activity>
 
         <activity
-            android:name=".SearchOverlayActivity"
-            android:excludeFromRecents="true"
-            android:exported="false"
-            android:launchMode="singleTop"
-            android:taskAffinity="com.leaf.hyperdragshare.codex.overlay"
-            android:theme="@style/Theme.DragShare.BigBangOverlay" />
-
-        <activity
             android:name=".ScreenOcrActivity"
             android:excludeFromRecents="true"
             android:exported="false"
