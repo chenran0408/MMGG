@@ -37,6 +37,14 @@
 - `PressTriggerDetector` 删除候选等待态 API；`PressReleaseMode.classify(duration)` 替换为 `resolve(twoFinger)`。`TwoFingerPressTest` 已按组合语义重写（升级竞态、不退化、双指/单指 drag_preview 断言）；定向触发器/两指/RootTouchSource/PortalPressSettings/预览交接测试通过。全量回归与构建见本轮任务记录。
 - 未操作设备；双指升级竞态、混合触发与真实 HyperOS 表现待实机验证。历史“T..2T/>=2T 分流”描述（2026-10-31 段）已被本节替代。
 
+### 2026-11-05 单指按住直接拖拽
+
+- 组合触发落地后，微信专用拖拽接管链失去存在理由，已删除：`WeChatPressFlow.dragCandidate`、`imageDragIntent` 标记与 Host `bumpGeneration()`；`PressCaptureSource` 中单指/双指 MOVE 上的 36dp 微信接管调用点一并移除。保留微信 OCR 松手交付、Portal 原图接管、缩略图来源标记与未验证截屏拒绝（`isUnverifiedImage`），消息文案未改。
+- 替代行为对所有应用一致：单指确认（fire）后移动超过 36dp 即武装 `directDragArmed`；若已持有图片内容且来源合规，按住期间直接经 `showContentForPressTakeover` 建立拖拽会话，无需松手后二次按住。捕获回调迟到返回时同样检查该状态。文字保持松手开分词面板；双指路径不变；图片待拖预览保留为松手不动的兜底与拖拽取消后的恢复路径。
+- 微信 OCR 区域截屏在按住直接拖拽分支仍被拒绝（`direct_drag` 阶段），不把截屏冒充原图。
+- `PressPreviewHandoffTest` 删除 3 个 `dragCandidate` 用例，新增"松手开分词窗口（drag_preview=true、截图回收、候选清空）"与"按住直接接管建立会话"两个行为测试。
+- 全量验证：893 项单测 0 失败、Lint 0 errors/190 warnings/2 hints、assembleDebug、assembleBeta（R8）通过。未操作设备；微信按住直接拖拽、非微信应用直接拖拽与真实触摸窗口路由待实机验证。
+
 当前开发源码版本为 `1.7.219-beta.39` / versionCode `281`；Beta38 日志导出增量已提交为 `d1f35d0`，此前 Beta37 交付的功能提交为 `5bf92fe`、`4b7257a`。组合触发及模式移除后全量验证：876 项单测 0 失败、Lint 0 errors/190 warnings、assembleDebug 通过；`d9d69ba` 清理恒真双指资格状态，`161a171` 固定单指=拖拽、双指=分词并删除模式选择。
 
 ### 2026-11-02 诊断打码红线与 FanRuntime 拆分
