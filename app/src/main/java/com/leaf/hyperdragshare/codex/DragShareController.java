@@ -156,6 +156,7 @@ final class DragShareController {
     // the main thread. Keep its window suppressed during that small handoff.
     private volatile boolean pendingPortalHostFloatWindowSuppression;
     private volatile CapturedContent pendingImagePreview;
+    private boolean pendingImagePreviewWhileHolding;
     private DragShareSettings pendingImageSettings;
     private long pendingImageOriginDownTime = -1L;
     private boolean activeImageDragStartedFromPreview;
@@ -406,6 +407,17 @@ final class DragShareController {
     /** Holds an image as a bounded, touchable preview until the user starts a second drag. */
     void showPendingImagePreview(CapturedContent content, float x, float y,
                                  DragShareSettings loadedSettings, long originDownTime) {
+        showPendingImagePreview(content, x, y, loadedSettings, originDownTime, false);
+    }
+
+    /**
+     * Same preview, shown while the Root press is still holding. The window stays
+     * NOT_TOUCHABLE so the live host touch stream is undisturbed until the user
+     * either starts moving (direct takeover) or lifts (interactive pending preview).
+     */
+    void showPendingImagePreview(CapturedContent content, float x, float y,
+                                 DragShareSettings loadedSettings, long originDownTime,
+                                 boolean whileHolding) {
         if (content == null || !content.isImage()) return;
         runOnMain(() -> {
             boolean ownsRootRelease = isRootPressCurrentOrReleased(originDownTime);
@@ -423,14 +435,19 @@ final class DragShareController {
             active = false;
             settings = loadedSettings == null ? DragShareSettings.defaults() : loadedSettings;
             pendingImagePreview = content;
+            pendingImagePreviewWhileHolding = whileHolding;
             pendingImageSettings = settings;
             pendingImageOriginDownTime = originDownTime;
             palette = OverlayColors.from(settings.isDarkTheme(context));
             refreshDisplayGeometry();
             try {
                 createPreview(content);
-                previewParams.flags &= ~WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE;
-                previewView.setOnTouchListener((view, event) -> true);
+                if (!whileHolding) {
+                    previewParams.flags &= ~WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE;
+                    previewView.setOnTouchListener((view, event) -> true);
+                } else {
+                    previewView.setOnTouchListener(null);
+                }
                 if (isModernStyle()) modernPreviewWindow.show();
                 else windowManager.addView(previewView, previewParams);
                 // The bounded preview consumes only its own View stream. Root remains the
@@ -440,8 +457,13 @@ final class DragShareController {
                         ? y : Math.max(topInset + dp(80), screenHeight * 0.32f);
                 updatePreviewPosition(initialX, initialY);
                 startPreviewEnterAnimation();
-                OperationTrace.event(OperationTrace.id("press", originDownTime),
-                        "preview", "pending_image_shown");
+                if (whileHolding) {
+                    OperationTrace.event(OperationTrace.id("press", originDownTime),
+                            "preview", "hold_image_preview_shown");
+                } else {
+                    OperationTrace.event(OperationTrace.id("press", originDownTime),
+                            "preview", "pending_image_shown");
+                }
             } catch (RuntimeException error) {
                 dismissPendingImagePreview(true);
                 failOverlay("图片预览窗口创建失败", error);
@@ -466,6 +488,49 @@ final class DragShareController {
         handleMotionOnMain(MotionEvent.ACTION_MOVE, x, y, eventTime, "root", null);
     }
 
+    /** Converts the live-hold preview into the active drag session when the user starts moving. */
+    void takeoverHoldingImagePreview(float x, float y, long pressDownTime) {
+        runOnMain(() -> {
+            CapturedContent payload = pendingImagePreview;
+            if (payload == null || !pendingImagePreviewWhileHolding
+                    || pendingImageOriginDownTime != pressDownTime) return;
+            DragShareSettings loadedSettings = pendingImageSettings;
+            dismissPendingImagePreview(false);
+            showContentForPressTakeover(payload, x, y, loadedSettings, pressDownTime);
+        });
+    }
+
+    /** Lets the live-hold preview keep working as the interactive pending preview after release. */
+    void releaseHoldingImagePreview(long pressDownTime) {
+        runOnMain(() -> {
+            if (!pendingImagePreviewWhileHolding
+                    || pendingImageOriginDownTime != pressDownTime) return;
+            pendingImagePreviewWhileHolding = false;
+            if (previewParams != null) {
+                previewParams.flags &= ~WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE;
+            }
+            if (previewView != null) previewView.setOnTouchListener((view, event) -> true);
+            if (modernPreviewWindow != null) {
+                modernPreviewWindow.updateLayout();
+            } else if (previewView != null && previewParams != null) {
+                try {
+                    windowManager.updateViewLayout(previewView, previewParams);
+                } catch (RuntimeException ignored) { /* Preview may already be gone. */ }
+            }
+            OperationTrace.event(OperationTrace.id("press", pressDownTime),
+                    "preview", "hold_preview_interactive");
+        });
+    }
+
+    /** Drops the live-hold preview when the press pipeline is cancelled before release. */
+    void cancelHoldingImagePreview(long pressDownTime) {
+        runOnMain(() -> {
+            if (!pendingImagePreviewWhileHolding
+                    || pendingImageOriginDownTime != pressDownTime) return;
+            dismissPendingImagePreview(true);
+        });
+    }
+
     private boolean isRootPressCurrentOrReleased(long pressDownTime) {
         if (pressDownTime < 0L) return false;
         if (rootDownTime >= 0L) {
@@ -477,6 +542,7 @@ final class DragShareController {
     private void dismissPendingImagePreview(boolean recyclePayload) {
         CapturedContent payload = pendingImagePreview;
         pendingImagePreview = null;
+        pendingImagePreviewWhileHolding = false;
         pendingImageSettings = null;
         pendingImageOriginDownTime = -1L;
         pendingPreviewGesture.reset();
@@ -519,6 +585,11 @@ final class DragShareController {
 
     boolean hasPendingImagePreview() {
         return pendingImagePreview != null;
+    }
+
+    /** True when the preview waits for a second press; live-hold previews keep the press stream. */
+    boolean hasInteractivePendingImagePreview() {
+        return pendingImagePreview != null && !pendingImagePreviewWhileHolding;
     }
 
     void acceptPointerEvent(
@@ -568,7 +639,7 @@ final class DragShareController {
             boolean traceWasActive = active;
             gestureTrace.record(action, x, y, eventTime, source);
             boolean pendingPreviewOwnsRootEvent = "root".equals(source)
-                    && pendingImagePreview != null;
+                    && pendingImagePreview != null && !pendingImagePreviewWhileHolding;
             if (pendingPreviewOwnsRootEvent) {
                 handlePendingOutsideEvent(action, x, y, eventTime);
             }

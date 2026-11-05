@@ -11,6 +11,7 @@ import android.graphics.Rect;
 import android.content.Context;
 import android.content.pm.ProviderInfo;
 import android.os.Bundle;
+import android.view.WindowManager;
 import android.view.MotionEvent;
 
 import org.junit.Test;
@@ -416,6 +417,99 @@ public final class PressPreviewHandoffTest {
             source.stop();
             controller.destroy();
             if (!portalBitmap.isRecycled()) portalBitmap.recycle();
+            ShadowLooper.shadowMainLooper().idle();
+        }
+    }
+
+    @Test public void holdPreviewStaysUntouchableAndTakeoverStartsTheSession() throws Exception {
+        DragShareController controller = controller();
+        down(controller, 100L);
+        Bitmap bitmap = Bitmap.createBitmap(4, 4, Bitmap.Config.ARGB_8888);
+        CapturedContent content = CapturedContent.portalMediaImage(
+                bitmap, "test.app", new Rect(0, 0, 4, 4));
+
+        try {
+            controller.showPendingImagePreview(content, 20f, 30f,
+                    DragShareSettings.defaults(), 100L, true);
+            ShadowLooper.shadowMainLooper().idle();
+
+            assertTrue(controller.hasPendingImagePreview());
+            assertFalse("live-hold preview must keep feeding the Root press stream",
+                    controller.hasInteractivePendingImagePreview());
+            WindowManager.LayoutParams params =
+                    (WindowManager.LayoutParams) field(controller, "previewParams").get(controller);
+            assertTrue((params.flags & WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE) != 0);
+            assertFalse(bitmap.isRecycled());
+
+            controller.takeoverHoldingImagePreview(30f, 40f, 100L);
+            ShadowLooper.shadowMainLooper().idle();
+
+            Object session = field(controller, "session").get(controller);
+            assertNotNull(session);
+            CapturedContent payload =
+                    (CapturedContent) field(session, "payload").get(session);
+            assertTrue(payload == content);
+            assertFalse(controller.hasPendingImagePreview());
+            assertFalse(bitmap.isRecycled());
+        } finally {
+            controller.destroy();
+            if (!bitmap.isRecycled()) bitmap.recycle();
+            ShadowLooper.shadowMainLooper().idle();
+        }
+    }
+
+    @Test public void releaseMakesHoldPreviewInteractiveAndOutsideTapCancels() throws Exception {
+        DragShareController controller = controller();
+        down(controller, 100L);
+        Bitmap bitmap = Bitmap.createBitmap(4, 4, Bitmap.Config.ARGB_8888);
+        CapturedContent content = CapturedContent.portalMediaImage(
+                bitmap, "test.app", new Rect(0, 0, 4, 4));
+
+        try {
+            controller.showPendingImagePreview(content, 20f, 30f,
+                    DragShareSettings.defaults(), 100L, true);
+            ShadowLooper.shadowMainLooper().idle();
+            controller.releaseHoldingImagePreview(100L);
+            ShadowLooper.shadowMainLooper().idle();
+
+            assertTrue(controller.hasInteractivePendingImagePreview());
+            WindowManager.LayoutParams params =
+                    (WindowManager.LayoutParams) field(controller, "previewParams").get(controller);
+            assertTrue((params.flags & WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE) == 0);
+
+            controller.acceptPointerEvent(MotionEvent.ACTION_DOWN, 400f, 800f, 500L, "root");
+            ShadowLooper.shadowMainLooper().idle();
+            controller.acceptPointerEvent(MotionEvent.ACTION_UP, 400f, 800f, 520L, "root");
+            ShadowLooper.shadowMainLooper().idle();
+
+            assertFalse("outside tap cancels the released preview", controller.hasPendingImagePreview());
+            assertTrue(bitmap.isRecycled());
+        } finally {
+            controller.destroy();
+            if (!bitmap.isRecycled()) bitmap.recycle();
+            ShadowLooper.shadowMainLooper().idle();
+        }
+    }
+
+    @Test public void cancelDropsHoldPreviewAndRecyclesPayload() throws Exception {
+        DragShareController controller = controller();
+        down(controller, 100L);
+        Bitmap bitmap = Bitmap.createBitmap(4, 4, Bitmap.Config.ARGB_8888);
+        CapturedContent content = CapturedContent.portalMediaImage(
+                bitmap, "test.app", new Rect(0, 0, 4, 4));
+
+        try {
+            controller.showPendingImagePreview(content, 20f, 30f,
+                    DragShareSettings.defaults(), 100L, true);
+            ShadowLooper.shadowMainLooper().idle();
+            controller.cancelHoldingImagePreview(100L);
+            ShadowLooper.shadowMainLooper().idle();
+
+            assertFalse(controller.hasPendingImagePreview());
+            assertTrue(bitmap.isRecycled());
+        } finally {
+            controller.destroy();
+            if (!bitmap.isRecycled()) bitmap.recycle();
             ShadowLooper.shadowMainLooper().idle();
         }
     }

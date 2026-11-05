@@ -552,7 +552,7 @@ final class PortalHooks {
                             : null);
         }
         PressCaptureSource thumb = thumbCaptureSource;
-        if (thumb != null && (current == null || !current.hasPendingImagePreview())) {
+        if (thumb != null && (current == null || !current.hasInteractivePendingImagePreview())) {
             thumb.onPointerEvent(action, x, y, eventTime);
         }
     }

@@ -310,6 +310,7 @@ final class PressCaptureSource implements RootTouchSource.ContactListener, WeCha
                     : PressReleaseMode.Mode.NONE;
             released = true;
             pointerDown = false;
+            controller.releaseHoldingImagePreview(downTime);
         }
         if (action == MotionEvent.ACTION_MOVE && !twoFingerModeForGesture
                 && detector.isFired() && !directDragArmed
@@ -317,6 +318,7 @@ final class PressCaptureSource implements RootTouchSource.ContactListener, WeCha
                         * context.getResources().getDisplayMetrics().density) {
             directDragArmed = true;
             if (cached != null && cached.isImage() && !released) display();
+            else controller.takeoverHoldingImagePreview(latestX, latestY, downTime);
         }
         if (action == MotionEvent.ACTION_UP) weChatPress.finishPress();
         if (action == MotionEvent.ACTION_UP && hadFired) {
@@ -560,6 +562,23 @@ final class PressCaptureSource implements RootTouchSource.ContactListener, WeCha
         controller.notePressPipeline(downTime);
         DragShareLog.i(TAG, "press confirmed by duration/movement elapsedMs=" + (now - detector.downTime()));
         if (!released && cached == null && !lookupRunning) lookup();
+        showHoldingImagePreviewIfReady();
+    }
+
+    /**
+     * Combined-trigger feedback: once the hold is confirmed, surface the image
+     * content as a NOT_TOUCHABLE preview so the user can see the drag is armed
+     * and simply keeps moving to start the drag.
+     */
+    private void showHoldingImagePreviewIfReady() {
+        if (released || directDragArmed || twoFingerModeForGesture) return;
+        CapturedContent content = cached;
+        if (content == null || !content.isImage()) return;
+        if (WeChatPressFlow.isUnverifiedImage(content)) return;
+        if (!settings.isSharingEnabled(true)) return;
+        cached = null;
+        controller.showPendingImagePreview(content, controller.latestPointerX(),
+                controller.latestPointerY(), settings, downTime, true);
     }
 
     private void lookup() {
@@ -630,6 +649,12 @@ final class PressCaptureSource implements RootTouchSource.ContactListener, WeCha
                     } else if (directDragArmed && detector.isFired()
                             && !twoFingerModeForGesture && content.isImage()) {
                         display();
+                    } else if (detector.isFired() && !twoFingerModeForGesture && !directDragArmed
+                            && content.isImage() && !WeChatPressFlow.isUnverifiedImage(content)
+                            && settings.isSharingEnabled(true)) {
+                        cached = null;
+                        controller.showPendingImagePreview(content, controller.latestPointerX(),
+                                controller.latestPointerY(), settings, requestDownTime, true);
                     } else schedule();
                 });
             } catch (IOException | SecurityException error) {
@@ -815,6 +840,7 @@ final class PressCaptureSource implements RootTouchSource.ContactListener, WeCha
         releaseMode = PressReleaseMode.Mode.NONE;
         WeChatPressFlow.Candidate pending = weChatPress.clearForCancel();
         if (pending != null && pending.ocrComplete) recycle(pending.content);
+        if (!released) controller.cancelHoldingImagePreview(downTime);
         if (activeOcrRequest != null) {
             activeOcrRequest.cancel();
             activeOcrRequest = null;
