@@ -393,7 +393,7 @@ public final class PressPreviewHandoffTest {
         }
     }
 
-    @Test public void releaseMakesHoldPreviewInteractiveAndOutsideTapCancels() throws Exception {
+    @Test public void releaseCancelsHoldPreviewAndRecyclesPayload() throws Exception {
         DragShareController controller = controller();
         down(controller, 100L);
         Bitmap bitmap = Bitmap.createBitmap(4, 4, Bitmap.Config.ARGB_8888);
@@ -404,20 +404,10 @@ public final class PressPreviewHandoffTest {
             controller.showPendingImagePreview(content, 20f, 30f,
                     DragShareSettings.defaults(), 100L, true);
             ShadowLooper.shadowMainLooper().idle();
-            controller.releaseHoldingImagePreview(100L);
+            controller.cancelHoldingImagePreview(100L);
             ShadowLooper.shadowMainLooper().idle();
 
-            assertTrue(controller.hasInteractivePendingImagePreview());
-            WindowManager.LayoutParams params =
-                    (WindowManager.LayoutParams) field(controller, "previewParams").get(controller);
-            assertTrue((params.flags & WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE) == 0);
-
-            controller.acceptPointerEvent(MotionEvent.ACTION_DOWN, 400f, 800f, 500L, "root");
-            ShadowLooper.shadowMainLooper().idle();
-            controller.acceptPointerEvent(MotionEvent.ACTION_UP, 400f, 800f, 520L, "root");
-            ShadowLooper.shadowMainLooper().idle();
-
-            assertFalse("outside tap cancels the released preview", controller.hasPendingImagePreview());
+            assertFalse(controller.hasPendingImagePreview());
             assertTrue(bitmap.isRecycled());
         } finally {
             controller.destroy();

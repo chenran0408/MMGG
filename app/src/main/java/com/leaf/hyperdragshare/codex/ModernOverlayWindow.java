@@ -163,6 +163,22 @@ final class ModernOverlayWindow {
         }
     }
 
+    /** Finishes an in-flight enter animation before the preview becomes a drag surface. */
+    void finishEnterAnimationImmediately() {
+        if (disposed) {
+            return;
+        }
+        animationGeneration++;
+        View decorView = decorView();
+        if (decorView != null) {
+            decorView.animate().cancel();
+            decorView.setAlpha(1f);
+            decorView.setScaleX(1f);
+            decorView.setScaleY(1f);
+        }
+        overlayView.setContentVisibleForWindowAnimation(true);
+    }
+
     void dispose() {
         if (disposed) {
             return;

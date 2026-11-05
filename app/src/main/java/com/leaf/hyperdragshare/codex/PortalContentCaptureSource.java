@@ -5,6 +5,7 @@ import android.graphics.Point;
 import android.graphics.PointF;
 import android.graphics.Rect;
 import android.os.Bundle;
+import android.os.Parcelable;
 
 import java.net.URI;
 import java.util.Map;
@@ -91,6 +92,189 @@ final class PortalContentCaptureSource {
             }
             return null;
         }
+    }
+
+    /**
+     * Captures the result passed by Taplus 5.1.5's pick callback. The callback
+     * argument is authoritative for this gesture; static service fields are
+     * intentionally not consulted when it is present because they may still
+     * contain the previous pick.
+     */
+    static CapturedContent capture(
+            Object taplusService,
+            DragShareSettings settings,
+            Object catcherResult) {
+        if (catcherResult == null) {
+            return capture(taplusService, settings);
+        }
+        return captureFromCatcherResult(taplusService, settings, catcherResult);
+    }
+
+    private static CapturedContent captureFromCatcherResult(
+            Object taplusService,
+            DragShareSettings settings,
+            Object catcherResult) {
+        if (taplusService == null || catcherResult == null) {
+            return null;
+        }
+        Class<?> serviceClass = taplusService.getClass();
+        String sourcePackage = null;
+        Rect sourceBounds = null;
+        try {
+            sourcePackage = (String) XposedHelpers.callStaticMethod(
+                    serviceClass, "getInjectorPackage");
+            sourceBounds = (Rect) XposedHelpers.callMethod(taplusService, "getContentRect");
+            if (BuildConfig.APPLICATION_ID.equals(sourcePackage)) {
+                return null;
+            }
+            android.content.Context context = (android.content.Context) taplusService;
+            if (AccessibilityBlacklist.isBlocked(context, settings, sourcePackage)
+                    || GameCapturePolicy.shouldPause(context, settings, sourcePackage)) {
+                traceCaptureOutcome(sourcePackage, "ignored_by_policy");
+                return null;
+            }
+
+            Object textParams = XposedHelpers.callMethod(catcherResult, "getParams", "text_pick");
+            if (textParams instanceof Map) {
+                Map<?, ?> values = (Map<?, ?>) textParams;
+                String text = textFromPickValues(values);
+                if (text != null) {
+                    Rect textBounds = rectFrom(values.get("pick_mode"));
+                    CapturedContent content = CapturedContent.text(
+                            text, sourcePackage, textBounds == null ? sourceBounds : textBounds);
+                    traceCaptureOutcome(sourcePackage, "accepted_text_callback");
+                    return content;
+                }
+            }
+
+            Bitmap bestBitmap = null;
+            Rect viewRect = null;
+            Object imageParams = XposedHelpers.callMethod(catcherResult, "getParams", "image_pick");
+            if (imageParams instanceof Map) {
+                Map<?, ?> values = (Map<?, ?>) imageParams;
+                bestBitmap = largerBitmap(bestBitmap, values.get("bitmap"), "image_pick");
+                Object mode = values.get("image_pick_mode");
+                if (mode instanceof Bundle) {
+                    Bundle imageMode = (Bundle) mode;
+                    bestBitmap = largerBitmap(bestBitmap, imageMode.get("viewBitmap"), "viewBitmap");
+                    String imageUrl = imageMode.getString("imgUrl");
+                    if (isLoadableImageUrl(imageUrl)) {
+                        Bitmap original = loadPortalImage(taplusService, imageUrl);
+                        bestBitmap = largerBitmap(bestBitmap, original, "imgUrl");
+                    }
+                    viewRect = rectFrom(imageMode);
+                }
+            }
+            try {
+                Object propertyMap = XposedHelpers.callMethod(
+                        catcherResult, "getPropertyMap");
+                if (propertyMap instanceof Map) {
+                    for (Object value : ((Map<?, ?>) propertyMap).values()) {
+                        bestBitmap = largerBitmap(bestBitmap, value, "propertyMap");
+                    }
+                }
+            } catch (RuntimeException ignored) {
+                // The image_pick map remains sufficient on supported builds.
+            }
+            if (bestBitmap == null || bestBitmap.isRecycled()) {
+                traceCaptureOutcome(sourcePackage, "missing_callback_image");
+                return null;
+            }
+            Bitmap snapshot = bestBitmap.copy(Bitmap.Config.ARGB_8888, false);
+            CapturedContent content = CapturedContent.portalMediaImage(
+                    snapshot, sourcePackage, viewRect == null ? sourceBounds : viewRect);
+            traceCaptureOutcome(sourcePackage, content == null
+                    ? "missing_callback_image" : "accepted_image_callback");
+            return content;
+        } catch (Throwable error) {
+            traceCaptureOutcome(sourcePackage, "callback_read_error");
+            DragShareLog.w("DragShare/PortalCapture",
+                    "Unable to read current Taplus callback result error="
+                            + error.getClass().getSimpleName(), error);
+            return null;
+        }
+    }
+
+    private static String textFromPickValues(Map<?, ?> values) {
+        Object mode = values.get("pick_mode");
+        if (mode instanceof CharSequence) {
+            String text = mode.toString().trim();
+            return text.isEmpty() ? null : text;
+        }
+        if (mode instanceof Bundle) {
+            CharSequence content = ((Bundle) mode).getCharSequence("viewContent");
+            if (content != null && content.length() > 0) return content.toString();
+        }
+        Object content = values.get("viewContent");
+        if (content instanceof CharSequence) {
+            String text = content.toString().trim();
+            return text.isEmpty() ? null : text;
+        }
+        return null;
+    }
+
+    private static Rect rectFrom(Object value) {
+        if (value instanceof Bundle) {
+            value = ((Bundle) value).get("view_rect");
+        }
+        return value instanceof Rect ? new Rect((Rect) value) : null;
+    }
+
+    private static Bitmap largerBitmap(Bitmap current, Object candidate, String source) {
+        if (!(candidate instanceof Bitmap)) return current;
+        Bitmap bitmap = (Bitmap) candidate;
+        if (bitmap.isRecycled()) return current;
+        DragShareLog.i("DragShare/PortalCapture", "callback image candidate source=" + source
+                + " size=" + bitmap.getWidth() + "x" + bitmap.getHeight());
+        if (current == null) return bitmap;
+        long currentPixels = (long) current.getWidth() * current.getHeight();
+        long candidatePixels = (long) bitmap.getWidth() * bitmap.getHeight();
+        return candidatePixels > currentPixels ? bitmap : current;
+    }
+
+    private static Bitmap loadPortalImage(Object taplusService, String url) {
+        if (!(taplusService instanceof android.content.Context)) return null;
+        String normalized = url.startsWith("//") ? "http:" + url : url;
+        try {
+            Class<?> iconManager = XposedHelpers.findClassIfExists(
+                    "com.miui.contentextension.utils.IconManager",
+                    taplusService.getClass().getClassLoader());
+            if (iconManager == null) return null;
+            android.content.Context context = (android.content.Context) taplusService;
+            android.content.Context appContext = context.getApplicationContext();
+            Object result = XposedHelpers.callStaticMethod(
+                    iconManager, "loadImageSync", appContext == null ? context : appContext, normalized);
+            return result instanceof Bitmap ? (Bitmap) result : null;
+        } catch (Throwable error) {
+            DragShareLog.w("DragShare/PortalCapture",
+                    "Portal original image load failed error="
+                            + error.getClass().getSimpleName());
+            return null;
+        }
+    }
+
+    static PointF touchPointFromResult(Object catcherResult) {
+        if (catcherResult == null) return null;
+        PointF point = touchPointFromParams(catcherResult, "text_pick");
+        return point == null ? touchPointFromParams(catcherResult, "image_pick") : point;
+    }
+
+    private static PointF touchPointFromParams(Object catcherResult, String key) {
+        try {
+            Object params = XposedHelpers.callMethod(catcherResult, "getParams", key);
+            if (!(params instanceof Map)) return null;
+            Object mode = ((Map<?, ?>) params).get(
+                    "text_pick".equals(key) ? "pick_mode" : "image_pick_mode");
+            if (!(mode instanceof Bundle)) return null;
+            Parcelable[] points = ((Bundle) mode).getParcelableArray("touch_points");
+            if (points != null && points.length > 0 && points[0] instanceof PointF) {
+                PointF first = (PointF) points[0];
+                return new PointF(first.x, first.y);
+            }
+        } catch (Throwable ignored) {
+            // The controller falls back to the latest Root pointer.
+        }
+        return null;
     }
 
     private static void traceCaptureOutcome(String sourcePackage, String outcome) {

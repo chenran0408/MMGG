@@ -29,6 +29,10 @@ final class PortalHooks {
     private static final String SERVICE_CLASS =
             "com.miui.contentextension.services.TextContentExtensionService";
     private static final String CALLBACK_CLASS = SERVICE_CLASS + "$1";
+    private static final String CATCHER_RESULT_CLASS =
+            "miui.contentcatcher.sdk.ClientCatcherResult";
+    private static final String ON_PICK_TEXT_METHOD = "onPickText";
+    private static final String ON_PICK_IMAGE_METHOD = "onPickImage";
     private static final String BASE_FLOAT_CLASS =
             "com.miui.contentextension.text.floatview.BaseFloatView";
     private static final String MOTION_KEY = "MotionEvent";
@@ -54,6 +58,7 @@ final class PortalHooks {
     private static volatile boolean activationReported;
     private static volatile Context portalContext;
     private static volatile ClassLoader portalClassLoader;
+    private static volatile boolean currentPickCallbacksHooked;
     private static volatile ContentObserver settingsObserver;
     private static volatile String xposedBridgeVersion = "unavailable";
     private static boolean overlayTouchObserved;
@@ -287,7 +292,23 @@ final class PortalHooks {
                 DragShareController current = controller;
                 if (current != null) {
                     PressCaptureSource press = thumbCaptureSource;
-                    CapturedContent content = PortalContentCaptureSource.capture(param.thisObject, settings);
+                    String methodName = param.method.getName();
+                    Object catcherResult = null;
+                    boolean currentPickCallback = ON_PICK_TEXT_METHOD.equals(methodName)
+                            || ON_PICK_IMAGE_METHOD.equals(methodName);
+                    if (currentPickCallback && param.args != null && param.args.length > 0) {
+                        catcherResult = param.args[0];
+                    }
+                    // The newer Taplus chain delivers the authoritative result
+                    // through onPick*; startPick* only arms the capture and still
+                    // points at the previous static result.
+                    if (currentPickCallbacksHooked && catcherResult == null
+                            && ("startPickTextTask".equals(methodName)
+                            || "startPickImageTask".equals(methodName))) {
+                        return;
+                    }
+                    CapturedContent content = PortalContentCaptureSource.capture(
+                            param.thisObject, settings, catcherResult);
                     if (content != null && press != null && press.acceptPortalContent(content)) {
                         return;
                     }
@@ -299,10 +320,13 @@ final class PortalHooks {
                     if (content == null) {
                         return;
                     }
-                    PointF point = PortalContentCaptureSource.initialPoint(
-                            param.thisObject,
-                            current.latestPointerX(),
-                            current.latestPointerY());
+                    PointF point = PortalContentCaptureSource.touchPointFromResult(catcherResult);
+                    if (point == null) {
+                        point = PortalContentCaptureSource.initialPoint(
+                                param.thisObject,
+                                current.latestPointerX(),
+                                current.latestPointerY());
+                    }
                     current.reservePortalHostFloatWindowSuppression();
                     current.show(
                             content,
@@ -314,6 +338,24 @@ final class PortalHooks {
         };
         XposedHelpers.findAndHookMethod(serviceClass, "startPickTextTask", showHook);
         XposedHelpers.findAndHookMethod(serviceClass, "startPickImageTask", showHook);
+        try {
+            Class<?> catcherResultClass = XposedHelpers.findClassIfExists(
+                    CATCHER_RESULT_CLASS, portalClassLoader);
+            if (catcherResultClass != null) {
+                XposedHelpers.findAndHookMethod(
+                        serviceClass, ON_PICK_TEXT_METHOD, catcherResultClass, showHook);
+                XposedHelpers.findAndHookMethod(
+                        serviceClass, ON_PICK_IMAGE_METHOD, catcherResultClass, showHook);
+                currentPickCallbacksHooked = true;
+                log("hooked Taplus current pick callbacks");
+            } else {
+                currentPickCallbacksHooked = false;
+                log("Taplus current pick result class unavailable; using legacy entry points");
+            }
+        } catch (Throwable error) {
+            currentPickCallbacksHooked = false;
+            log("unable to hook Taplus current pick callbacks", error);
+        }
     }
 
     private static void hookKnownCallbackClass(ClassLoader classLoader) {

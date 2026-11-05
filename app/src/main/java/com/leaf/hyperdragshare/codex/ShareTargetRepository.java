@@ -159,6 +159,10 @@ final class ShareTargetRepository {
             if (qrScan != null) {
                 result.add(qrScan);
             }
+            ShareTarget imageOcr = visible.remove(DragShareSettings.TARGET_IMAGE_OCR);
+            if (imageOcr != null) {
+                result.add(imageOcr);
+            }
         } else {
             ShareTarget textSegmentation = visible.remove(
                     DragShareSettings.TARGET_TEXT_SEGMENTATION);

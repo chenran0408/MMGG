@@ -305,12 +305,15 @@ final class PressCaptureSource implements RootTouchSource.ContactListener, Press
             detector.onPointerEvent(action, x, y, 1);
         }
         if (action == MotionEvent.ACTION_UP) {
-            releaseMode = hadFired
-                    ? PressReleaseMode.resolve(twoFingerModeForGesture)
+            // A single-finger hold is only a drag candidate while the finger remains down.
+            // Releasing it cancels the live preview; two-finger release still opens
+            // the text segmentation flow.
+            releaseMode = hadFired && twoFingerModeForGesture
+                    ? PressReleaseMode.Mode.NORMAL
                     : PressReleaseMode.Mode.NONE;
             released = true;
             pointerDown = false;
-            controller.releaseHoldingImagePreview(downTime);
+            controller.cancelHoldingImagePreview(downTime);
         }
         if (action == MotionEvent.ACTION_MOVE && !twoFingerModeForGesture
                 && detector.isFired() && !directDragArmed
