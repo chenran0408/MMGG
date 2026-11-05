@@ -466,18 +466,12 @@ internal fun BigBangOverlayContent(
                                 )
                             }
                         }
-                        Box(
-                            Modifier.fillMaxWidth().height(1.dp)
-                                .background(panelBorder.copy(alpha = panelOpacity)),
-                        )
-                        Text(
-                            text = if (hasTextSelection) "选中内容操作" else "全文操作",
-                            modifier = Modifier.fillMaxWidth().height(20.dp)
-                                .padding(start = 8.dp, top = 2.dp),
-                            color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
-                            fontSize = 11.sp,
-                            maxLines = 1,
-                        )
+                        if (dragPreviewEnabled || hasTextSelection) {
+                            Box(
+                                Modifier.fillMaxWidth().height(1.dp)
+                                    .background(panelBorder.copy(alpha = panelOpacity)),
+                            )
+                        }
                         if (hasSelectionToolbar) {
                             Row(modifier = Modifier.fillMaxWidth().height(56.dp),
                                 verticalAlignment = Alignment.CenterVertically) {
@@ -565,7 +559,7 @@ internal fun BigBangOverlayContent(
                         ) {
                             CircularProgressIndicator(modifier = Modifier.size(24.dp))
                             Spacer(modifier = Modifier.height(10.dp))
-                            Text("正在识别微信文字…", color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
+                            Text("正在识别文字…", color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
                                 fontSize = 13.sp)
                         }
                     } else {
