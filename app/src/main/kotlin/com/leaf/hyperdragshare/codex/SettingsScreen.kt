@@ -65,7 +65,6 @@ private sealed interface SettingsRoute : NavKey {
     data object ProblemDiagnostics : SettingsRoute
     data class Module(val module: SettingModule, val focusId: String? = null) : SettingsRoute
     data object BottomTargets : SettingsRoute
-    data object SideTargets : SettingsRoute
     data object HoneycombLayout : SettingsRoute
     data object HoneycombTargets : SettingsRoute
     data object Licenses : SettingsRoute
@@ -104,7 +103,6 @@ fun DragShareSettingsApp(context: Context, openGestures: Boolean = false) {
         val openTargets: (String) -> Unit = { group ->
             backStack.add(when (group) {
                 "bottom" -> SettingsRoute.BottomTargets
-                "side" -> SettingsRoute.SideTargets
                 "honeycomb" -> SettingsRoute.HoneycombTargets
                 else -> error("Unknown gesture target group: $group")
             })
@@ -122,7 +120,7 @@ fun DragShareSettingsApp(context: Context, openGestures: Boolean = false) {
             onManageTargets = openTargets,
             previewPageActive = (backStack.lastOrNull() as? SettingsRoute.Module)?.module
                 == SettingModule.GESTURES
-                && (gestureCategoryId == "bottom" || gestureCategoryId == "side"),
+                && gestureCategoryId == "bottom",
         )).sortedWith(
             compareBy({ it.module.ordinal }, { it.module.groups.indexOf(it.group) }))
         val currentDirectory = rememberUpdatedState(directory)
@@ -156,11 +154,6 @@ fun DragShareSettingsApp(context: Context, openGestures: Boolean = false) {
                 }
                 entry(SettingsRoute.BottomTargets) {
                     GestureTargetsContent(context, "bottom", onBack = {
-                        if (backStack.size > 1) backStack.removeAt(backStack.lastIndex)
-                    })
-                }
-                entry(SettingsRoute.SideTargets) {
-                    GestureTargetsContent(context, "side", onBack = {
                         if (backStack.size > 1) backStack.removeAt(backStack.lastIndex)
                     })
                 }

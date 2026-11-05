@@ -465,13 +465,13 @@ public final class GestureGeometry {
                 secondRight, secondBottom) == OutsideRegion.INSIDE;
     }
 
-    static boolean inSideGestureReserve(float x, int width, float leftReserve, float rightReserve) {
+    static boolean inSystemEdgeReserve(float x, int width, float leftReserve, float rightReserve) {
         return x <= leftReserve || x >= width - rightReserve;
     }
 
-    static boolean shouldYieldSideTap(boolean fromLeft, float downX, float downY,
-                                      float x, float y, float swipeDecisionDistance,
-                                      float tapRetentionDistance) {
+    static boolean shouldYieldSystemBackEdge(boolean fromLeft, float downX, float downY,
+                                             float x, float y, float swipeDecisionDistance,
+                                             float tapRetentionDistance) {
         float horizontal = fromLeft ? x - downX : downX - x;
         float vertical = Math.abs(y - downY);
         if (horizontal >= swipeDecisionDistance && horizontal >= vertical * 1.1f) {

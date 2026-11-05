@@ -325,7 +325,7 @@ final class FanTriggerCapture {
                 displayId);
         injectKeyEvent(KeyEvent.ACTION_UP, downTime, downTime + 16L, KeyEvent.KEYCODE_BACK,
                 displayId);
-        Log.i("Captured side swipe dispatched as system back");
+        Log.i("Captured system back edge dispatched as system back");
     }
 
     private void dispatchKeyCodeNow(int keyCode, int displayId) {

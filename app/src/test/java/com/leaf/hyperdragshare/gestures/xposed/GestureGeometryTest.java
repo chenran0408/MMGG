@@ -303,33 +303,33 @@ public class GestureGeometryTest {
 
     @Test
     public void reservesBothEdgesAtEveryHeight() {
-        assertTrue(GestureGeometry.inSideGestureReserve(20, 1200, 60, 70));
-        assertTrue(GestureGeometry.inSideGestureReserve(1150, 1200, 60, 70));
-        assertFalse(GestureGeometry.inSideGestureReserve(600, 1200, 60, 70));
+        assertTrue(GestureGeometry.inSystemEdgeReserve(20, 1200, 60, 70));
+        assertTrue(GestureGeometry.inSystemEdgeReserve(1150, 1200, 60, 70));
+        assertFalse(GestureGeometry.inSystemEdgeReserve(600, 1200, 60, 70));
     }
 
     @Test
-    public void sideTapKeepsNaturalJitterButYieldsToIntentionalBackSwipe() {
-        assertFalse(GestureGeometry.shouldYieldSideTap(
+    public void systemEdgeTapKeepsNaturalJitterButYieldsToIntentionalBackSwipe() {
+        assertFalse(GestureGeometry.shouldYieldSystemBackEdge(
                 true, 20, 1000, 42, 1024, 36, 54));
-        assertFalse(GestureGeometry.shouldYieldSideTap(
+        assertFalse(GestureGeometry.shouldYieldSystemBackEdge(
                 false, 1180, 1000, 1158, 1024, 36, 54));
-        assertTrue(GestureGeometry.shouldYieldSideTap(
+        assertTrue(GestureGeometry.shouldYieldSystemBackEdge(
                 true, 20, 1000, 70, 1008, 36, 54));
-        assertTrue(GestureGeometry.shouldYieldSideTap(
+        assertTrue(GestureGeometry.shouldYieldSystemBackEdge(
                 false, 1180, 1000, 1130, 992, 36, 54));
     }
 
     @Test
-    public void sideTapYieldsAfterLargeNonBackMovement() {
-        assertTrue(GestureGeometry.shouldYieldSideTap(
+    public void systemEdgeTapYieldsAfterLargeNonBackMovement() {
+        assertTrue(GestureGeometry.shouldYieldSystemBackEdge(
                 true, 20, 1000, 35, 1060, 36, 54));
-        assertTrue(GestureGeometry.shouldYieldSideTap(
+        assertTrue(GestureGeometry.shouldYieldSystemBackEdge(
                 false, 1180, 1000, 1190, 1060, 36, 54));
     }
 
     @Test
-    public void bottomCornersStayFlushWhileSideGestureUsesUpperBand() {
+    public void bottomCornersStayFlushWhileSystemEdgeUsesUpperBand() {
         assertEquals(GestureGeometry.Corner.LEFT,
                 GestureGeometry.cornerAt(30, 2500, 1200, 2600, 96, 440));
         assertEquals(GestureGeometry.Corner.RIGHT,

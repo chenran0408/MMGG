@@ -27,13 +27,6 @@ public final class FanRuntimePolicyTest {
     }
 
     @Test
-    public void sideRequiresReadyRuntimeAndResolvedTargets() {
-        assertTrue(FanRuntimePolicy.canStartSide(true, true));
-        assertFalse(FanRuntimePolicy.canStartSide(false, true));
-        assertFalse(FanRuntimePolicy.canStartSide(true, false));
-    }
-
-    @Test
     public void imeCapturePreservesUnknownBoundsBehavior() {
         assertTrue(FanRuntimePolicy.shouldCaptureOutsideWithIme(false, null));
         assertTrue(FanRuntimePolicy.shouldCaptureOutsideWithIme(true,

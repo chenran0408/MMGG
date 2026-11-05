@@ -40,34 +40,32 @@ class SettingsCatalogNavigationTest {
             assertEquals(categorized.size, categorized.map { it.id }.distinct().size)
         }
 
-        val sideEntry = entries.first { it.title == "启用侧滑列表" }
-        assertEquals("side", gestureCategoryFor(sideEntry)?.id)
-        assertTrue(sideEntry.matches("侧滑"))
-        assertTrue(sideEntry.matches("侧边滑动"))
-        assertTrue(entries.any { it.matches("底角斜滑") })
-        val visibleCategoryRows = entriesForGestureCategory(entries, GESTURE_SETTING_CATEGORIES.first { it.id == "side" })
-            .filter { it.enabled || it.prerequisite == null || it.id == sideEntry.id }
-        val sideIndex = settingEntryListIndex(visibleCategoryRows, sideEntry.id)
-        assertNotNull(sideIndex)
-        assertEquals(sideIndex, settingEntryListKeys(visibleCategoryRows).indexOf(sideEntry.id))
+        val bottomEntry = entries.first { it.id == "bottom_targets" }
+        assertEquals("bottom", gestureCategoryFor(bottomEntry)?.id)
+        assertTrue(bottomEntry.matches("底角斜滑"))
+        val visibleCategoryRows = entriesForGestureCategory(entries, GESTURE_SETTING_CATEGORIES.first { it.id == "bottom" })
+            .filter { it.enabled || it.prerequisite == null || it.id == bottomEntry.id }
+        val bottomIndex = settingEntryListIndex(visibleCategoryRows, bottomEntry.id)
+        assertNotNull(bottomIndex)
+        assertEquals(bottomIndex, settingEntryListKeys(visibleCategoryRows).indexOf(bottomEntry.id))
         assertEquals(
-            SettingsFocusTarget(sideEntry.id, sideIndex),
-            settingsFocusTarget(settingEntryListKeys(visibleCategoryRows), sideEntry.id),
+            SettingsFocusTarget(bottomEntry.id, bottomIndex),
+            settingsFocusTarget(settingEntryListKeys(visibleCategoryRows), bottomEntry.id),
         )
-        assertEquals("side", gestureFocusCategoryId(entries, sideEntry.id))
+        assertEquals("bottom", gestureFocusCategoryId(entries, bottomEntry.id))
         assertEquals("module:GESTURES", settingsModuleListKey(SettingModule.GESTURES))
-        assertEquals("module:GESTURES:category:side", gestureCategoryListKey("side"))
+        assertEquals("module:GESTURES:category:bottom", gestureCategoryListKey("bottom"))
     }
 
     @Test
     fun lastListPositionSurvivesStateSnapshotAndSaverRestore() {
         val store = SettingsScrollPositionStore()
         val moduleKey = "module:GESTURES:categories"
-        val sideKey = "module:GESTURES:category:side"
+        val bottomKey = "module:GESTURES:category:bottom"
         val finalRootState = LazyListState(5, 18)
-        val finalSideState = LazyListState(7, 36)
+        val finalBottomState = LazyListState(7, 36)
         store.save(moduleKey, finalRootState)
-        store.save(sideKey, finalSideState)
+        store.save(bottomKey, finalBottomState)
 
         val saverScope = object : SaverScope {
             override fun canBeSaved(value: Any): Boolean = true
@@ -77,11 +75,11 @@ class SettingsCatalogNavigationTest {
             ?: error("scroll position saver did not restore")
 
         val restoredRoot = restored.createListState(moduleKey)
-        val restoredSide = restored.createListState(sideKey)
+        val restoredBottom = restored.createListState(bottomKey)
         assertEquals(5, restoredRoot.firstVisibleItemIndex)
         assertEquals(18, restoredRoot.firstVisibleItemScrollOffset)
-        assertEquals(7, restoredSide.firstVisibleItemIndex)
-        assertEquals(36, restoredSide.firstVisibleItemScrollOffset)
+        assertEquals(7, restoredBottom.firstVisibleItemIndex)
+        assertEquals(36, restoredBottom.firstVisibleItemScrollOffset)
     }
 
     private fun productionGestureEntries(): List<SettingEntry> {

@@ -16,7 +16,7 @@ internal enum class SettingModule(val title: String, val icon: ImageVector, val 
 
     val groups: List<String> get() = when (this) {
         PORTAL -> listOf("触发与识别", "应用避让", "分词与取用", "拖拽分享", "中转站", "拖拽菜单外观", "拖拽触摸与滚动")
-        GESTURES -> listOf("总开关与通用", "底角触发", "侧边手势", "动作与目标", "蜂巢布局", "布局动效", "高级设置")
+        GESTURES -> listOf("总开关与通用", "底角触发", "动作与目标", "蜂巢布局", "布局动效", "高级设置")
         FREEFORM -> listOf("启动行为", "窗体布局", "窗外操作")
         COPY_DIRECT -> listOf("启用与触发", "目标应用")
         GENERAL -> listOf("运行与权限", "主题与显示", "工具与诊断", "关于")
@@ -40,10 +40,6 @@ internal val GESTURE_SETTING_CATEGORIES = listOf(
     SettingGroupCategory(
         id = "bottom", title = "底角斜滑", summary = "屏幕底角触发、上滑和扇形动作",
         groups = setOf("底角触发"), entryIds = setOf("bottom_targets"),
-    ),
-    SettingGroupCategory(
-        id = "side", title = "侧边滑动", summary = "左右边缘滑入、停留和列表布局",
-        groups = setOf("侧边手势"), entryIds = setOf("side_targets"),
     ),
     SettingGroupCategory(
         id = "honeycomb", title = "蜂巢布局", summary = "二段蜂巢、滑选方式和应用排列",

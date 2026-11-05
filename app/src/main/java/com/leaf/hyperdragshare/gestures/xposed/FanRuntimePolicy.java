@@ -28,10 +28,6 @@ final class FanRuntimePolicy {
                 && (bottomLeftEnabled || bottomRightEnabled);
     }
 
-    static boolean canStartSide(boolean runtimeReady, boolean hasSideTargets) {
-        return runtimeReady && hasSideTargets;
-    }
-
     /** Preserve the existing distinction between an invisible IME and unknown bounds. */
     static boolean shouldCaptureOutsideWithIme(boolean imeVisible, Rect imeBounds) {
         return !imeVisible || imeBounds != null;
