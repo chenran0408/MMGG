@@ -474,6 +474,9 @@ final class DragShareController {
                     OperationTrace.event(OperationTrace.id("press", originDownTime),
                             "preview", "pending_image_shown");
                 }
+                log("press timing stage=preview_shown fromDownMs="
+                        + elapsedFromPressDown(originDownTime)
+                        + " mode=" + (whileHolding ? "holding" : "pending"));
             } catch (RuntimeException error) {
                 dismissPendingImagePreview(true);
                 failOverlay("图片预览窗口创建失败", error);
@@ -504,6 +507,8 @@ final class DragShareController {
             CapturedContent payload = pendingImagePreview;
             if (payload == null || !pendingImagePreviewWhileHolding
                     || pendingImageOriginDownTime != pressDownTime) return;
+            log("press timing stage=takeover fromDownMs="
+                    + elapsedFromPressDown(pressDownTime));
             DragShareSettings loadedSettings = pendingImageSettings;
             detachPendingImagePreviewForPromotion();
             showContentForPressTakeover(payload, x, y, loadedSettings, pressDownTime, true);
@@ -1026,6 +1031,7 @@ final class DragShareController {
                         + " source=" + payload.sourcePackage
                         + " targets=" + shareTargets.size()
                         + " targetQueryMs=" + elapsedMs
+                        + " fromDownMs=" + elapsedFromPressDown(capturedSession.rootDownTime)
                         + " style=" + settings.uiStyle
                         + " blockBackground=" + settings.blockBackgroundScroll
                         + " at=" + Math.round(initialX) + "," + Math.round(initialY));
@@ -2697,6 +2703,11 @@ final class DragShareController {
 
     private static void log(String message) {
         DragShareLog.i(TAG, message);
+    }
+
+    private static long elapsedFromPressDown(long downTime) {
+        return downTime < 0L
+                ? -1L : Math.max(0L, SystemClock.uptimeMillis() - downTime);
     }
 
     private static void log(String message, Throwable error) {

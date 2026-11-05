@@ -68,6 +68,7 @@ final class PressCaptureSource implements RootTouchSource.ContactListener, Press
     private boolean displayQueued;
     private boolean directDragArmed;
     private long confirmedAt;
+    private long inputReceivedElapsedRealtime = -1L;
     private CapturedContent cached;
     private float downX;
     private float downY;
@@ -278,6 +279,9 @@ final class PressCaptureSource implements RootTouchSource.ContactListener, Press
         if (action == MotionEvent.ACTION_DOWN) {
             cancelGesture();
             downTime = time;
+            inputReceivedElapsedRealtime = SystemClock.elapsedRealtime();
+            logTiming("root_down", downTime,
+                    "eventLagMs=" + Math.max(0L, SystemClock.uptimeMillis() - time));
             releaseMode = PressReleaseMode.Mode.NONE;
             released = false;
             // Combined triggers: a lone press is always a single-finger drag
@@ -558,6 +562,7 @@ final class PressCaptureSource implements RootTouchSource.ContactListener, Press
                 "ARMED", "press_duration_confirmed");
         controller.notePressPipeline(downTime);
         DragShareLog.i(TAG, "press confirmed by duration/movement elapsedMs=" + (now - detector.downTime()));
+        logTiming("confirmed", downTime, "");
         if (!released && cached == null && !lookupRunning) lookup();
         showHoldingImagePreviewIfReady();
     }
@@ -589,6 +594,7 @@ final class PressCaptureSource implements RootTouchSource.ContactListener, Press
         long requestDownTime = downTime;
         float x = downX, y = downY;
         boolean earlyCapture = !detector.isFired();
+        logTiming("capture_start", requestDownTime, "early=" + earlyCapture);
         Set<String> excluded = new LinkedHashSet<>(settings.accessibilityBlacklistedPackages);
         excluded.addAll(AccessibilityBlacklist.builtInPackages(context));
         AtomicBoolean excludedByPolicy = new AtomicBoolean();
@@ -611,6 +617,7 @@ final class PressCaptureSource implements RootTouchSource.ContactListener, Press
                         captureKindOutcome(content));
                 DragShareLog.i(TAG, "press capture returned elapsed_ms="
                         + (SystemClock.elapsedRealtime() - lookupStarted)
+                        + " fromDownMs=" + elapsedFromDown(requestDownTime)
                         + " kind=" + (content == null ? "none" : content.isImage() ? "image" : "text"));
                 if (content == null && result.rejectionReason != null) {
                     DragShareLog.i(TAG, "press lookup rejected reason=" + result.rejectionReason);
@@ -701,6 +708,7 @@ final class PressCaptureSource implements RootTouchSource.ContactListener, Press
         }
         DragShareLog.i(TAG, "press handoff ready elapsedFromConfirmMs="
                 + (SystemClock.uptimeMillis() - confirmedAt));
+        logTiming("handoff", request, "");
         if (content.isImage()) openImage(request, content);
         else openText(request, content);
     }
@@ -821,6 +829,19 @@ final class PressCaptureSource implements RootTouchSource.ContactListener, Press
         }
     }
 
+    private long elapsedFromDown(long requestDownTime) {
+        return requestDownTime < 0L
+                ? -1L : Math.max(0L, SystemClock.uptimeMillis() - requestDownTime);
+    }
+
+    private void logTiming(String stage, long requestDownTime, String details) {
+        DragShareLog.i(TAG, "press timing stage=" + stage
+                + " fromDownMs=" + elapsedFromDown(requestDownTime)
+                + " inputElapsedMs=" + (inputReceivedElapsedRealtime < 0L
+                ? -1L : Math.max(0L, SystemClock.elapsedRealtime() - inputReceivedElapsedRealtime))
+                + (details == null || details.isEmpty() ? "" : " " + details));
+    }
+
     void cancelGesture() {
         if (pointerDown || detector.isActive() || cached != null || pressOcr.hasCandidate() || lookupRunning) {
             controller.notePressDiagnostics(downTime, null, null, "press_detector_cleanup");
@@ -844,6 +865,7 @@ final class PressCaptureSource implements RootTouchSource.ContactListener, Press
         lookupRunning = false;
         displayQueued = false;
         directDragArmed = false;
+        inputReceivedElapsedRealtime = -1L;
         recycle(cached);
         cached = null;
         blocker.stopAsync();
