@@ -21,7 +21,7 @@ import java.util.List;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
-import de.robv.android.xposed.XposedHelpers;
+import com.leaf.hyperdragshare.compat.xposed.XposedHelpers;
 
 final class FanTriggerCapture {
     private static final int TYPE_NAVIGATION_BAR_PANEL = 2024;

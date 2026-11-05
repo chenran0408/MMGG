@@ -32,9 +32,9 @@ import java.util.IdentityHashMap;
 import java.util.Map;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
-import de.robv.android.xposed.XC_MethodHook;
-import de.robv.android.xposed.XposedHelpers;
-import de.robv.android.xposed.XposedBridge;
+import com.leaf.hyperdragshare.compat.xposed.XC_MethodHook;
+import com.leaf.hyperdragshare.compat.xposed.XposedHelpers;
+import com.leaf.hyperdragshare.compat.xposed.XposedBridge;
 
 /** Exact adapter for SecurityCenter 40001365. It never replaces the Home gesture/Binder handoff. */
 final class NativeSidebarHooks {

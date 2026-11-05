@@ -15,8 +15,8 @@ import android.widget.TextView;
 import java.lang.reflect.Method;
 import java.util.function.BooleanSupplier;
 
-import de.robv.android.xposed.XC_MethodHook;
-import de.robv.android.xposed.XposedBridge;
+import com.leaf.hyperdragshare.compat.xposed.XC_MethodHook;
+import com.leaf.hyperdragshare.compat.xposed.XposedBridge;
 
 /** Converts only Xiaomi's existing notification freeform action to freeform launch options. */
 public final class NotificationFreeformHook {

@@ -5,8 +5,8 @@ import java.util.ArrayList;
 import java.util.Collection;
 import java.util.function.BooleanSupplier;
 
-import de.robv.android.xposed.XC_MethodHook;
-import de.robv.android.xposed.XposedBridge;
+import com.leaf.hyperdragshare.compat.xposed.XC_MethodHook;
+import com.leaf.hyperdragshare.compat.xposed.XposedBridge;
 
 /** Opt-in Xiaomi freeform eligibility and stack-count adjustments for the system process. */
 public final class FreeformRestrictionHooks {

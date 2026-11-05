@@ -9,8 +9,8 @@ import android.os.Looper;
 
 import com.leaf.hyperdragshare.gestures.config.ConfigContract;
 
-import de.robv.android.xposed.XC_MethodHook;
-import de.robv.android.xposed.XposedBridge;
+import com.leaf.hyperdragshare.compat.xposed.XC_MethodHook;
+import com.leaf.hyperdragshare.compat.xposed.XposedBridge;
 
 /**
  * Keeps the two optional system_server freeform switches in a local snapshot.

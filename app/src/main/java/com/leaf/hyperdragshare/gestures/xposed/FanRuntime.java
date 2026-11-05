@@ -34,7 +34,7 @@ import com.leaf.hyperdragshare.codex.NativeSidebarState;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
-import de.robv.android.xposed.XposedHelpers;
+import com.leaf.hyperdragshare.compat.xposed.XposedHelpers;
 
 final class FanRuntime {
 

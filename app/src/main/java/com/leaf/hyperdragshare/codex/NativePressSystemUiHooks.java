@@ -4,8 +4,8 @@ import android.view.MotionEvent;
 import android.view.InputDevice;
 import android.view.InputEvent;
 
-import de.robv.android.xposed.XC_MethodHook;
-import de.robv.android.xposed.XposedBridge;
+import com.leaf.hyperdragshare.compat.xposed.XC_MethodHook;
+import com.leaf.hyperdragshare.compat.xposed.XposedBridge;
 
 /** Passive diagnostics for the original MotionEvents seen by HyperOS's multi-window handler. */
 final class NativePressSystemUiHooks {

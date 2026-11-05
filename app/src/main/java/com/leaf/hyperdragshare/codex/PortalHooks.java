@@ -20,9 +20,9 @@ import java.util.concurrent.ConcurrentHashMap;
 
 import com.leaf.hyperdragshare.gestures.config.OverlayTouchRegions;
 
-import de.robv.android.xposed.XC_MethodHook;
-import de.robv.android.xposed.XposedBridge;
-import de.robv.android.xposed.XposedHelpers;
+import com.leaf.hyperdragshare.compat.xposed.XC_MethodHook;
+import com.leaf.hyperdragshare.compat.xposed.XposedBridge;
+import com.leaf.hyperdragshare.compat.xposed.XposedHelpers;
 
 final class PortalHooks {
     private static final String TAG = "DragShare/Taplus";

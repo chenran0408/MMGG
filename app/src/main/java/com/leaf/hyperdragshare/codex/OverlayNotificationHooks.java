@@ -1,8 +1,8 @@
 package com.leaf.hyperdragshare.codex;
 
-import de.robv.android.xposed.XC_MethodHook;
-import de.robv.android.xposed.XposedBridge;
-import de.robv.android.xposed.XposedHelpers;
+import com.leaf.hyperdragshare.compat.xposed.XC_MethodHook;
+import com.leaf.hyperdragshare.compat.xposed.XposedBridge;
+import com.leaf.hyperdragshare.compat.xposed.XposedHelpers;
 
 /** Suppresses only the framework's alert-window notice for this module. */
 final class OverlayNotificationHooks {

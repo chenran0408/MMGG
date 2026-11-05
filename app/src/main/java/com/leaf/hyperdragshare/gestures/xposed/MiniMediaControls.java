@@ -7,7 +7,7 @@ import android.graphics.Rect;
 import android.media.session.MediaSessionManager;
 import android.os.Handler;
 
-import de.robv.android.xposed.XposedHelpers;
+import com.leaf.hyperdragshare.compat.xposed.XposedHelpers;
 
 /** Mini-freeform media decoration state and controller lifecycle for the fan runtime. */
 final class MiniMediaControls {

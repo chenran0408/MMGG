@@ -9,9 +9,9 @@ import android.os.Binder;
 import java.util.Arrays;
 import java.util.concurrent.atomic.AtomicBoolean;
 
-import de.robv.android.xposed.XC_MethodHook;
-import de.robv.android.xposed.XposedBridge;
-import de.robv.android.xposed.XposedHelpers;
+import com.leaf.hyperdragshare.compat.xposed.XC_MethodHook;
+import com.leaf.hyperdragshare.compat.xposed.XposedBridge;
+import com.leaf.hyperdragshare.compat.xposed.XposedHelpers;
 
 /** Version-independent compatibility for MMGG's AICR Core Binder calls. */
 final class AicrCoreAccessHooks {

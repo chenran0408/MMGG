@@ -13,7 +13,7 @@ import java.util.Collections;
 import java.util.Set;
 import java.util.WeakHashMap;
 
-import de.robv.android.xposed.XposedHelpers;
+import com.leaf.hyperdragshare.compat.xposed.XposedHelpers;
 
 /** Keeps HyperOS' native recents clear-all button in sync with the module setting. */
 final class RecentsClearButtonRuntime {

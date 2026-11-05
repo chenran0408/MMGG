@@ -641,7 +641,7 @@ final class ShortcutHostRuntime {
         JSONArray out = new JSONArray();
         try {
             android.os.UserManager users = context.getSystemService(android.os.UserManager.class);
-            Object dualUser = de.robv.android.xposed.XposedHelpers.callMethod(users, "getUserInfo", 999);
+            Object dualUser = com.leaf.hyperdragshare.compat.xposed.XposedHelpers.callMethod(users, "getUserInfo", 999);
             List<LauncherActivityInfo> activities = dualUser == null
                     ? java.util.Collections.emptyList()
                     : launcherApps.getActivityList(null, userHandle(999));

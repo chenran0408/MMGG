@@ -219,7 +219,7 @@ public final class PortalImagePayloadTest {
         }
     }
 
-    @Implements(className = "de.robv.android.xposed.XposedHelpers", isInAndroidSdk = false)
+    @Implements(className = "com.leaf.hyperdragshare.compat.xposed.XposedHelpers", isInAndroidSdk = false)
     public static final class XposedHelpersShadow {
         @Implementation
         protected static Object getStaticObjectField(Class<?> type, String name) {

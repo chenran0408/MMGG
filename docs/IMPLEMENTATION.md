@@ -93,7 +93,7 @@ build304完整testDebugUnitTest/lintDebug/assembleDebug成功：208项测试0失
 - 注入包：`com.miui.contentextension`、`com.xiaomi.aicr`、`android`
 - 不注入：`com.miui.contentcatcher`（Application Extension Service `4.1.9`）
 - Android：minSdk 33，targetSdk 34，compileSdk 37
-- LSPosed API：82
+- LSPosed/libxposed API：102
 - 可靠输入：root + Linux evdev
 
 LSPosed 作用域由 `res/values/arrays.xml` 声明，且 `MainHook` 在运行时再次检查包名。传送门
@@ -132,7 +132,8 @@ Root/MIUI 输入源；已连接的无障碍服务收到无障碍模式时才启�
 
 | 文件 | 职责 |
 | --- | --- |
-| `MainHook.java` | 限制 LSPosed 注入包 |
+| `DragShareModule.kt` | libxposed API 102 入口和包回调 |
+| `MainHook.java` | 兼容路由，限制注入包并安装各作用域 Hook |
 | `PortalHooks.java` | 传送门 Hook、生命周期、输入源仲裁、取消信号处理 |
 | `RootTouchSource.java`、`EvdevTouchParser.java` | evdev 发现、解析、稳定主触点和 DOWN/MOVE/UP/CANCEL |
 | `MiuiMotionSource.java` | MIUI MotionEvent 回退通道 |

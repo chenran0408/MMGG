@@ -2,8 +2,8 @@ package com.leaf.hyperdragshare.codex;
 
 import com.leaf.hyperdragshare.gestures.xposed.FanFreeformHook;
 import com.leaf.hyperdragshare.gestures.xposed.SystemServerFreeformConfig;
-import de.robv.android.xposed.IXposedHookLoadPackage;
-import de.robv.android.xposed.callbacks.XC_LoadPackage;
+import com.leaf.hyperdragshare.compat.xposed.IXposedHookLoadPackage;
+import com.leaf.hyperdragshare.compat.xposed.callbacks.XC_LoadPackage;
 
 public final class MainHook implements IXposedHookLoadPackage {
     static final String TAPLUS_PACKAGE = "com.miui.contentextension";
@@ -30,8 +30,8 @@ public final class MainHook implements IXposedHookLoadPackage {
         } else if (SECURITY_CENTER_PACKAGE.equals(lpparam.packageName)
                 && "com.miui.securitycenter:ui".equals(lpparam.processName)
                 && android.os.Build.VERSION.SDK_INT == 37) {
-            de.robv.android.xposed.XposedHelpers.findAndHookMethod(android.app.Application.class,
-                    "attach", android.content.Context.class, new de.robv.android.xposed.XC_MethodHook() {
+            com.leaf.hyperdragshare.compat.xposed.XposedHelpers.findAndHookMethod(android.app.Application.class,
+                    "attach", android.content.Context.class, new com.leaf.hyperdragshare.compat.xposed.XC_MethodHook() {
                 @Override protected void afterHookedMethod(MethodHookParam param) {
                     if (sidebarHookInstalled) return;
                     android.content.Context context = (android.content.Context) param.args[0];
