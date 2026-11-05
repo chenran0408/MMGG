@@ -62,6 +62,12 @@ public final class NotificationFreeformHook {
             if (component == null && launchIntent != null) {
                 component = launchIntent.resolveActivity(context.getPackageManager());
             }
+            if (component != null
+                    && FreeformStormGuard.processWide.isSuppressing(component.getPackageName())) {
+                log("freeform storm cooldown; preserving normal notification launch package="
+                        + component.getPackageName());
+                return null;
+            }
             Object xiaomiOptions = getXiaomiActivityOptions(classLoader, context, component);
             return mergeOptionsPair(originalPair, xiaomiOptions);
         } catch (ReflectiveOperationException | RuntimeException | LinkageError error) {

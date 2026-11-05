@@ -52,6 +52,7 @@ final class HyperOsFreeformBridge {
     private final Handler mainHandler;
     private final Object taskLock = new Object();
     private final FreeformTaskRegistry tasks = new FreeformTaskRegistry();
+    private final FreeformStormGuard stormGuard = FreeformStormGuard.processWide;
     private final LinkedHashSet<Integer> visibleFreeformTaskIds = new LinkedHashSet<>();
     private final LinkedHashSet<Integer> normalFreeformTaskIds = new LinkedHashSet<>();
     private final LinkedHashSet<Integer> edgePinnedTaskIds = new LinkedHashSet<>();
@@ -459,7 +460,14 @@ final class HyperOsFreeformBridge {
 
     void onTaskAppeared(int taskId) {
         Object info = taskInfo(taskId);
-        if (info != null) onTaskInfo(info);
+        if (info != null) {
+            String packageName = packageName(info);
+            if (stormGuard.record(packageName)) {
+                Log.i("Freeform storm cooldown started package=" + packageName
+                        + " cooldownMs=" + stormGuard.remainingCooldownMs(packageName));
+            }
+            onTaskInfo(info);
+        }
     }
 
     void onNativeFreeformTouchDown(int taskId) {
