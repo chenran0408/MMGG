@@ -29,6 +29,9 @@ final class PressOcrFlow {
 
         boolean isReleased();
 
+        /** True while the current press is the two-contact gesture. */
+        boolean isTwoFingerMode();
+
         PressReleaseMode.Mode releaseMode();
 
         long downTime();
@@ -132,8 +135,14 @@ final class PressOcrFlow {
     private void deliverText() {
         Candidate pending = candidate;
         if (pending == null || !pending.ocrComplete) return;
-        if (!host.isReleased()) return;
-        if (host.releaseMode() == PressReleaseMode.Mode.NONE) {
+        // A two-finger long press is confirmed by duration while both contacts
+        // are still down. Open the text window as soon as OCR completes. A
+        // single-finger candidate still waits for the normal release path.
+        boolean triggerReady = host.isReleased()
+                || (host.isTwoFingerMode() && host.confirmedAt() > 0L);
+        if (!triggerReady) return;
+        if (host.releaseMode() == PressReleaseMode.Mode.NONE
+                && !(host.isTwoFingerMode() && host.confirmedAt() > 0L)) {
             candidate = null;
             host.recycleContent(pending.content);
             host.controller().endPressPipeline(host.downTime());

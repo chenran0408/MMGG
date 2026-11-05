@@ -22,6 +22,7 @@ import android.os.VibrationEffect;
 import android.os.Vibrator;
 import android.os.VibratorManager;
 import android.media.session.MediaSessionManager;
+import android.media.AudioManager;
 import android.view.MotionEvent;
 import android.view.ViewConfiguration;
 import android.view.WindowInsets;
@@ -69,6 +70,10 @@ final class FanRuntime {
     private final HoneycombOverlayController honeycombOverlay;
 
     private final FullscreenAppLauncher fullscreenLauncher;
+
+    private final MoreAppsOverlayController moreAppsOverlay;
+
+    private final RuntimeTarget moreAppsTarget;
 
     private final FanTriggerCapture triggerCapture;
 
@@ -247,6 +252,9 @@ final class FanRuntime {
         overlay = new FanOverlayController(context, mainHandler);
         honeycombOverlay = new HoneycombOverlayController(context, mainHandler);
         fullscreenLauncher = new FullscreenAppLauncher(context);
+        moreAppsTarget = RuntimeTarget.moreApps("更多应用",
+                context.getDrawable(android.R.drawable.ic_menu_more));
+        moreAppsOverlay = new MoreAppsOverlayController(context, mainHandler, fullscreenLauncher);
         triggerCapture = new FanTriggerCapture(context, mainHandler, new FanTriggerCapture.Listener() {
 
             @Override
@@ -265,6 +273,28 @@ final class FanRuntime {
         NativeSidebarState.observe(context, configHandler,
                 () -> mainHandler.post(this::refreshOutsideCapture));
         freeform = new HyperOsFreeformBridge(context, classLoader, mainHandler);
+        miniMediaControls.setQuickMenu(new MiniFreeformQuickMenuController(context, windowManager,
+                new MiniFreeformQuickMenuController.Actions() {
+                    @Override public void onMute() {
+                        AudioManager audio = context.getSystemService(AudioManager.class);
+                        if (audio == null) return;
+                        try {
+                            boolean muted = audio.isStreamMute(AudioManager.STREAM_MUSIC);
+                            audio.adjustStreamVolume(AudioManager.STREAM_MUSIC,
+                                    muted ? AudioManager.ADJUST_UNMUTE : AudioManager.ADJUST_MUTE, 0);
+                        } catch (Throwable error) {
+                            Log.e("Cannot toggle mini-window mute", error);
+                        }
+                    }
+
+                    @Override public void onFullscreen() {
+                        freeform.fullscreenTrackedOrPendingLaunch();
+                    }
+
+                    @Override public void onClose() {
+                        freeform.dismissTrackedOrPendingLaunch();
+                    }
+                }));
         outsideGestures = new OutsideGestureRecognizer(mainHandler, viewConfiguration, density,
                 new OutsideGestureRecognizer.Listener() {
                     @Override public void onOutsideAction(boolean doubleTap) {
@@ -454,6 +484,7 @@ final class FanRuntime {
 
     void onTaskInfo(Object info) {
         freeform.onTaskInfo(info);
+        freeform.updateMiniSurfaceDecoration(info);
         miniMediaControls.updateMiniMedia(info, config);
         releaseOutsideCaptureTransitionIfSettled();
         refreshForegroundGestureExclusion();
@@ -1003,6 +1034,13 @@ final class FanRuntime {
                 if (selected >= 0 && selected < activeTargets.size()) {
                     RuntimeTarget target = activeTargets.get(selected);
                     overlay.confirmAndHide(selected);
+                    if (target.isMoreApps()) {
+                        outsideCapture.remove();
+                        outsideGestures.clearAll();
+                        resetFan(false);
+                        moreAppsOverlay.show();
+                        return;
+                    }
                     boolean fullscreen = config.bottomFullscreenFor(isLandscape());
                     if (fullscreen) {
                         launchFullscreenTarget(target, false);
@@ -1066,6 +1104,12 @@ final class FanRuntime {
 
             @Override
             public void onLaunch(RuntimeTarget target) {
+                if (target.isMoreApps()) {
+                    honeycombOverlay.dismiss();
+                    resetFan(false);
+                    moreAppsOverlay.show();
+                    return;
+                }
                 if (config.bottomHoneycombFreeformFor(isLandscape())) {
                     freeform.launch(target, config, FanRuntime.this::refreshOutsideCapture);
                     refreshOutsideCaptureAfterLaunch();
@@ -1838,10 +1882,10 @@ final class FanRuntime {
                 updateRecentsCleanCover(next);
                 refreshForegroundGestureExclusion();
                 outsideGestures.setDoubleTapTimeout(next.outsideTapWindowMs);
-                targets = nextTargets;
-                honeycombTargets = nextHoneycombTargets;
+                targets = appendMoreTarget(nextTargets);
+                honeycombTargets = appendMoreTarget(nextHoneycombTargets);
                 if (activeTargets.isEmpty())
-                    activeTargets = nextTargets;
+                    activeTargets = targets;
                 freeform.updateConfig(next);
                 miniMediaControls.refreshMiniMediaConfig(config);
                 if (!next.honeycombEnabled && honeycombOverlay.isVisible()) {
@@ -1872,6 +1916,12 @@ final class FanRuntime {
         }
         configLoadQueued = true;
         configHandler.post(this::reloadConfig);
+    }
+
+    private List<RuntimeTarget> appendMoreTarget(List<RuntimeTarget> source) {
+        ArrayList<RuntimeTarget> result = new ArrayList<>(source);
+        result.add(moreAppsTarget);
+        return Collections.unmodifiableList(result);
     }
 
     private void scheduleConfigRetry() {

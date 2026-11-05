@@ -16,6 +16,7 @@ import android.view.Surface;
 import android.view.WindowInsets;
 import android.view.WindowManager;
 import android.view.WindowMetrics;
+import android.view.SurfaceControl;
 
 import com.leaf.hyperdragshare.gestures.config.ConfigContract;
 
@@ -602,6 +603,32 @@ final class HyperOsFreeformBridge {
             }
         }
         if (retainTransition) retainOwnershipDuringModeTransition(taskId);
+    }
+
+    /** Applies the same rounded clipping to a vendor task leash when HyperOS exposes it. */
+    void updateMiniSurfaceDecoration(Object info) {
+        if (info == null || !booleanCall(info, "isMiniState", false)) return;
+        Object leash = null;
+        for (String method : new String[]{"getLeash", "getSurfaceControl", "getTaskLeash"}) {
+            try {
+                leash = XposedHelpers.callMethod(info, method);
+                if (leash != null) break;
+            } catch (Throwable ignored) { }
+        }
+        if (!(leash instanceof SurfaceControl)) return;
+        SurfaceControl surface = (SurfaceControl) leash;
+        try {
+            if (!surface.isValid()) return;
+            SurfaceControl.Transaction transaction = new SurfaceControl.Transaction();
+            java.lang.reflect.Method setter = transaction.getClass().getMethod(
+                    "setCornerRadius", SurfaceControl.class, float.class);
+            setter.invoke(transaction, surface,
+                    Math.max(1f, 16f * context.getResources().getDisplayMetrics().density));
+            transaction.apply();
+        } catch (Throwable error) {
+            Log.i("Mini task leash does not support rounded clipping: "
+                    + error.getClass().getSimpleName());
+        }
     }
 
     void onTaskVanished(int taskId) {

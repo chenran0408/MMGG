@@ -109,6 +109,10 @@ final class PressCaptureSource implements RootTouchSource.ContactListener, Press
         return released;
     }
 
+    @Override public boolean isTwoFingerMode() {
+        return twoFingerModeForGesture;
+    }
+
     @Override public PressReleaseMode.Mode releaseMode() {
         return releaseMode;
     }
@@ -298,9 +302,6 @@ final class PressCaptureSource implements RootTouchSource.ContactListener, Press
             cancelGesture();
             return;
         }
-        if (action == MotionEvent.ACTION_UP && detector.isActive()) {
-            detector.fire(time);
-        }
         boolean hadFired = detector.isFired();
         // Once the two-finger hold has fired, the remaining finger owns the
         // drag stream. Do not feed its single-pointer MOVE/UP back into the
@@ -364,9 +365,6 @@ final class PressCaptureSource implements RootTouchSource.ContactListener, Press
         if (stopped) return false;
         boolean contactReleased = action == MotionEvent.ACTION_POINTER_UP
                 || action == MotionEvent.ACTION_UP;
-        if (contactReleased && detector.isActive()) {
-            detector.fire(eventTime);
-        }
         boolean initialTwoFingerDown = pointerCount == 2 && action == MotionEvent.ACTION_DOWN
                 && !pointerDown && !detector.isActive();
         if (initialTwoFingerDown) {
@@ -526,6 +524,7 @@ final class PressCaptureSource implements RootTouchSource.ContactListener, Press
             displayQueued = false;
             controller.showContentForPressTakeover(content, latestX, latestY, settings, downTime);
         } else if (released && releaseMode != PressReleaseMode.Mode.NONE) display();
+        else if (twoFingerModeForGesture && detector.isFired()) display();
         else schedule();
         return true;
     }
@@ -657,6 +656,8 @@ final class PressCaptureSource implements RootTouchSource.ContactListener, Press
                         cached = null;
                         controller.showPendingImagePreview(content, controller.latestPointerX(),
                                 controller.latestPointerY(), settings, requestDownTime, true);
+                    } else if (detector.isFired() && twoFingerModeForGesture) {
+                        display();
                     } else schedule();
                 });
             } catch (IOException | SecurityException error) {

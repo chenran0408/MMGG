@@ -16,6 +16,8 @@ final class MiniMediaControls {
     private final MediaSessionManager miniMediaSessions;
     private final MiniFreeformMediaHost miniMediaHost;
 
+    private MiniFreeformQuickMenuController quickMenu;
+
     private MiniFreeformMediaController miniMediaController;
 
     private String miniMediaPackage;
@@ -30,6 +32,10 @@ final class MiniMediaControls {
         this.mainHandler = mainHandler;
         this.miniMediaSessions = miniMediaSessions;
         this.miniMediaHost = miniMediaHost;
+    }
+
+    void setQuickMenu(MiniFreeformQuickMenuController quickMenu) {
+        this.quickMenu = quickMenu;
     }
 
     /** Feeds the media decoration from the same task callback that observes mini state. */
@@ -56,6 +62,7 @@ final class MiniMediaControls {
         miniMediaTaskId = taskId;
         miniMediaPackage = packageName;
         miniMediaBounds = new Rect(bounds);
+        if (quickMenu != null) quickMenu.update(taskId, bounds);
         if (!config.miniMediaControlsEnabled) {
             destroyMiniMediaController();
             return;
@@ -97,6 +104,7 @@ final class MiniMediaControls {
 
     private void clearMiniMedia() {
         destroyMiniMediaController();
+        if (quickMenu != null) quickMenu.hide();
         miniMediaPackage = null;
         miniMediaTaskId = -1;
         miniMediaBounds = null;

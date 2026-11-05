@@ -4,6 +4,7 @@ import android.content.ComponentName;
 import android.graphics.drawable.Drawable;
 
 final class RuntimeTarget {
+    static final String MORE_APPS_PACKAGE = "com.leaf.hyperdragshare.more_apps";
     final ComponentName component;
     final String packageName;
     final String shortcutId;
@@ -11,6 +12,7 @@ final class RuntimeTarget {
     final String label;
     final Drawable icon;
     final int userId;
+    final boolean moreApps;
 
     RuntimeTarget(ComponentName component, String label, Drawable icon) {
         this(component, label, icon, 0);
@@ -24,6 +26,7 @@ final class RuntimeTarget {
         this.label = label;
         this.icon = icon;
         this.userId = Math.max(0, userId);
+        this.moreApps = false;
     }
 
     RuntimeTarget(String packageName, String shortcutId, String label, Drawable icon) {
@@ -39,6 +42,22 @@ final class RuntimeTarget {
         this.label = label;
         this.icon = icon;
         this.userId = Math.max(0, userId);
+        this.moreApps = false;
+    }
+
+    private RuntimeTarget(String label, Drawable icon) {
+        this.component = null;
+        this.packageName = MORE_APPS_PACKAGE;
+        this.shortcutId = "";
+        this.shortcutIntentUri = "";
+        this.label = label;
+        this.icon = icon;
+        this.userId = 0;
+        this.moreApps = true;
+    }
+
+    static RuntimeTarget moreApps(String label, Drawable icon) {
+        return new RuntimeTarget(label, icon);
     }
 
     String positionIdentity() {
@@ -49,4 +68,5 @@ final class RuntimeTarget {
 
     boolean isShortcut() { return !shortcutId.isEmpty(); }
     boolean isLauncherShortcut() { return isShortcut() && !shortcutIntentUri.isEmpty(); }
+    boolean isMoreApps() { return moreApps; }
 }
