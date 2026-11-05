@@ -648,6 +648,7 @@ public final class RootNodeCaptureMain {
         for (AccessibilityNodeSnapshot label : nodes) {
             if (!label.visible || !source.equals(label.packageName)
                     || !label.bounds.contains((int) x, (int) y)) continue;
+            if (isCommonInteractiveControl(label)) return true;
             if (label.enabled && label.rangeControl) return true;
             String text = normalizeHoldText(label.text);
             String description = normalizeHoldText(label.contentDescription);
@@ -685,6 +686,38 @@ public final class RootNodeCaptureMain {
             }
         }
         return false;
+    }
+
+    /**
+     * Prevent the press action from competing with controls that own a long hold,
+     * such as buttons, fields, switches, sliders, menus, and media surfaces.
+     * Text and image nodes remain eligible so ordinary content can still be picked.
+     */
+    private static boolean isCommonInteractiveControl(AccessibilityNodeSnapshot node) {
+        if (!node.enabled || node.password || (!node.clickable && !node.longClickable)) return false;
+        String className = node.className == null
+                ? "" : node.className.toLowerCase(java.util.Locale.ROOT);
+        boolean hasLabel = (node.text != null && !node.text.trim().isEmpty())
+                || (node.contentDescription != null && !node.contentDescription.trim().isEmpty());
+        if (!hasLabel) return false;
+        if (className.contains("image")) return false;
+        if (node.editable) return true;
+        if (className.contains("button") || className.contains("switch")
+                || className.contains("checkbox") || className.contains("radiobutton")
+                || className.contains("seekbar") || className.contains("slider")
+                || className.contains("spinner") || className.contains("ratingbar")
+                || className.contains("progressbar") || className.contains("menuitem")
+                || className.contains("surfaceview") || className.contains("textureview")
+                || className.contains("webview") || className.contains("mapview")
+                || className.contains("videoview") || className.contains("player")) {
+            return true;
+        }
+        // Compose and vendor controls are often exposed as a leaf android.view.View.
+        // Do not apply this to TextView prose or to a container holding a message label.
+        return node.leaf && !className.endsWith("textview")
+                && !className.endsWith("edittext")
+                && ("android.view.view".equals(className)
+                || node.text == null || node.text.trim().isEmpty());
     }
 
     private static boolean isScopedControl(AccessibilityNodeSnapshot control,
