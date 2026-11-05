@@ -391,6 +391,27 @@ private fun portalSettingEntries(
             setAccessibilityLongPressTimeoutMillis(timeout)
         }
     }
+    row("drag.twoFingerLongPressTimeout", "双指分词确认时间", SettingModule.PORTAL, "触发与识别",
+        summary = "第二指加入后开始计时，达到时长后打开分词与大爆炸；单指使用独立确认时间",
+        keywords = "双指 长按 时间 毫秒 分词 大爆炸 触发 拖拽 单指 第二指",
+    ) { title, summary, enabled ->
+        SliderPreference(
+            title = title,
+            summary = summary,
+            value = twoFingerLongPressTimeout,
+            valueText = "${twoFingerLongPressTimeout.roundToInt()} ms",
+            valueRange = DragShareSettings.MIN_TWO_FINGER_LONG_PRESS_TIMEOUT_MILLIS.toFloat()
+                ..DragShareSettings.MAX_TWO_FINGER_LONG_PRESS_TIMEOUT_MILLIS.toFloat(),
+            steps = 24,
+            showKeyPoints = true,
+            keyPoints = listOf(250f, 600f, 1200f, 2000f, 3000f),
+            onValueChange = { twoFingerLongPressTimeout = it },
+            onValueChangeFinished = {
+                persist { _ -> setTwoFingerLongPressTimeoutMillis(twoFingerLongPressTimeout.roundToInt()) }
+            },
+            enabled = enabled,
+        )
+    }
     row("ocr.system", "系统 AICR 识字", SettingModule.PORTAL, "触发与识别",
         summary = "图片与屏幕识字使用系统 AICR V2",
         keywords = "OCR 识字 图片 屏幕 AICR 小米", icon = MiuixIcons.Show,
@@ -913,28 +934,6 @@ private fun portalSettingEntries(
         )
     }
 
-    row("drag.twoFingerLongPressTimeout", "双指分词确认时间", SettingModule.PORTAL, "触发与识别",
-        summary = "第二指加入后开始计时；达到此时长后打开分词与大爆炸。单指使用独立确认时间，两种触发同时可用",
-        keywords = "双指 长按 时间 毫秒 分词 大爆炸 触发 拖拽 单指 第二指",
-    ) { title, summary, enabled ->
-        SliderPreference(
-            title = title,
-            summary = summary,
-            value = twoFingerLongPressTimeout,
-            valueText = "${twoFingerLongPressTimeout.roundToInt()} ms",
-            valueRange = DragShareSettings.MIN_TWO_FINGER_LONG_PRESS_TIMEOUT_MILLIS.toFloat()
-                ..DragShareSettings.MAX_TWO_FINGER_LONG_PRESS_TIMEOUT_MILLIS.toFloat(),
-            steps = 24,
-            showKeyPoints = true,
-            keyPoints = listOf(250f, 600f, 1200f, 2000f, 3000f),
-            onValueChange = { twoFingerLongPressTimeout = it },
-            onValueChangeFinished = {
-                persist { _ -> setTwoFingerLongPressTimeoutMillis(twoFingerLongPressTimeout.roundToInt()) }
-            },
-            enabled = enabled,
-        )
-    }
-
     row("copy.enabled", "复制直达与分词", SettingModule.COPY_DIRECT, "启用与触发",
         summary = "使用系统复制直达卡片，保留分词和指定浏览器，去除应用商店推广；需启用传送门/AICR作用域",
         keywords = "剪贴板 复制卡片 实体 识别 执行动作",
@@ -1078,7 +1077,7 @@ private fun portalSettingEntries(
         OverlayDropdownPreference(
             title = title,
             summary = summary,
-            items = listOf("禁用", "信息（当前）", "调试"),
+            items = listOf("禁用", "信息", "调试"),
             selectedIndex = settings.logLevel.coerceIn(
                 DragShareSettings.LOG_LEVEL_DISABLED,
                 DragShareSettings.LOG_LEVEL_DEBUG,
@@ -1112,7 +1111,7 @@ private fun portalSettingEntries(
         OverlayDropdownPreference(
             title = title,
             summary = summary,
-            items = listOf("系统日志（当前）", "文件"),
+            items = listOf("系统日志", "文件"),
             selectedIndex = settings.logDestination.coerceIn(
                 DragShareSettings.LOG_DESTINATION_SYSTEM,
                 DragShareSettings.LOG_DESTINATION_FILE,
