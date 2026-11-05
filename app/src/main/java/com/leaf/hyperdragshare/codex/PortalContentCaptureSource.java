@@ -94,7 +94,7 @@ final class PortalContentCaptureSource {
     }
 
     private static void traceCaptureOutcome(String sourcePackage, String outcome) {
-        String source = "com.tencent.mm".equals(sourcePackage) ? "wechat" : "other";
+        String source = sourcePackage == null ? "unknown" : sourcePackage;
         OperationTrace.event("-", "portal_capture", source + "_" + outcome);
     }
 

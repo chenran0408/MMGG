@@ -56,7 +56,7 @@ public final class PortalImagePayloadTest {
         assertEquals(CapturedContent.ImageOrigin.PORTAL_MEDIA, captured.imageOrigin);
         assertNotSame(current, captured.bitmap);
         assertFalse(current.isRecycled());
-        assertTrue(operationMessages().contains("op=- stage=portal_capture outcome=wechat_accepted_image_view_bitmap"));
+        assertTrue(operationMessages().contains("op=- stage=portal_capture outcome=com.tencent.mm_accepted_image_view_bitmap"));
         captured.bitmap.recycle();
         current.recycle();
     }
@@ -71,7 +71,7 @@ public final class PortalImagePayloadTest {
 
         assertNull(captured);
         assertFalse(stale.isRecycled());
-        assertTrue(operationMessages().contains("op=- stage=portal_capture outcome=wechat_missing_payload"));
+        assertTrue(operationMessages().contains("op=- stage=portal_capture outcome=com.tencent.mm_missing_payload"));
         stale.recycle();
     }
 
@@ -86,7 +86,7 @@ public final class PortalImagePayloadTest {
 
         assertNull(captured);
         assertFalse(stale.isRecycled());
-        assertTrue(operationMessages().contains("op=- stage=portal_capture outcome=wechat_stale_bitmap"));
+        assertTrue(operationMessages().contains("op=- stage=portal_capture outcome=com.tencent.mm_stale_bitmap"));
         current.recycle();
         stale.recycle();
     }
@@ -107,7 +107,7 @@ public final class PortalImagePayloadTest {
             }
             Files.write(raw.toPath(), log.toString().getBytes(StandardCharsets.UTF_8));
             String filtered = DiagnosticBundleExporter.filterRuntimeLog(raw, false);
-            assertTrue(filtered.contains("stage=portal_capture outcome=wechat_missing_payload"));
+            assertTrue(filtered.contains("stage=portal_capture outcome=com.tencent.mm_missing_payload"));
             assertFalse(filtered.contains("com.tencent.mm"));
         } finally {
             Files.deleteIfExists(raw.toPath());

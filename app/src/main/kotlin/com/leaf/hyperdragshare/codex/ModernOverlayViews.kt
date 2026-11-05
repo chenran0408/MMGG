@@ -59,8 +59,6 @@ import androidx.compose.ui.layout.boundsInRoot
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.ComposeView
 import androidx.compose.ui.platform.LocalDensity
-import androidx.compose.ui.semantics.contentDescription
-import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -344,23 +342,6 @@ internal class ModernPreviewOverlayView @JvmOverloads constructor(
                                 textAlign = TextAlign.Center,
                                 maxLines = 8,
                                 overflow = TextOverflow.Ellipsis,
-                            )
-                        }
-                        if (payload.isWeChatThumbnail()) {
-                            Text(
-                                text = "缩略图",
-                                color = Color.White,
-                                fontSize = 11.sp,
-                                fontWeight = FontWeight.SemiBold,
-                                modifier = Modifier
-                                    .align(Alignment.TopEnd)
-                                    .padding(4.dp)
-                                    .clip(RoundedCornerShape(6.dp))
-                                    .background(Color(0xDC000000))
-                                    .padding(horizontal = 6.dp, vertical = 3.dp)
-                                    .semantics {
-                                        contentDescription = "微信图片缩略图，非原文件"
-                                    },
                             )
                         }
                     }

@@ -5,12 +5,12 @@ import android.os.Bundle;
 import android.os.SystemClock;
 
 /**
- * Owns the WeChat press-candidate state: direct OCR, text delivery and
+ * Owns the press OCR candidate state: direct OCR, text delivery and
  * screen-capture rejection. Drag routing follows the shared gesture semantics;
  * generation checks and Root authority stay with {@link PressCaptureSource}
  * and this class reads them only via Host.
  */
-final class WeChatPressFlow {
+final class PressOcrFlow {
     /** Keeps the historical log tag so existing diagnostic greps stay valid. */
     private static final String TAG = "PressCaptureSource";
 
@@ -80,7 +80,7 @@ final class WeChatPressFlow {
     private final Host host;
     private Candidate candidate;
 
-    WeChatPressFlow(Host host) {
+    PressOcrFlow(Host host) {
         this.host = host;
     }
 
@@ -106,11 +106,11 @@ final class WeChatPressFlow {
     }
 
     void startOcrDirect(long request, CapturedContent content) {
-        OperationTrace.event(host.operationId(), "wechat_ocr", "started");
+        OperationTrace.event(host.operationId(), "press_ocr", "started");
         Candidate pending = new Candidate(content, request, host.operationId());
         candidate = pending;
         host.startTouchBlocker(request);
-        DragShareLog.i(TAG, "WeChat OCR started elapsedFromConfirmMs="
+        DragShareLog.i(TAG, "Press OCR started elapsedFromConfirmMs="
                 + (SystemClock.uptimeMillis() - host.confirmedAt()) + "; gesture decides text or image");
         host.setActiveOcr(host.ocrRecognizer().recognize(host.context(), content.bitmap, (text, error) -> {
             if (pending != candidate || request != host.generation() || host.isStopped()) {
@@ -122,7 +122,7 @@ final class WeChatPressFlow {
             pending.ocrComplete = true;
             pending.text = text;
             pending.error = error;
-            DragShareLog.i(TAG, "WeChat OCR finished elapsedMs="
+            DragShareLog.i(TAG, "Press OCR finished elapsedMs="
                     + (SystemClock.elapsedRealtime() - pending.started)
                     + " characters=" + (text == null ? 0 : text.length()));
             deliverText();
@@ -148,8 +148,8 @@ final class WeChatPressFlow {
             if (host.isPointerDown()) return;
             candidate = null;
             host.recycleContent(pending.content);
-            DragShareLog.w(TAG, "WeChat OCR direct failed error=" + pending.error.getClass().getSimpleName());
-            host.showFailure("微信文字识别失败：" + pending.error.getMessage());
+            DragShareLog.w(TAG, "Press OCR direct failed error=" + pending.error.getClass().getSimpleName());
+            host.showFailure("文字识别失败：" + pending.error.getMessage());
             host.controller().endPressPipeline(host.downTime());
             host.blocker().stopAsync();
             return;
@@ -177,12 +177,12 @@ final class WeChatPressFlow {
                     BigBangOverlayLauncher.METHOD_OPEN, null, recognized);
             host.completeHandoff(result, pending.request, pending.operation);
             if (pending.textWindowAccepted) {
-                DragShareLog.i(TAG, "WeChat OCR text window accepted; image candidate retained until root release");
+                DragShareLog.i(TAG, "Press OCR text window accepted; image candidate retained until root release");
             }
         } catch (SecurityException | IllegalStateException | IllegalArgumentException failure) {
             OperationTrace.event(pending.operation, "text_window", "failed_" + failure.getClass().getSimpleName());
-            DragShareLog.w(TAG, "cannot open WeChat text panel error=" + failure.getClass().getSimpleName());
-            host.showFailure("无法显示微信识别结果：" + failure.getMessage());
+            DragShareLog.w(TAG, "cannot open press text panel error=" + failure.getClass().getSimpleName());
+            host.showFailure("无法显示识别结果：" + failure.getMessage());
             host.controller().endPressPipeline(host.downTime());
             host.blocker().stopAsync();
         }
@@ -210,7 +210,7 @@ final class WeChatPressFlow {
                     BigBangOverlayLauncher.METHOD_DISMISS_PRESS, null, request);
             return result != null && result.getBoolean("accepted");
         } catch (SecurityException | IllegalStateException | IllegalArgumentException error) {
-            DragShareLog.w(TAG, "cannot dismiss this WeChat press window error=" + error.getClass().getSimpleName());
+            DragShareLog.w(TAG, "cannot dismiss this press window error=" + error.getClass().getSimpleName());
             return false;
         }
     }

@@ -23,7 +23,7 @@
 
 ### 2026-11-05 工程化解耦轮（E1–E6）
 
-- E1 `0992141`：`WeChatPressFlow` 承接微信按压候选状态机（候选、拖拽接管、文字交付、截屏拒绝）；generation、Root 权威与资源所有权留在 `PressCaptureSource`，日志 TAG 不变。修复了 `PressPreviewHandoffTest` 反射辅助读错对象的 3 个用例失败。
+- E1 `0992141`：原微信按压候选状态机已整理为通用 `PressOcrFlow`（候选、文字交付、截屏拒绝）；generation、Root 权威与资源所有权留在 `PressCaptureSource`。修复了 `PressPreviewHandoffTest` 反射辅助读错对象的 3 个用例失败。
 - E2 `5568fd4`：`SystemRecentsWatch` 承接系统最近任务可见性轮询（探测窗口、退避节奏、硬超时、版本失效），决策逻辑有纯逻辑测试。
 - E3 `046cecb`：`QueuedLaunchQueue` 统一小窗排队启动负载、taskId 与 generation，`begin/current/consume/clear/nextRetry` 原子操作；重试策略、任务匹配、超时与私有 HyperOS 调用未改。
 - E6 `7e50e03`：`ModernOverlayPrewarm` 承接预热窗口生命周期（调度、首帧收尾、销毁清理、失败回收）；销毁时释放顺序与日志保持，`DragShareExitLifecycleTest` 为护栏。
@@ -39,7 +39,7 @@
 
 ### 2026-11-05 单指按住直接拖拽
 
-- 组合触发落地后，微信专用拖拽接管链失去存在理由，已删除：`WeChatPressFlow.dragCandidate`、`imageDragIntent` 标记与 Host `bumpGeneration()`；`PressCaptureSource` 中单指/双指 MOVE 上的 36dp 微信接管调用点一并移除。保留微信 OCR 松手交付、Portal 原图接管、缩略图来源标记与未验证截屏拒绝（`isUnverifiedImage`），消息文案未改。
+- 组合触发落地后，微信专用拖拽接管链已删除；`PressCaptureSource` 的单指/双指路径只保留通用 Root 捕获、OCR、图片预览和拖拽。后续清理移除了缩略图来源标记、徽标、专用来源日志及微信窗口回退；Root 节点图片统一按通用节点图片处理。
 - 替代行为对所有应用一致：单指确认（fire）后移动超过 36dp 即武装 `directDragArmed`；若已持有图片内容且来源合规，按住期间直接经 `showContentForPressTakeover` 建立拖拽会话，无需松手后二次按住。捕获回调迟到返回时同样检查该状态。文字保持松手开分词面板；双指路径不变；图片待拖预览保留为松手不动的兜底与拖拽取消后的恢复路径。
 - 微信 OCR 区域截屏在按住直接拖拽分支仍被拒绝（`direct_drag` 阶段），不把截屏冒充原图。
 - `PressPreviewHandoffTest` 删除 3 个 `dragCandidate` 用例，新增"松手开分词窗口（drag_preview=true、截图回收、候选清空）"与"按住直接接管建立会话"两个行为测试。
@@ -87,7 +87,7 @@
 
 ## 已知未完成
 
-- 没有完成真实 HyperOS 设备的完整回归：微信缩略图、微信/QQ 中转站接收、长按菜单后的 MOVE/CANCEL、输入法与小窗、AICR、底角/侧滑、深浅色和玻璃背景仍需要设备证据。
+- 没有完成真实 HyperOS 设备的完整回归：微信/QQ 中转站接收、长按菜单后的 MOVE/CANCEL、输入法与小窗、AICR、底角/侧滑、深浅色和玻璃背景仍需要设备证据。
 - 设备端双指候选仍保留 `DEVICE NO-GO` 结论；Candidate B 不得直接当作当前修复已验收。
 - `DragShareController` 和 `HyperOsFreeformBridge` 仍偏重；后续只在存在行为护栏时继续抽取，不做机械拆文件。
 - UI 仍缺少稳定的真实渲染矩阵，尤其是窄屏、大字体、底部安全区、输入法和毛玻璃背景。

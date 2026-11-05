@@ -30,7 +30,7 @@ Hotspots by size (2026-11-05, after E1–E6): `DragShareController` 2506, `FanRu
 
 ### E1 (area 1): WeChat press candidate owner — DONE 2026-11-05
 
-Done as `WeChatPressFlow` (commit `0992141`): the WeChat press-candidate state machine, drag takeover, text delivery and screen-capture rejection now live in one owner class. Generation checks, Root authority and Bitmap/URI ownership stay in `PressCaptureSource`; the log TAG remains `PressCaptureSource` for diagnostic greps.
+The OCR candidate state introduced in commit `0992141` is now generalized as `PressOcrFlow`: text delivery and screen-capture rejection live in a source-neutral owner. Generation checks, Root authority and Bitmap/URI ownership stay in `PressCaptureSource`.
 
 ### E2 (area 2): FanRuntime remaining responsibilities — DONE 2026-11-05
 

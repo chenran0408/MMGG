@@ -202,78 +202,13 @@ public final class PressPreviewHandoffTest {
         }
     }
 
-    @Test public void verifiedWeChatThumbnailCanEnterPreviewForCurrentRootPress() throws Exception {
-        Context context = RuntimeEnvironment.getApplication();
-        registerShareProvider(context);
-        DragShareController controller = controller();
-        down(controller, 100L);
-        PressCaptureSource source = new PressCaptureSource(
-                context, null, controller, DragShareSettings.defaults());
-        field(source, "pointerDown").setBoolean(source, true);
-        field(source, "downTime").setLong(source, 100L);
-        Bitmap bitmap = Bitmap.createBitmap(3, 4, Bitmap.Config.ARGB_8888);
-        CapturedContent thumbnail = CapturedContent.nodeThumbnailImage(
-                bitmap, "com.tencent.mm", new Rect(10, 20, 300, 500));
-
-        try {
-            assertTrue(thumbnail.isWeChatThumbnail());
-            java.lang.reflect.Method openImage = PressCaptureSource.class.getDeclaredMethod(
-                    "openImage", long.class, CapturedContent.class);
-            openImage.setAccessible(true);
-            openImage.invoke(source, 8L, thumbnail);
-            ShadowLooper.shadowMainLooper().idle();
-
-            Object session = field(controller, "session").get(controller);
-            assertNotNull(session);
-            CapturedContent shown = (CapturedContent) field(session, "payload").get(session);
-            assertTrue(shown.isWeChatThumbnail());
-            assertTrue(controller.isActive());
-            assertFalse(bitmap.isRecycled());
-        } finally {
-            source.stop();
-            controller.destroy();
-            if (!bitmap.isRecycled()) bitmap.recycle();
-            ShadowLooper.shadowMainLooper().idle();
-        }
-    }
-
-    @Test public void releasedPressRejectsAndRecyclesLateWeChatThumbnail() throws Exception {
-        ShadowLog.clear();
-        DragShareController controller = controller();
-        down(controller, 100L);
-        PressCaptureSource source = new PressCaptureSource(
-                RuntimeEnvironment.getApplication(), null, controller, DragShareSettings.defaults());
-        field(source, "pointerDown").setBoolean(source, false);
-        field(source, "downTime").setLong(source, 100L);
-        Bitmap bitmap = Bitmap.createBitmap(3, 4, Bitmap.Config.ARGB_8888);
-        CapturedContent thumbnail = CapturedContent.nodeThumbnailImage(
-                bitmap, "com.tencent.mm", new Rect(10, 20, 300, 500));
-
-        try {
-            java.lang.reflect.Method openImage = PressCaptureSource.class.getDeclaredMethod(
-                    "openImage", long.class, CapturedContent.class);
-            openImage.setAccessible(true);
-            openImage.invoke(source, 8L, thumbnail);
-            ShadowLooper.shadowMainLooper().idle();
-
-            assertNull(field(controller, "session").get(controller));
-            assertTrue(bitmap.isRecycled());
-            assertTrue(operationMessages().contains("stage=image_decision outcome=pointer_released"));
-        } finally {
-            source.stop();
-            controller.destroy();
-            if (!bitmap.isRecycled()) bitmap.recycle();
-            ShadowLooper.shadowMainLooper().idle();
-        }
-    }
-
     @Test public void actualPortalImageReplacesAnActiveThumbnailPreview() throws Exception {
         Context context = RuntimeEnvironment.getApplication();
         registerShareProvider(context);
         DragShareController controller = controller();
         down(controller, 100L);
         Bitmap thumbnailBitmap = Bitmap.createBitmap(2, 2, Bitmap.Config.ARGB_8888);
-        CapturedContent thumbnail = CapturedContent.nodeThumbnailImage(
+        CapturedContent thumbnail = CapturedContent.nodeImage(
                 thumbnailBitmap, "com.tencent.mm", new Rect(0, 0, 2, 2));
         Object thumbnailSession = nativeSession(controller, 100L, thumbnail);
         PressCaptureSource source = new PressCaptureSource(
@@ -304,7 +239,7 @@ public final class PressPreviewHandoffTest {
         }
     }
 
-    @Test public void actualPortalImageStillReplacesRecognizedWeChatOcrText() throws Exception {
+    @Test public void actualPortalImageStillReplacesRecognizedOcrText() throws Exception {
         Context context = RuntimeEnvironment.getApplication();
         registerShareProvider(context);
         DragShareController controller = controller();
@@ -315,7 +250,7 @@ public final class PressPreviewHandoffTest {
         Bitmap portalImage = Bitmap.createBitmap(4, 4, Bitmap.Config.ARGB_8888);
         CapturedContent region = CapturedContent.pressOcrRegion(
                 screenshot, "com.tencent.mm", new Rect(10, 20, 300, 500));
-        Object pending = pendingWeChat(region, 5L, true, "识别出的当前文字");
+        Object pending = pendingOcr(region, 5L, true, "识别出的当前文字");
         field(source, "pointerDown").setBoolean(source, true);
         field(source, "downTime").setLong(source, 100L);
         field(source, "confirmedAt").setLong(source, 600L);
@@ -345,7 +280,7 @@ public final class PressPreviewHandoffTest {
         }
     }
 
-    @Test public void completedWeChatOcrTextOpensSegmentationWindowOnRelease() throws Exception {
+    @Test public void completedOcrTextOpensSegmentationWindowOnRelease() throws Exception {
         Context context = RuntimeEnvironment.getApplication();
         BigBangWindowProvider provider = new BigBangWindowProvider(context);
         ShadowContentResolver.registerProviderInternal(ImageStagingClient.AUTHORITY, provider);
@@ -356,7 +291,7 @@ public final class PressPreviewHandoffTest {
         Bitmap screenshot = Bitmap.createBitmap(3, 3, Bitmap.Config.ARGB_8888);
         CapturedContent region = CapturedContent.pressOcrRegion(
                 screenshot, "com.tencent.mm", new Rect(10, 20, 300, 500));
-        Object pending = pendingWeChat(region, 4L, false, "识别出的当前文字");
+        Object pending = pendingOcr(region, 4L, false, "识别出的当前文字");
         field(source, "pointerDown").setBoolean(source, false);
         field(source, "released").setBoolean(source, true);
         field(source, "releaseMode").set(source, PressReleaseMode.Mode.DRAG_PREVIEW);
@@ -514,7 +449,7 @@ public final class PressPreviewHandoffTest {
         }
     }
 
-    @Test public void unclassifiedWeChatImageIsNotPresentedAsAnOriginal() throws Exception {
+    @Test public void unclassifiedPressOcrImageIsNotPresentedAsAnOriginal() throws Exception {
         DragShareController controller = controller();
         down(controller, 100L);
         PressCaptureSource source = new PressCaptureSource(
@@ -540,7 +475,7 @@ public final class PressPreviewHandoffTest {
         }
     }
 
-    @Test public void portalMediaAndExplicitWeChatThumbnailHaveDistinctTrustedOrigins() {
+    @Test public void portalMediaAndRootImagesHaveDistinctTrustedOrigins() {
         Bitmap portalImage = Bitmap.createBitmap(2, 2, Bitmap.Config.ARGB_8888);
         Bitmap rootImage = Bitmap.createBitmap(2, 2, Bitmap.Config.ARGB_8888);
         Bitmap unknownImage = Bitmap.createBitmap(1, 1, Bitmap.Config.ARGB_8888);
@@ -551,15 +486,12 @@ public final class PressPreviewHandoffTest {
                     portalImage, "com.tencent.mm", new Rect(0, 0, 2, 2));
             CapturedContent root = CapturedContent.screenCaptureImage(
                     rootImage, "com.tencent.mm", new Rect(0, 0, 2, 2));
-            CapturedContent thumbnail = CapturedContent.nodeThumbnailImage(
+            CapturedContent thumbnail = CapturedContent.nodeImage(
                     thumbnailImage, "com.tencent.mm", new Rect(0, 0, 2, 2));
 
             assertEquals(CapturedContent.ImageOrigin.PORTAL_MEDIA, portal.imageOrigin);
             assertEquals(CapturedContent.ImageOrigin.SCREEN_CAPTURE, root.imageOrigin);
-            assertEquals(CapturedContent.ImageOrigin.NODE_THUMBNAIL, thumbnail.imageOrigin);
-            assertTrue(thumbnail.isWeChatThumbnail());
-            assertFalse(CapturedContent.nodeThumbnailImage(
-                    otherThumbnailImage, "other.app", new Rect()).isWeChatThumbnail());
+            assertEquals(CapturedContent.ImageOrigin.NODE_CAPTURE, thumbnail.imageOrigin);
             assertEquals(CapturedContent.ImageOrigin.UNKNOWN,
                     CapturedContent.image(unknownImage, "com.tencent.mm", new Rect(), true).imageOrigin);
         } finally {
@@ -623,9 +555,9 @@ public final class PressPreviewHandoffTest {
         return session;
     }
 
-    private static Object pendingWeChat(CapturedContent content, long request, boolean textWindowAccepted,
+    private static Object pendingOcr(CapturedContent content, long request, boolean textWindowAccepted,
                                         String text) throws Exception {
-        Class<?> type = Class.forName(WeChatPressFlow.class.getName() + "$Candidate");
+        Class<?> type = Class.forName(PressOcrFlow.class.getName() + "$Candidate");
         var constructor = type.getDeclaredConstructor(CapturedContent.class, long.class, String.class);
         constructor.setAccessible(true);
         Object pending = constructor.newInstance(content, request, OperationTrace.id("press", request));
@@ -636,8 +568,8 @@ public final class PressPreviewHandoffTest {
         return pending;
     }
 
-    private static WeChatPressFlow flowOf(PressCaptureSource source) throws Exception {
-        return (WeChatPressFlow) field(source, "weChatPress").get(source);
+    private static PressOcrFlow flowOf(PressCaptureSource source) throws Exception {
+        return (PressOcrFlow) field(source, "pressOcr").get(source);
     }
 
     private static Object candidateOf(PressCaptureSource source) throws Exception {

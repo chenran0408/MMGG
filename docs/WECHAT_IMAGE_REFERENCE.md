@@ -16,9 +16,9 @@
 
 参考在`onPickText/onPickImage`方法执行前读取ClientCatcherResult，并忽略较晚的`startPick*`。其“旧start一定读旧内容”注释与已核验的Portal5.1.5实际实现不符：onContentReceived先写mCatcherResult，onPickImage先处理imgUrl/viewBitmap和边界，再向主线程post startPickImageTask。参考before-hook还先于宿主presentation检查；因此本轮没有照搬该入口或随意信任propertyMap的任意Bitmap。
 
-MMGG继续只把已核对的Portal媒体视为微信原媒体。用户在看到参考路径分析后，明确允许“标注为缩略图”的兼容拖拽；这更新了旧绝对禁止截图拖拽规则的有限范围。Root已有图片节点裁剪路径保留安全检查，结果独立标为NODE_THUMBNAIL，预览持续显示“缩略图”；它不是原文件，不能改成PORTAL_MEDIA。没有图片节点时的泛OCR区域、普通截图和UNKNOWN来源仍拒绝，Portal媒体仍可接管同一按压。没有新增无障碍服务、缓存原图模糊匹配或绕过宿主presentation检查。
+MMGG继续只把已核对的Portal媒体视为微信原媒体。此前的微信节点缩略图兼容路径、来源标记和预览徽标已移除；Root节点图片现在走通用节点图片路径，不能据此宣称是原文件。没有图片节点时的泛OCR区域、普通截图和UNKNOWN来源仍拒绝，Portal媒体仍可接管同一按压。没有新增无障碍服务、缓存原图模糊匹配或绕过宿主presentation检查。
 
-现有报告过滤自由日志，使beta20的具体来源、拒绝原因没有进入诊断ZIP，这是已证实的**诊断缺口**，不是已证实的原图捕获根因。本轮补受控阶段记录及实际导出测试；兼容缩略图另记为wechat_image_node_thumbnail，不改授权/释放行为。
+现有报告过滤自由日志，使beta20的具体来源、拒绝原因没有进入诊断ZIP，这是已证实的**诊断缺口**，不是已证实的原图捕获根因。当前不再写入微信缩略图专用来源阶段。
 
 ## 接收端结论
 

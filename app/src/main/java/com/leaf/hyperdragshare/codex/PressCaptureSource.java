@@ -20,7 +20,7 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 /** One press pipeline for both hosts: classify once, then use the confirmed gesture's result. */
-final class PressCaptureSource implements RootTouchSource.ContactListener, WeChatPressFlow.Host {
+final class PressCaptureSource implements RootTouchSource.ContactListener, PressOcrFlow.Host {
     interface OcrRequest {
         void cancel();
     }
@@ -57,7 +57,7 @@ final class PressCaptureSource implements RootTouchSource.ContactListener, WeCha
         DragShareLog.i(TAG, "press reader retry started");
         openReader();
     };
-    private final WeChatPressFlow weChatPress = new WeChatPressFlow(this);
+    private final PressOcrFlow pressOcr = new PressOcrFlow(this);
     private OcrRequest activeOcrRequest;
     private volatile long generation;
     private volatile boolean pointerDown;
@@ -320,7 +320,7 @@ final class PressCaptureSource implements RootTouchSource.ContactListener, WeCha
             if (cached != null && !released) display();
             else controller.takeoverHoldingImagePreview(latestX, latestY, downTime);
         }
-        if (action == MotionEvent.ACTION_UP) weChatPress.finishPress();
+        if (action == MotionEvent.ACTION_UP) pressOcr.finishPress();
         if (action == MotionEvent.ACTION_UP && hadFired) {
             main.removeCallbacks(classify);
             main.removeCallbacks(fire);
@@ -436,7 +436,7 @@ final class PressCaptureSource implements RootTouchSource.ContactListener, WeCha
                 main.removeCallbacks(classify);
                 main.removeCallbacks(fire);
                 blocker.stopAsync();
-                weChatPress.finishPress();
+                pressOcr.finishPress();
                 if (releaseMode == PressReleaseMode.Mode.NONE) {
                     cancelGesture();
                 } else if (cached != null) {
@@ -488,7 +488,7 @@ final class PressCaptureSource implements RootTouchSource.ContactListener, WeCha
             return false;
         }
         OperationTrace.event(operationId(), "portal_capture", "accepted");
-        WeChatPressFlow.Candidate pending = weChatPress.candidate();
+        PressOcrFlow.Candidate pending = pressOcr.candidate();
         if (!content.isImage() && pending != null && pending.textWindowAccepted) {
             // OCR has already opened this press's text window; do not replace it with
             // a second text result, and keep its screenshot available for an image drag.
@@ -498,13 +498,13 @@ final class PressCaptureSource implements RootTouchSource.ContactListener, WeCha
                 && (!twoFingerModeForGesture || detector.isFired())
                 && (pending != null || controller.isActive());
         if (imageTakeover && pending != null && pending.textWindowAccepted
-                && !weChatPress.dismissTextWindow()) {
+                && !pressOcr.dismissTextWindow()) {
             recycle(content);
             showFailure("无法收起本次分词窗口，图片拖拽未接管");
             return true;
         }
         generation++;
-        weChatPress.acceptPortalTakeover();
+        pressOcr.acceptPortalTakeover();
         recycle(cached);
         cached = content;
         lookupRunning = false;
@@ -765,8 +765,8 @@ final class PressCaptureSource implements RootTouchSource.ContactListener, WeCha
             return;
         }
         if (content.pressOcrRegion) {
-            OperationTrace.event(operationId(), "image_decision", "wechat_ocr_region");
-            weChatPress.startOcrDirect(request, content);
+            OperationTrace.event(operationId(), "image_decision", "ocr_region");
+            pressOcr.startOcrDirect(request, content);
             return;
         }
         if (!pointerDown && !released) {
@@ -790,7 +790,7 @@ final class PressCaptureSource implements RootTouchSource.ContactListener, WeCha
     @Override public void completeHandoff(Bundle result, long request, String operation) {
         if (result != null && result.getBoolean("accepted")) {
             OperationTrace.event(operation, "text_window", "accepted");
-            WeChatPressFlow.Candidate pending = weChatPress.candidate();
+            PressOcrFlow.Candidate pending = pressOcr.candidate();
             if (pending != null && pending.request == request) pending.textWindowAccepted = true;
             startTouchBlocker(request);
             controller.handoffToPress(downTime);
@@ -808,18 +808,18 @@ final class PressCaptureSource implements RootTouchSource.ContactListener, WeCha
 
     private static String captureKindOutcome(CapturedContent content) {
         if (content == null) return "unknown";
-        String source = "com.tencent.mm".equals(content.sourcePackage) ? "wechat" : "other";
+        String source = content.sourcePackage == null ? "unknown" : content.sourcePackage;
         if (!content.isImage()) return source + "_text";
         switch (content.imageOrigin) {
             case PORTAL_MEDIA: return source + "_image_portal_media";
-            case NODE_THUMBNAIL: return source + "_image_node_thumbnail";
+            case NODE_CAPTURE: return source + "_image_node_capture";
             case SCREEN_CAPTURE: return source + "_image_screen_capture";
             default: return source + "_image_unknown";
         }
     }
 
     void cancelGesture() {
-        if (pointerDown || detector.isActive() || cached != null || weChatPress.hasCandidate() || lookupRunning) {
+        if (pointerDown || detector.isActive() || cached != null || pressOcr.hasCandidate() || lookupRunning) {
             controller.notePressDiagnostics(downTime, null, null, "press_detector_cleanup");
         }
         controller.endPressPipeline(downTime);
@@ -827,7 +827,7 @@ final class PressCaptureSource implements RootTouchSource.ContactListener, WeCha
         pointerDown = false;
         released = false;
         releaseMode = PressReleaseMode.Mode.NONE;
-        WeChatPressFlow.Candidate pending = weChatPress.clearForCancel();
+        PressOcrFlow.Candidate pending = pressOcr.clearForCancel();
         if (pending != null && pending.ocrComplete) recycle(pending.content);
         if (!released) controller.cancelHoldingImagePreview(downTime);
         if (activeOcrRequest != null) {

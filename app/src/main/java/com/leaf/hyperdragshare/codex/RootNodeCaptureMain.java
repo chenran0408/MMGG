@@ -36,8 +36,6 @@ public final class RootNodeCaptureMain {
     private static java.lang.reflect.Method connect;
     private static java.lang.reflect.Method disconnect;
 
-    // WMS identity is used only for a node-less WeChat conversation capture.
-    private static final int WINDOW_MANAGER_CAPTURE = -2;
     private static final Pattern HOLD_WHITESPACE = Pattern.compile("\\s+");
     private static final Set<String> HOLD_PROMPTS = Set.of(
             "按住说话", "按住讲话", "长按说话", "长按讲话", "按住语音输入",
@@ -170,10 +168,6 @@ public final class RootNodeCaptureMain {
                 return captureImageRegion(request, automation);
             }
             if ("verify_window".equals(request.optString("operation"))) {
-                if (request.getInt("window_id") == WINDOW_MANAGER_CAPTURE) {
-                    Rect region = verifyPressRegion(request.getString("package"));
-                    return windowResult(region);
-                }
                 automation.clearCache();
                 AccessibilityNodeInfo current = automation.getRootInActiveWindow();
                 try {
@@ -220,56 +214,25 @@ public final class RootNodeCaptureMain {
             pressWindow = null;
             pressRegion = null;
             boolean press = request.optBoolean("press_lookup", false);
-            boolean wechatWindowRejected = false;
             automation.clearCache();
             AccessibilityNodeInfo root = press ? automation.getRootInActiveWindow()
                     : awaitRoot(automation, eventLock, eventVersion);
-            if (root == null && press && request.optBoolean("allow_text")) {
-                JSONObject conversation = captureUnexposedConversation(request);
-                if (conversation.optBoolean("found")
-                        || !"no_supported_visible_wechat_window".equals(conversation.optString("reason")))
-                    return conversation;
-                wechatWindowRejected = true;
-                // Keep the existing semantics-startup wait for other applications.
-                root = awaitRoot(automation, eventLock, eventVersion);
-            }
             if (root == null) return new JSONObject().put("found", false).put("reason", "window_not_ready");
             long rootAt = SystemClock.uptimeMillis();
             try {
                 JSONObject result = capture(root, request);
                 long capturedAt = SystemClock.uptimeMillis();
                 String source = string(root.getPackageName());
-                boolean wechatPress = press && "com.tencent.mm".equals(source);
-                if (!wechatPress) {
-                    AccessibilityNodeInfo current = automation.getRootInActiveWindow();
-                    try {
-                        if (current == null || current.getWindowId() != root.getWindowId()
-                                || !java.util.Objects.equals(string(current.getPackageName()), source)) {
-                            result = new JSONObject().put("found", false).put("reason", "window_changed");
-                        }
-                    } finally {
-                        if (current != null) current.recycle();
+                AccessibilityNodeInfo current = automation.getRootInActiveWindow();
+                try {
+                    if (current == null || current.getWindowId() != root.getWindowId()
+                            || !java.util.Objects.equals(string(current.getPackageName()), source)) {
+                        result = new JSONObject().put("found", false).put("reason", "window_changed");
                     }
+                } finally {
+                    if (current != null) current.recycle();
                 }
                 String rejection = result.optString("reason");
-                boolean canUseWeChatWindowCapture = press && request.optBoolean("allow_text", true)
-                        && "com.tencent.mm".equals(source)
-                        && !wechatWindowRejected
-                        && !"excluded_input_method".equals(rejection)
-                        && !"excluded_app".equals(rejection)
-                        && !"excluded_hold_control".equals(rejection)
-                        && !"content_type_disabled".equals(rejection)
-                        && !"window_changed".equals(rejection);
-                if (!result.optBoolean("found") && canUseWeChatWindowCapture) {
-                    JSONObject windowCapture = captureUnexposedConversation(request);
-                    if (windowCapture.optBoolean("found")
-                            || !"no_supported_visible_wechat_window".equals(windowCapture.optString("reason"))) {
-                        return windowCapture.put("root_ms", rootAt - started)
-                                .put("fallback_reason", rejection.isEmpty() ? "no_content_candidate" : rejection)
-                                .put("capture_ms", capturedAt - rootAt)
-                                .put("verify_ms", SystemClock.uptimeMillis() - capturedAt);
-                    }
-                }
                 return result.put("window_id", root.getWindowId()).put("root_ms", rootAt - started)
                         .put("capture_ms", capturedAt - rootAt)
                         .put("verify_ms", SystemClock.uptimeMillis() - capturedAt);
@@ -293,51 +256,6 @@ public final class RootNodeCaptureMain {
         }
     }
 
-    private static JSONObject captureUnexposedConversation(JSONObject request) throws Exception {
-        JSONObject absent = new JSONObject().put("found", false);
-        if (!request.optBoolean("allow_text") || keyguardLocked())
-            return absent.put("reason", "text_disabled_or_locked");
-        final PressWindowSnapshot.ParseResult parsed;
-        try { parsed = readPressWindow(); }
-        catch (IOException error) {
-            System.err.println("Press window inspection failed: " + error.getMessage());
-            return absent.put("reason", "window_inspection_failed");
-        }
-        if (parsed.snapshot == null) {
-            System.err.println("Press window capture rejected reason=" + parsed.reason);
-            return absent.put("reason", "window_" + parsed.reason);
-        }
-        PressWindowSnapshot window = parsed.snapshot;
-        if (!PressWindowSnapshot.isSupportedWeChatWindow(window.packageName, window.windowName)) {
-            System.err.println("Press window capture rejected reason=unsupported_wechat_component");
-            return absent.put("reason", "no_supported_visible_wechat_window");
-        }
-        JSONArray blocked = request.getJSONArray("blocked");
-        for (int i = 0; i < blocked.length(); i++) {
-            if (window.packageName.equals(blocked.getString(i))) {
-                System.err.println("Press window capture rejected reason=excluded_app");
-                return absent.put("reason", "excluded_app");
-            }
-        }
-        Rect region = window.regionAt((float) request.getDouble("x"), (float) request.getDouble("y"),
-                request.getInt("width"), request.getInt("height"), (float) request.getDouble("density"));
-        if (region == null) {
-            System.err.println("Press window capture rejected reason=press_region_obscured");
-            return absent.put("reason", "press_region_obscured");
-        }
-        pressWindow = window;
-        pressRegion = region;
-        pressX = (float) request.getDouble("x");
-        pressY = (float) request.getDouble("y");
-        pressDensity = (float) request.getDouble("density");
-        pressWidth = request.getInt("width");
-        pressHeight = request.getInt("height");
-        return new JSONObject().put("found", true).put("package", window.packageName)
-                .put("kind", "ocr_region").put("window_id", WINDOW_MANAGER_CAPTURE)
-                .put("left", region.left).put("top", region.top)
-                .put("right", region.right).put("bottom", region.bottom);
-    }
-
     private static JSONObject windowResult(Rect region) throws Exception {
         if (region == null) return new JSONObject().put("same_window", false);
         return new JSONObject().put("same_window", true).put("left", region.left).put("top", region.top)
@@ -353,7 +271,7 @@ public final class RootNodeCaptureMain {
             screenshot = automation.takeScreenshot();
         } catch (RuntimeException error) {
             System.err.println("Press screenshot failed: " + error.getClass().getSimpleName());
-            return new JSONObject().put("same_window", false).put("reason", "系统无法截取当前微信页面");
+            return new JSONObject().put("same_window", false).put("reason", "系统无法截取当前页面");
         }
         long screenshotMs = SystemClock.uptimeMillis() - screenshotStarted;
         if (screenshot == null) {
@@ -448,7 +366,6 @@ public final class RootNodeCaptureMain {
     private static Rect verifyPressRegion(String source) throws Exception {
         pressVerificationError = "";
         if (pressWindow == null || pressRegion == null || !source.equals(pressWindow.packageName)
-                || !PressWindowSnapshot.isSupportedWeChatWindow(source, pressWindow.windowName)
                 || keyguardLocked()) {
             pressVerificationError = "source_changed_or_locked";
             System.err.println("Press window verification rejected reason=" + pressVerificationError);
@@ -462,8 +379,7 @@ public final class RootNodeCaptureMain {
                 return null;
             }
             PressWindowSnapshot current = parsed.snapshot;
-            if (!PressWindowSnapshot.isSupportedWeChatWindow(current.packageName, current.windowName)
-                    || !pressWindow.sameWindow(current)) {
+            if (!pressWindow.sameWindow(current)) {
                 pressVerificationError = "window_identity_changed";
                 System.err.println("Press window verification rejected reason=" + pressVerificationError);
                 return null;

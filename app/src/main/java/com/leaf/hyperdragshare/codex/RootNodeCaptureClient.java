@@ -207,10 +207,6 @@ final class RootNodeCaptureClient {
                 process.getOutputStream().write((request + "\n").getBytes(StandardCharsets.UTF_8));
                 process.getOutputStream().flush();
                 JSONObject result = awaitResponse();
-                String fallbackReason = result.optString("fallback_reason");
-                if (!fallbackReason.isEmpty()) {
-                    DragShareLog.i(TAG, "WeChat window OCR fallback reason=" + fallbackReason);
-                }
                 boolean notified = "candidate".equals(result.optString("stage"));
                 boolean accepted = notified && handler.onCandidate(result.getString("package"));
                 if (notified) result = awaitResponse();
@@ -503,9 +499,7 @@ final class RootNodeCaptureClient {
                 if (pressOcrRegion) {
                     return CapturedContent.pressOcrRegion(image, source, verifiedBounds);
                 }
-                return "com.tencent.mm".equals(source)
-                        ? CapturedContent.nodeThumbnailImage(image, source, verifiedBounds)
-                        : CapturedContent.screenCaptureImage(image, source, verifiedBounds);
+                return CapturedContent.nodeImage(image, source, verifiedBounds);
             }
             int width = node.getInt("width"), height = node.getInt("height");
             if (screen.getWidth() != width || screen.getHeight() != height) {
@@ -521,9 +515,7 @@ final class RootNodeCaptureClient {
             if (pressOcrRegion) {
                 return CapturedContent.pressOcrRegion(image, source, crop);
             }
-            return "com.tencent.mm".equals(source)
-                    ? CapturedContent.nodeThumbnailImage(image, source, crop)
-                    : CapturedContent.screenCaptureImage(image, source, crop);
+            return CapturedContent.nodeImage(image, source, crop);
         } finally {
             if (screen != null) screen.recycle();
         }

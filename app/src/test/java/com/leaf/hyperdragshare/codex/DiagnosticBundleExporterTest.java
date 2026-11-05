@@ -268,9 +268,9 @@ public final class DiagnosticBundleExporterTest {
         File raw = new File(directory, "image-decision.log");
         String prefix = "2026-10-24 18:10:00.123 I pid=44 uid=0 thread=main ";
         Files.write(raw.toPath(), (prefix + "DragShare/Operation: proc=mod-44 op=press-44-2 "
-                + "stage=capture_kind outcome=wechat_image_screen_capture asset=-\n"
+                + "stage=capture_kind outcome=com.tencent.mm_image_screen_capture asset=-\n"
                 + prefix + "DragShare/Operation: proc=mod-44 op=press-44-2 "
-                + "stage=image_drag outcome=rejected_ocr_region_drag_screen_capture asset=-\n"
+                + "stage=image_drag outcome=rejected_ocr_region_drag asset=-\n"
                 + prefix + "DragShare/Press: source=com.tencent.mm body=private-chat "
                 + "image=content://private/image\n").getBytes(StandardCharsets.UTF_8));
 
@@ -279,8 +279,8 @@ public final class DiagnosticBundleExporterTest {
                 directory, validStateSummary(), validCompatibility(), null, filtered, null, false);
         String exported = readZip(result.file).get("runtime-log.txt");
 
-        assertTrue(exported.contains("stage=capture_kind outcome=wechat_image_screen_capture"));
-        assertTrue(exported.contains("stage=image_drag outcome=rejected_ocr_region_drag_screen_capture"));
+        assertTrue(exported.contains("stage=capture_kind outcome=com.tencent.mm_image_screen_capture"));
+        assertTrue(exported.contains("stage=image_drag outcome=rejected_ocr_region_drag"));
         assertTrue(exported.contains("com.tencent.mm"));
         assertTrue(exported.contains("image=content://private/image"));
         assertFalse(exported.contains("private-chat"));

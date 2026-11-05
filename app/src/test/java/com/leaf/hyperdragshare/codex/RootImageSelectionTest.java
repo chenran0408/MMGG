@@ -243,7 +243,7 @@ public final class RootImageSelectionTest {
         assertNotNull(select(image, List.of(), true, true));
     }
 
-    @Test public void verifiedWeChatImageNodeCropIsMarkedAsThumbnail() throws Exception {
+    @Test public void verifiedPressOcrImageNodeCropIsMarkedAsThumbnail() throws Exception {
         Rect bounds = new Rect(40, 60, 180, 220);
         Bitmap cropped = Bitmap.createBitmap(4, 5, Bitmap.Config.ARGB_8888);
         Bundle captured = new Bundle();
@@ -264,8 +264,7 @@ public final class RootImageSelectionTest {
                 (source, windowId, requested) -> captured);
         try {
             assertNotNull(content);
-            assertEquals(CapturedContent.ImageOrigin.NODE_THUMBNAIL, content.imageOrigin);
-            assertTrue(content.isWeChatThumbnail());
+            assertEquals(CapturedContent.ImageOrigin.NODE_CAPTURE, content.imageOrigin);
             assertEquals(bounds, content.sourceBounds);
             assertTrue(content.bitmapOwnedByDragShare);
             assertFalse(cropped.isRecycled());
@@ -299,7 +298,6 @@ public final class RootImageSelectionTest {
             assertNotNull(content);
             assertEquals(CapturedContent.ImageOrigin.SCREEN_CAPTURE, content.imageOrigin);
             assertTrue(content.pressOcrRegion);
-            assertFalse(content.isWeChatThumbnail());
         } finally {
             if (content != null && content.bitmap != null && !content.bitmap.isRecycled()) {
                 content.bitmap.recycle();
