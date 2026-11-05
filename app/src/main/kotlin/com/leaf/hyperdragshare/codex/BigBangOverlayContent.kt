@@ -9,7 +9,6 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -81,7 +80,6 @@ import top.yukonga.miuix.kmp.basic.BasicComponent
 import top.yukonga.miuix.kmp.basic.Card
 import top.yukonga.miuix.kmp.basic.Icon
 import top.yukonga.miuix.kmp.basic.IconButton
-import top.yukonga.miuix.kmp.basic.SmallTitle
 import top.yukonga.miuix.kmp.basic.TooltipBox
 import top.yukonga.miuix.kmp.basic.ButtonDefaults
 import top.yukonga.miuix.kmp.basic.CircularProgressIndicator
@@ -631,7 +629,7 @@ internal fun BigBangOverlayContent(
 
     OverlayDialog(
         show = showMoreMenu,
-        title = "更多",
+        title = "窗口外观",
         onDismissRequest = { showMoreMenu = false },
     ) {
         Column(
@@ -640,7 +638,6 @@ internal fun BigBangOverlayContent(
                 .verticalScroll(rememberScrollState()),
         ) {
             val ready = !isSegmenting && totalCharacterCount > 0
-            SmallTitle("窗口外观", insideMargin = PaddingValues(start = 8.dp))
             Card {
                 Column {
                     BigBangMoreRow(
