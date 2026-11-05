@@ -367,6 +367,17 @@ final class MiniFreeformMediaController {
 
     void destroy() { clear(); }
 
+    /** Toggles the current mini task's player volume when Xiaomi's per-player API is available. */
+    boolean toggleMute() {
+        if (!enabled || selected == null || packageName == null) return false;
+        if (muteLease.active()) {
+            muteLease.release(volume);
+            return true;
+        }
+        muteLease.acquire(packageName, volume);
+        return muteLease.active();
+    }
+
     private void refreshSession() {
         if (!enabled || packageName == null) return;
         Session next = null;

@@ -276,6 +276,7 @@ final class FanRuntime {
         miniMediaControls.setQuickMenu(new MiniFreeformQuickMenuController(context, windowManager,
                 new MiniFreeformQuickMenuController.Actions() {
                     @Override public void onMute() {
+                        if (miniMediaControls.toggleMute()) return;
                         AudioManager audio = context.getSystemService(AudioManager.class);
                         if (audio == null) return;
                         try {

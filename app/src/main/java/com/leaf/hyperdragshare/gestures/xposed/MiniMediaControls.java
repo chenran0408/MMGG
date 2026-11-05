@@ -79,6 +79,10 @@ final class MiniMediaControls {
         startOrUpdateMiniMediaController(config);
     }
 
+    boolean toggleMute() {
+        return miniMediaController != null && miniMediaController.toggleMute();
+    }
+
     void clearMiniMediaForTask(int taskId) {
         if (taskId == miniMediaTaskId) clearMiniMedia();
     }
