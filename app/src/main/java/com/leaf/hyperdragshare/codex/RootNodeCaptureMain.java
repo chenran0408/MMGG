@@ -700,7 +700,9 @@ public final class RootNodeCaptureMain {
         boolean hasLabel = (node.text != null && !node.text.trim().isEmpty())
                 || (node.contentDescription != null && !node.contentDescription.trim().isEmpty());
         if (!hasLabel) return false;
-        if (className.contains("image")) return false;
+        if (className.contains("image")
+                || ((node.text == null || node.text.trim().isEmpty())
+                && isImageDescription(node.contentDescription))) return false;
         if (node.editable) return true;
         if (className.contains("button") || className.contains("switch")
                 || className.contains("checkbox") || className.contains("radiobutton")
@@ -709,7 +711,8 @@ public final class RootNodeCaptureMain {
                 || className.contains("progressbar") || className.contains("menuitem")
                 || className.contains("surfaceview") || className.contains("textureview")
                 || className.contains("webview") || className.contains("mapview")
-                || className.contains("videoview") || className.contains("player")) {
+                || className.contains("videoview") || className.endsWith("playerview")
+                || className.contains("videoplayer") || className.contains("mediaplayer")) {
             return true;
         }
         // Compose and vendor controls are often exposed as a leaf android.view.View.
@@ -718,6 +721,13 @@ public final class RootNodeCaptureMain {
                 && !className.endsWith("edittext")
                 && ("android.view.view".equals(className)
                 || node.text == null || node.text.trim().isEmpty());
+    }
+
+    private static boolean isImageDescription(String description) {
+        if (description == null) return false;
+        String normalized = description.trim().toLowerCase(java.util.Locale.ROOT);
+        return "图片".equals(normalized) || "图像".equals(normalized)
+                || "image".equals(normalized) || "photo".equals(normalized);
     }
 
     private static boolean isScopedControl(AccessibilityNodeSnapshot control,
