@@ -310,6 +310,7 @@ final class PortalHooks {
                     CapturedContent content = PortalContentCaptureSource.capture(
                             param.thisObject, settings, catcherResult);
                     if (content != null && press != null && press.acceptPortalContent(content)) {
+                        schedulePortalOriginal(param.thisObject, catcherResult, press, content);
                         return;
                     }
                     if (current.isAwaitingRootRelease()) {
@@ -356,6 +357,24 @@ final class PortalHooks {
             currentPickCallbacksHooked = false;
             log("unable to hook Taplus current pick callbacks", error);
         }
+    }
+
+    private static void schedulePortalOriginal(Object taplusService, Object catcherResult,
+                                                PressCaptureSource press,
+                                                CapturedContent currentContent) {
+        if (catcherResult == null || press == null || currentContent == null
+                || !currentContent.isImage()) return;
+        long downTime = press.downTime();
+        if (downTime < 0L) return;
+        PortalContentCaptureSource.loadOriginalImageAsync(taplusService, catcherResult, bitmap -> {
+            CapturedContent replacement = CapturedContent.portalMediaImage(
+                    bitmap, currentContent.sourcePackage, currentContent.sourceBounds);
+            if (replacement == null) {
+                if (bitmap != null && !bitmap.isRecycled()) bitmap.recycle();
+                return;
+            }
+            press.replacePortalImage(replacement, downTime);
+        });
     }
 
     private static void hookKnownCallbackClass(ClassLoader classLoader) {
@@ -439,7 +458,6 @@ final class PortalHooks {
                         "HOST_CALLBACK_OBSERVED", null, null, null, "existing_motion_callback_suppression");
                 // A motion-only result is not valid Taplus pick content.
                 param.setResult(null);
-                return;
             }
 
             Object control = properties.get(CONTROL_KEY);

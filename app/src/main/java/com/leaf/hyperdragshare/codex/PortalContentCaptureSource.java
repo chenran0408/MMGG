@@ -14,6 +14,7 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
+import java.util.function.Consumer;
 
 import com.leaf.hyperdragshare.compat.xposed.XposedHelpers;
 
@@ -161,6 +162,7 @@ final class PortalContentCaptureSource {
             }
 
             Bitmap bestBitmap = null;
+            Bitmap urlBitmap = null;
             Rect viewRect = null;
             Object imageParams = XposedHelpers.callMethod(catcherResult, "getParams", "image_pick");
             if (imageParams instanceof Map) {
@@ -173,6 +175,7 @@ final class PortalContentCaptureSource {
                     String imageUrl = imageMode.getString("imgUrl");
                     if (isLoadableImageUrl(imageUrl)) {
                         Bitmap original = loadPortalImage(taplusService, imageUrl);
+                        urlBitmap = original;
                         bestBitmap = largerBitmap(bestBitmap, original, "imgUrl");
                     }
                     viewRect = rectFrom(imageMode);
@@ -188,6 +191,12 @@ final class PortalContentCaptureSource {
                 }
             } catch (RuntimeException ignored) {
                 // The image_pick map remains sufficient on supported builds.
+            }
+            // An imgUrl is Taplus' original-media authority. Prefer it even
+            // when a screenshot/viewBitmap happens to contain more pixels and
+            // includes rounded clipping or overlay chrome.
+            if (urlBitmap != null && !urlBitmap.isRecycled()) {
+                bestBitmap = urlBitmap;
             }
             if (bestBitmap == null || bestBitmap.isRecycled()) {
                 traceCaptureOutcome(sourcePackage, "missing_callback_image");
@@ -281,6 +290,33 @@ final class PortalContentCaptureSource {
             DragShareLog.w("DragShare/PortalCapture",
                     "Portal original image load failed error="
                             + error.getClass().getSimpleName());
+            return null;
+        }
+    }
+
+    /** Loads a callback's original URL after the bounded capture path returned. */
+    static void loadOriginalImageAsync(Object taplusService, Object catcherResult,
+                                       Consumer<Bitmap> callback) {
+        if (!(taplusService instanceof android.content.Context)
+                || catcherResult == null || callback == null) return;
+        String imageUrl = imageUrlFromResult(catcherResult);
+        if (!isLoadableImageUrl(imageUrl)) return;
+        String normalized = imageUrl.startsWith("//") ? "http:" + imageUrl : imageUrl;
+        ORIGINAL_IMAGE_EXECUTOR.execute(() -> {
+            Bitmap original = loadPortalImageUnbounded(taplusService, normalized);
+            if (original != null && !original.isRecycled()) {
+                callback.accept(original);
+            }
+        });
+    }
+
+    private static String imageUrlFromResult(Object catcherResult) {
+        try {
+            Object params = XposedHelpers.callMethod(catcherResult, "getParams", "image_pick");
+            if (!(params instanceof Map)) return null;
+            Object mode = ((Map<?, ?>) params).get("image_pick_mode");
+            return mode instanceof Bundle ? ((Bundle) mode).getString("imgUrl") : null;
+        } catch (Throwable ignored) {
             return null;
         }
     }

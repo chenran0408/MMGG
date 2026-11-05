@@ -338,6 +338,11 @@ final class PressCaptureSource implements RootTouchSource.ContactListener, Press
                 cancelGesture();
             } else if (cached != null) {
                 display();
+            } else {
+                // BigBang or an active image menu may already have consumed
+                // the payload at confirmation. Preserve an in-flight OCR or
+                // Root capture callback so it can finish after this release.
+                finishConfirmedReleaseKeepingAsyncWork();
             }
             return;
         }
@@ -481,8 +486,12 @@ final class PressCaptureSource implements RootTouchSource.ContactListener, Press
 
     /** Prefer the host's actual text/image result over the same press's approximate OCR region. */
     boolean acceptPortalContent(CapturedContent content) {
+        boolean livePress = pointerDown && detector.isActive();
+        boolean releasedConfirmedPress = released
+                && releaseMode != PressReleaseMode.Mode.NONE
+                && confirmedAt > 0L;
         boolean ownsCurrentPress = Looper.myLooper() == Looper.getMainLooper()
-                && !stopped && pointerDown && detector.isActive()
+                && !stopped && (livePress || releasedConfirmedPress)
                 && controller.canContinuePress(downTime);
         if (!ownsCurrentPress) {
             OperationTrace.event(operationId(), "portal_capture", "rejected_press_not_owned");
@@ -529,6 +538,39 @@ final class PressCaptureSource implements RootTouchSource.ContactListener, Press
         return true;
     }
 
+    /** Replaces a timed-out Portal thumbnail while this same press still owns the UI. */
+    void replacePortalImage(CapturedContent replacement, long requestDownTime) {
+        if (replacement == null || !replacement.isImage()) return;
+        main.post(() -> {
+            if (stopped || requestDownTime != downTime) {
+                recycle(replacement);
+                return;
+            }
+            if (controller.replacePendingImagePreview(replacement, requestDownTime)) return;
+            boolean livePress = pointerDown && detector.isActive();
+            boolean releasedConfirmedPress = released
+                    && releaseMode != PressReleaseMode.Mode.NONE
+                    && confirmedAt > 0L;
+            if (!livePress && !releasedConfirmedPress) {
+                recycle(replacement);
+                return;
+            }
+            if (cached != null && cached.isImage()) {
+                long currentPixels = (long) cached.bitmap.getWidth() * cached.bitmap.getHeight();
+                long replacementPixels = (long) replacement.bitmap.getWidth()
+                        * replacement.bitmap.getHeight();
+                if (replacementPixels <= currentPixels) {
+                    recycle(replacement);
+                    return;
+                }
+                recycle(cached);
+                cached = replacement;
+            } else {
+                recycle(replacement);
+            }
+        });
+    }
+
     private boolean allowed() {
         return !stopped && nodeSession != null && input.isReady()
                 && (settings.isSharingEnabled(false) || settings.isSharingEnabled(true))
@@ -563,22 +605,30 @@ final class PressCaptureSource implements RootTouchSource.ContactListener, Press
         DragShareLog.i(TAG, "press confirmed by duration/movement elapsedMs=" + (now - detector.downTime()));
         logTiming("confirmed", downTime, "");
         if (!released && cached == null && !lookupRunning) lookup();
-        showHoldingImagePreviewIfReady();
+        routeConfirmedContentIfReady();
     }
 
     /**
-     * Combined-trigger feedback: once the hold is confirmed, surface the image
-     * content as a NOT_TOUCHABLE preview so the user can see the drag is armed
-     * and simply keeps moving to start the drag.
+     * Routes content as soon as the duration threshold is reached. A single
+     * finger image remains a live drag preview; text and two-finger content
+     * enter their final flow immediately.
      */
-    private void showHoldingImagePreviewIfReady() {
-        if (released || directDragArmed || twoFingerModeForGesture) return;
+    private void routeConfirmedContentIfReady() {
+        if (released || directDragArmed) return;
         CapturedContent content = cached;
         if (content == null) return;
         if (!settings.isSharingEnabled(content.isImage())) return;
-        cached = null;
-        controller.showPendingImagePreview(content, controller.latestPointerX(),
-                controller.latestPointerY(), settings, downTime, true);
+        if (twoFingerModeForGesture) {
+            display();
+            return;
+        }
+        if (content.isImage() && !content.pressOcrRegion) {
+            cached = null;
+            controller.showPendingImagePreview(content, controller.latestPointerX(),
+                    controller.latestPointerY(), settings, downTime, true);
+        } else {
+            display();
+        }
     }
 
     private void lookup() {
@@ -652,11 +702,11 @@ final class PressCaptureSource implements RootTouchSource.ContactListener, Press
                             && !twoFingerModeForGesture) {
                         display();
                     } else if (detector.isFired() && !twoFingerModeForGesture && !directDragArmed
-                            && settings.isSharingEnabled(content.isImage())) {
+                            && content.isImage() && settings.isSharingEnabled(true)) {
                         cached = null;
                         controller.showPendingImagePreview(content, controller.latestPointerX(),
                                 controller.latestPointerY(), settings, requestDownTime, true);
-                    } else if (detector.isFired() && twoFingerModeForGesture) {
+                    } else if (detector.isFired()) {
                         display();
                     } else schedule();
                 });
@@ -869,6 +919,19 @@ final class PressCaptureSource implements RootTouchSource.ContactListener, Press
         inputReceivedElapsedRealtime = -1L;
         recycle(cached);
         cached = null;
+        blocker.stopAsync();
+    }
+
+    private void finishConfirmedReleaseKeepingAsyncWork() {
+        controller.endPressPipeline(downTime);
+        pointerDown = false;
+        released = true;
+        main.removeCallbacks(classify);
+        main.removeCallbacks(fire);
+        detector.cancel();
+        twoFingerContactSequence = false;
+        displayQueued = false;
+        directDragArmed = false;
         blocker.stopAsync();
     }
 

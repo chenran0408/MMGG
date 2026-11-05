@@ -526,6 +526,61 @@ final class DragShareController {
         });
     }
 
+    /** Promotes a late Portal original into the still-pending preview. */
+    boolean replacePendingImagePreview(CapturedContent replacement, long pressDownTime) {
+        if (replacement == null || !replacement.isImage()) return false;
+        if (Looper.myLooper() == Looper.getMainLooper() && pendingImagePreview == null) {
+            return false;
+        }
+        runOnMain(() -> {
+            CapturedContent current = pendingImagePreview;
+            if (current == null || !current.isImage()
+                    || pendingImageOriginDownTime != pressDownTime) {
+                recycleOwnedImage(replacement);
+                return;
+            }
+            long currentPixels = (long) current.bitmap.getWidth() * current.bitmap.getHeight();
+            long replacementPixels = (long) replacement.bitmap.getWidth()
+                    * replacement.bitmap.getHeight();
+            if (replacementPixels <= currentPixels) {
+                recycleOwnedImage(replacement);
+                return;
+            }
+            boolean whileHolding = pendingImagePreviewWhileHolding;
+            DragShareSettings loadedSettings = pendingImageSettings;
+            float x = lastObservedX;
+            float y = lastObservedY;
+            if (modernPreviewWindow != null) {
+                dismissPendingImagePreview(true);
+                showPendingImagePreview(replacement, x, y, loadedSettings,
+                        pressDownTime, whileHolding);
+            } else {
+                ImageView image = findPreviewImage(previewView);
+                if (image == null) {
+                    recycleOwnedImage(replacement);
+                    return;
+                }
+                image.setImageBitmap(replacement.bitmap);
+                pendingImagePreview = replacement;
+                recycleOwnedImage(current);
+            }
+            OperationTrace.event(OperationTrace.id("press", pressDownTime),
+                    "preview", "original_image_promoted");
+        });
+        return true;
+    }
+
+    private static ImageView findPreviewImage(View view) {
+        if (view instanceof ImageView) return (ImageView) view;
+        if (!(view instanceof ViewGroup)) return null;
+        ViewGroup group = (ViewGroup) view;
+        for (int i = 0; i < group.getChildCount(); i++) {
+            ImageView image = findPreviewImage(group.getChildAt(i));
+            if (image != null) return image;
+        }
+        return null;
+    }
+
     private boolean isRootPressCurrentOrReleased(long pressDownTime) {
         if (pressDownTime < 0L) return false;
         if (rootDownTime >= 0L) {
