@@ -49,6 +49,8 @@ final class PortalHooks {
     @SuppressLint("StaticFieldLeak")
     private static volatile DragShareController controller;
     private static volatile RootTouchSource rootTouchSource;
+    private static volatile RootGateway rootGateway;
+    private static volatile MiuiMotionSource motionSource;
     private static volatile PressCaptureSource thumbCaptureSource;
     @SuppressLint("StaticFieldLeak")
     private static android.app.Service portalService;
@@ -455,9 +457,13 @@ final class PortalHooks {
             }
             if (motion instanceof MotionEvent) {
                 callbackDiagnostics.motion((MotionEvent) motion, current.diagnosticPackage(),
-                        "HOST_CALLBACK_OBSERVED", null, null, null, "existing_motion_callback_suppression");
-                // A motion-only result is not valid Taplus pick content.
+                        "HOST_CALLBACK_OBSERVED", null, null, null, "miui_motion_fallback");
+                dispatchMotion(MotionEvent.obtain((MotionEvent) motion));
+                // A motion-only result is not valid Taplus pick content. The
+                // fallback above has already received the event when Root is
+                // not ready.
                 param.setResult(null);
+                return;
             }
 
             Object control = properties.get(CONTROL_KEY);
@@ -497,6 +503,8 @@ final class PortalHooks {
     }
 
     private static boolean hasReadyRootSource() {
+        RootGateway gateway = rootGateway;
+        if (gateway != null) return gateway.isInputReady();
         RootTouchSource source = rootTouchSource;
         return source != null && source.isReady();
     }
@@ -524,10 +532,13 @@ final class PortalHooks {
         controlIgnoredLogged = false;
         clearDeferredHostCalls();
         controller = new DragShareController(context, OverlayWindowPolicy.portal());
-        rootTouchSource = new RootTouchSource(context, PortalHooks::dispatchRootPointer,
+        rootGateway = new RootGateway(context, PortalHooks::dispatchRootPointer,
                 (ready, reason) -> ModuleActivation.reportRootInput(context, ready, reason));
+        rootTouchSource = rootGateway.input();
+        motionSource = new MiuiMotionSource(classLoader, PortalHooks::dispatchMotion);
+        motionSource.start();
         configureThumbCapture(context, settings);
-        rootTouchSource.start();
+        rootGateway.startInput();
         log("portal runtime started");
     }
 
@@ -542,8 +553,14 @@ final class PortalHooks {
         RootTouchSource rootSource = rootTouchSource;
         rootTouchSource = null;
         if (rootSource != null) {
-            rootSource.stop();
+            RootGateway gateway = rootGateway;
+            rootGateway = null;
+            if (gateway != null) gateway.stopInput();
+            else rootSource.stop();
         }
+        MiuiMotionSource fallback = motionSource;
+        motionSource = null;
+        if (fallback != null) fallback.stop();
         DragShareController current = controller;
         controller = null;
         if (current != null) {
@@ -614,6 +631,49 @@ final class PortalHooks {
         PressCaptureSource thumb = thumbCaptureSource;
         if (thumb != null && (current == null || !current.hasInteractivePendingImagePreview())) {
             thumb.onPointerEvent(action, x, y, eventTime);
+        }
+    }
+
+    /** Delivers MIUI motion only while Root evdev is unavailable. */
+    private static void dispatchMotion(MotionEvent event) {
+        try {
+            if (hasReadyRootSource()) {
+                return;
+            }
+            DragShareController current = controller;
+            PressCaptureSource press = thumbCaptureSource;
+            if (current == null && press == null) return;
+            int action = event.getActionMasked();
+            float x = event.getRawX();
+            float y = event.getRawY();
+            long time = event.getEventTime();
+            if (current != null && (action == MotionEvent.ACTION_DOWN
+                    || action == MotionEvent.ACTION_MOVE
+                    || action == MotionEvent.ACTION_UP
+                    || action == MotionEvent.ACTION_CANCEL)) {
+                current.acceptPointerEvent(action, x, y, time, "miui",
+                        action == MotionEvent.ACTION_UP || action == MotionEvent.ACTION_CANCEL
+                                ? PortalHooks::replayDeferredHostCalls : null);
+            }
+            if (press != null) {
+                int pointerCount = event.getPointerCount();
+                if (action == MotionEvent.ACTION_DOWN && pointerCount == 1) {
+                    press.onPointerEvent(action, x, y, time);
+                } else if (action == MotionEvent.ACTION_MOVE && pointerCount == 1) {
+                    press.onPointerEvent(action, x, y, time);
+                } else if (action == MotionEvent.ACTION_UP || action == MotionEvent.ACTION_CANCEL) {
+                    press.onContactEvent(action, x, y,
+                            pointerCount > 1 ? event.getRawX(1) : Float.NaN,
+                            pointerCount > 1 ? event.getRawY(1) : Float.NaN,
+                            pointerCount, time);
+                    press.onPointerEvent(action, x, y, time);
+                } else if (pointerCount > 1) {
+                    press.onContactEvent(action, x, y, event.getRawX(1), event.getRawY(1),
+                            pointerCount, time);
+                }
+            }
+        } finally {
+            event.recycle();
         }
     }
 
