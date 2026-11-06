@@ -437,7 +437,8 @@ final class DragShareController {
                         "preview", "pending_image_late_ignored");
                 return;
             }
-            if (destroyed || (loadedSettings != null && !loadedSettings.isSharingEnabled(true))) {
+            if (destroyed || (loadedSettings != null
+                    && !loadedSettings.isSharingEnabled(content.isImage()))) {
                 recycleOwnedImage(content);
                 return;
             }
@@ -469,7 +470,7 @@ final class DragShareController {
                 startPreviewEnterAnimation();
                 if (whileHolding) {
                     OperationTrace.event(OperationTrace.id("press", originDownTime),
-                            "preview", "hold_image_preview_shown");
+                            "preview", "hold_preview_shown");
                 } else {
                     OperationTrace.event(OperationTrace.id("press", originDownTime),
                             "preview", "pending_image_shown");
