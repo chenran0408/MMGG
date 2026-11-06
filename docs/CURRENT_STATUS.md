@@ -19,6 +19,14 @@
 - Activation 首页与诊断页共用 `ActivationPresentation`；`UNKNOWN` 不转换为权限缺失。
 - 跨进程追踪只报告最后一个可观察阶段。`startActivity` 返回、拖放接受和 Provider descriptor 打开都不代表接收方已经读取或发送。
 
+### 2026-11-06 手势优先路由与 Beta44 交付
+
+- 修复确认后的手势分流：单指长按统一进入拖拽预览，双指长按统一进入分词；双指按到图片时先 OCR，再打开分词窗口。
+- 单指文字也使用通用拖拽预览，松手会回收预览；不再按图片/文字类型决定单指和双指行为。
+- 源码提交：`6026b74`、`b7d2283`；候选 tag：`delivered/mmgg-1.7.219-beta.44`。
+- `assembleBeta`（R8、资源收缩）通过；版本 `1.7.219-beta.44` / versionCode `286`；APK SHA-256 `2AF222871E72F28D9189A1DE3EEFA07D94A6E355FDD25B9D479BD0624030BA66`，v2 签名通过，Android Debug 证书。
+- GitHub Beta 预发布：[MMGG 1.7.219-beta.44](https://github.com/chenran0408/MMGG/releases/tag/delivered/mmgg-1.7.219-beta.44)。本轮未执行设备验收。
+
 ### 2026-11-06 设置页精简与 Beta43 交付
 
 - 设置页把单指拖拽确认时间与双指分词确认时间放在同一组，日志等级与保存位置选项移除写死的“当前”标记。
@@ -60,7 +68,7 @@
 - `PressPreviewHandoffTest` 删除 3 个 `dragCandidate` 用例，新增"松手开分词窗口（drag_preview=true、截图回收、候选清空）"与"按住直接接管建立会话"两个行为测试。
 - 全量验证：893 项单测 0 失败、Lint 0 errors/190 warnings/2 hints、assembleDebug、assembleBeta（R8）通过。未操作设备；微信按住直接拖拽、非微信应用直接拖拽与真实触摸窗口路由待实机验证。
 
-当前开发源码版本为 `1.7.219-beta.43` / versionCode `285`；Beta38 日志导出增量已提交为 `d1f35d0`，此前 Beta37 交付的功能提交为 `5bf92fe`、`4b7257a`。组合触发及模式移除后全量验证：876 项单测 0 失败、Lint 0 errors/190 warnings、assembleDebug 通过；`d9d69ba` 清理恒真双指资格状态，`161a171` 固定单指=拖拽、双指=分词并删除模式选择。
+当前开发源码版本为 `1.7.219-beta.44` / versionCode `286`；Beta38 日志导出增量已提交为 `d1f35d0`，此前 Beta37 交付的功能提交为 `5bf92fe`、`4b7257a`。组合触发及模式移除后全量验证：876 项单测 0 失败、Lint 0 errors/190 warnings、assembleDebug 通过；`d9d69ba` 清理恒真双指资格状态，`161a171` 固定单指=拖拽、双指=分词并删除模式选择。
 
 ### 2026-11-02 诊断打码红线与 FanRuntime 拆分
 

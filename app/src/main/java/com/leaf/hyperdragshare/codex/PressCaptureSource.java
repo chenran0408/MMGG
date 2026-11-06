@@ -503,13 +503,14 @@ final class PressCaptureSource implements RootTouchSource.ContactListener, Press
         }
         OperationTrace.event(operationId(), "portal_capture", "accepted");
         PressOcrFlow.Candidate pending = pressOcr.candidate();
-        if (!content.isImage() && pending != null && pending.textWindowAccepted) {
-            // OCR has already opened this press's text window; do not replace it with
-            // a second text result, and keep its screenshot available for an image drag.
+        if (pending != null && pending.textWindowAccepted) {
+            // OCR has already opened this press's segmentation window; do not replace it
+            // with a late Portal payload from the same physical gesture.
+            if (content.isImage()) recycle(content);
             return true;
         }
-        boolean imageTakeover = content.isImage() && ownsCurrentPress
-                && (!twoFingerModeForGesture || detector.isFired())
+        boolean imageTakeover = !twoFingerModeForGesture && content.isImage() && ownsCurrentPress
+                && detector.isFired()
                 && (pending != null || controller.isActive());
         if (imageTakeover && pending != null && pending.textWindowAccepted
                 && !pressOcr.dismissTextWindow()) {
@@ -533,8 +534,13 @@ final class PressCaptureSource implements RootTouchSource.ContactListener, Press
             displayQueued = false;
             controller.showContentForPressTakeover(content, latestX, latestY, settings, downTime);
         } else if (released && releaseMode != PressReleaseMode.Mode.NONE) display();
-        else if (twoFingerModeForGesture && detector.isFired()) display();
-        else schedule();
+        else if (detector.isFired() && twoFingerModeForGesture) display();
+        else if (detector.isFired() && directDragArmed) display();
+        else if (detector.isFired()) {
+            cached = null;
+            controller.showPendingImagePreview(content, controller.latestPointerX(),
+                    controller.latestPointerY(), settings, downTime, true);
+        } else schedule();
         return true;
     }
 
@@ -608,11 +614,7 @@ final class PressCaptureSource implements RootTouchSource.ContactListener, Press
         routeConfirmedContentIfReady();
     }
 
-    /**
-     * Routes content as soon as the duration threshold is reached. A single
-     * finger image remains a live drag preview; text and two-finger content
-     * enter their final flow immediately.
-     */
+    /** Routes content by gesture kind after the duration threshold is reached. */
     private void routeConfirmedContentIfReady() {
         if (released || directDragArmed) return;
         CapturedContent content = cached;
@@ -622,13 +624,9 @@ final class PressCaptureSource implements RootTouchSource.ContactListener, Press
             display();
             return;
         }
-        if (content.isImage() && !content.pressOcrRegion) {
-            cached = null;
-            controller.showPendingImagePreview(content, controller.latestPointerX(),
-                    controller.latestPointerY(), settings, downTime, true);
-        } else {
-            display();
-        }
+        cached = null;
+        controller.showPendingImagePreview(content, controller.latestPointerX(),
+                controller.latestPointerY(), settings, downTime, true);
     }
 
     private void lookup() {
@@ -702,7 +700,7 @@ final class PressCaptureSource implements RootTouchSource.ContactListener, Press
                             && !twoFingerModeForGesture) {
                         display();
                     } else if (detector.isFired() && !twoFingerModeForGesture && !directDragArmed
-                            && content.isImage() && settings.isSharingEnabled(true)) {
+                            && settings.isSharingEnabled(content.isImage())) {
                         cached = null;
                         controller.showPendingImagePreview(content, controller.latestPointerX(),
                                 controller.latestPointerY(), settings, requestDownTime, true);
@@ -760,18 +758,18 @@ final class PressCaptureSource implements RootTouchSource.ContactListener, Press
         DragShareLog.i(TAG, "press handoff ready elapsedFromConfirmMs="
                 + (SystemClock.uptimeMillis() - confirmedAt));
         logTiming("handoff", request, "");
-        if (content.isImage()) openImage(request, content);
-        else openText(request, content);
+        if (!twoFingerModeForGesture) {
+            OperationTrace.event(operationId(), "drag_decision", captureKindOutcome(content));
+            controller.show(content, controller.latestPointerX(),
+                    controller.latestPointerY(), settings, downTime);
+        } else if (content.isImage()) {
+            openImageForSegmentation(request, content);
+        } else {
+            openText(request, content);
+        }
     }
 
     private void openText(long request, CapturedContent content) {
-        if (releaseMode == PressReleaseMode.Mode.DRAG_PREVIEW
-                || (directDragArmed && !released && !twoFingerModeForGesture)) {
-            OperationTrace.event(operationId(), "text_decision", "drag_preview");
-            controller.showPendingImagePreview(content, controller.latestPointerX(),
-                    controller.latestPointerY(), settings, downTime, false);
-            return;
-        }
         String operation = operationId();
         Bundle text = new Bundle();
         text.putString("text", content.text);
@@ -818,35 +816,10 @@ final class PressCaptureSource implements RootTouchSource.ContactListener, Press
         }
     }
 
-    private void openImage(long request, CapturedContent content) {
-        if (pointerDown && detector.isFired() && !twoFingerModeForGesture && directDragArmed) {
-            OperationTrace.event(operationId(), "image_decision", "direct_drag_takeover");
-            blocker.stopAsync();
-            controller.showContentForPressTakeover(content, controller.latestPointerX(),
-                    controller.latestPointerY(), settings, downTime);
-            return;
-        }
-        if (content.pressOcrRegion) {
-            OperationTrace.event(operationId(), "image_decision", "ocr_region");
-            pressOcr.startOcrDirect(request, content);
-            return;
-        }
-        if (!pointerDown && !released) {
-            OperationTrace.event(operationId(), "image_decision", "pointer_released");
-            DragShareLog.i(TAG, "image press ended before drag preview was ready");
-            recycle(content);
-            controller.endPressPipeline(downTime);
-            return;
-        }
-        OperationTrace.event(operationId(), "image_decision", "menu_" + captureKindOutcome(content));
-        DragShareLog.i(TAG, "image press handed to drag menu source=" + content.sourcePackage);
-        if (releaseMode == PressReleaseMode.Mode.DRAG_PREVIEW) {
-            controller.showPendingImagePreview(content, controller.latestPointerX(),
-                    controller.latestPointerY(), settings, downTime);
-        } else {
-            controller.show(content, controller.latestPointerX(),
-                    controller.latestPointerY(), settings, downTime);
-        }
+    /** Two-finger image holds always mean segmentation; OCR supplies the text payload. */
+    private void openImageForSegmentation(long request, CapturedContent content) {
+        OperationTrace.event(operationId(), "image_decision", "segmentation_ocr");
+        pressOcr.startOcrDirect(request, content);
     }
 
     @Override public void completeHandoff(Bundle result, long request, String operation) {
