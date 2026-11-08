@@ -13,6 +13,8 @@ final class MoreAppsCatalog {
             "N", "O", "P", "Q", "R", "S", "T", "U", "V", "W", "X", "Y", "Z"
     };
     static final int COLOR_ALL = -1;
+    static final int MODE_APPS = 0;
+    static final int MODE_SHORTCUTS = 1;
     static final int COLOR_GRAY = 0;
     static final int COLOR_RED = 1;
     static final int COLOR_ORANGE = 2;
@@ -21,6 +23,9 @@ final class MoreAppsCatalog {
     static final int COLOR_BLUE = 5;
     static final int COLOR_PURPLE = 6;
     static final int COLOR_PINK = 7;
+    private static final ThreadLocal<android.icu.text.Transliterator> PINYIN =
+            ThreadLocal.withInitial(() -> android.icu.text.Transliterator.getInstance(
+                    "Han-Latin; Latin-ASCII"));
 
     static final class Item {
         final String key;
@@ -60,7 +65,8 @@ final class MoreAppsCatalog {
                 ? "" : normalizeInitial(initial);
         ArrayList<Item> result = new ArrayList<>();
         for (Item item : source) {
-            if (mode == 2 && !item.shortcut) continue;
+            if (mode == MODE_APPS && item.shortcut) continue;
+            if (mode == MODE_SHORTCUTS && !item.shortcut) continue;
             if (color != COLOR_ALL && item.color != color) continue;
             if (!normalizedInitial.isEmpty() && !normalizedInitial.equals(item.initial)) continue;
             if (!normalizedQuery.isEmpty()
@@ -94,8 +100,7 @@ final class MoreAppsCatalog {
         }
         if (first >= '\u4e00' && first <= '\u9fff') {
             try {
-                String latin = android.icu.text.Transliterator.getInstance(
-                        "Han-Latin; Latin-ASCII").transliterate(value);
+                String latin = PINYIN.get().transliterate(value);
                 for (int i = 0; i < latin.length(); i++) {
                     char candidate = Character.toUpperCase(latin.charAt(i));
                     if (candidate >= 'A' && candidate <= 'Z') return String.valueOf(candidate);

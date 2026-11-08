@@ -66,6 +66,10 @@ final class FanRuntimeTargetResolver {
 
     private RuntimeTarget resolveTarget(PackageManager packageManager,
                                         GestureConfig.TargetSpec target) throws Exception {
+        if (target.isMoreApps()) {
+            return RuntimeTarget.moreApps("更多应用",
+                    context.getDrawable(android.R.drawable.ic_menu_more));
+        }
         if (target.isShortcut()) {
             return new RuntimeTarget(target.packageName, target.shortcutId,
                     target.shortcutIntentUri,
@@ -112,7 +116,10 @@ final class FanRuntimeTargetResolver {
             return cached;
         }
         RuntimeTarget resolved;
-        if (target.isShortcut()) {
+        if (target.isMoreApps()) {
+            resolved = RuntimeTarget.moreApps("更多应用",
+                    context.getDrawable(android.R.drawable.ic_menu_more));
+        } else if (target.isShortcut()) {
             resolved = new RuntimeTarget(target.shortcutPackage, target.shortcutId,
                     target.shortcutIntentUri,
                     target.shortcutLabel == null || target.shortcutLabel.isEmpty()

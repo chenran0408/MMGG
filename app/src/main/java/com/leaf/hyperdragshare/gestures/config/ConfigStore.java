@@ -25,6 +25,7 @@ public final class ConfigStore {
             "honeycomb_background_v2_migrated";
     private static final String KEY_HONEYCOMB_BACKGROUND_V3_MIGRATED =
             "honeycomb_background_v3_migrated";
+    private static final String KEY_MORE_APPS_TARGET_MIGRATED = "more_apps_target_migrated_v1";
     private static final String[] DEFAULT_BOTTOM_PACKAGES = {"com.ss.android.article.news", "tv.danmaku.bili", "com.twitter.android", "nu.gpu.nagram", "com.tencent.mm", "com.ss.android.yumme.video", "com.xingin.xhs", "com.xunmeng.pinduoduo", "com.miui.calculator", "com.android.purebilibili", "com.zhiliaoapp.musically", "com.tencent.mobileqq", "com.tencent.tmgp.sgame"};
     private static final String[] DEFAULT_HONEYCOMB_PACKAGES = {"com.trim.app", "com.ss.android.ugc.aweme", "com.taobao.idlefish", "tv.danmaku.bili", "com.autonavi.minimap", "com.ss.android.yumme.video", "com.ss.android.article.news", "com.jingdong.app.mall", "com.coolapk.market", "com.xunmeng.pinduoduo", "com.taobao.taobao", "com.tencent.tmgp.sgame", "com.tencent.mm", "com.miui.calculator", "com.miui.gallery", "com.xingin.xhs", "com.eg.android.AlipayGphone", "com.android.purebilibili", "com.openai.chatgpt", "com.android.chrome", "com.anthropic.claude", "com.deepseek.chat", "ai.x.grok", "nu.gpu.nagram", "com.tencent.mobileqq", "com.tencent.androidqqmail", "com.android.vending", "com.zhiliaoapp.musically", "com.twitter.android"};
     private final Context context;
@@ -45,6 +46,7 @@ public final class ConfigStore {
         migrateOrientationBehaviorIfNeeded(preferences);
         migrateHoneycombBackgroundIfNeeded(preferences);
         migrateHoneycombWallpaperDefaultIfNeeded(preferences);
+        if (migrateMoreAppsTargets(preferences)) notifyChanged();
         ensureNativeWindowScaleDefaults(preferences);
         ensureHoneycombPositions(preferences);
     }
@@ -82,7 +84,7 @@ public final class ConfigStore {
                 AppTarget target = value instanceof JSONObject
                         ? AppTarget.fromJson((JSONObject) value)
                         : new AppTarget(array.optString(i, ""));
-                if (target != null && (target.isShortcut() || target.componentName() != null)
+                if (target != null && (target.isMoreApps() || target.isShortcut() || target.componentName() != null)
                         && !result.contains(target)) {
                     result.add(target);
                 }
@@ -112,7 +114,7 @@ public final class ConfigStore {
                     array.length()); i++) {
                 JSONObject value = array.optJSONObject(i);
                 AppTarget target = AppTarget.fromJson(value);
-                if (target != null && (target.isShortcut() || target.componentName() != null)
+                if (target != null && (target.isMoreApps() || target.isShortcut() || target.componentName() != null)
                         && !result.contains(target)) result.add(target);
             }
         } catch (Exception ignored) { }
@@ -123,7 +125,7 @@ public final class ConfigStore {
         JSONArray array = new JSONArray();
         for (AppTarget target : targets) {
             if (array.length() >= ConfigContract.MAX_HONEYCOMB_MAX_TARGETS) break;
-            if (target != null && (target.isShortcut() || target.componentName() != null)) {
+            if (target != null && (target.isMoreApps() || target.isShortcut() || target.componentName() != null)) {
                 array.put(target.toJson());
             }
         }
@@ -550,16 +552,23 @@ public final class ConfigStore {
                 if (defaults.length() >= 6) break;
             }
         }
+        defaults.put(AppTarget.moreApps().toJson());
         if (ConfigContract.KEY_HONEYCOMB_COMPONENTS.equals(key)) {
             synchronized (ConfigStore.class) {
                 ensureHoneycombPositions(preferences);
                 HoneycombPositions positions = HoneycombPositions.read(preferences.getString(
                         ConfigContract.KEY_HONEYCOMB_POSITIONS, ""), honeycombOwners(defaults.toString()),
-                        visibleHoneycombCount(preferences));
+                        Math.max(visibleHoneycombCount(preferences), defaults.length()));
                 preferences.edit().putString(key, defaults.toString())
+                        .putInt(ConfigContract.KEY_HONEYCOMB_MAX_TARGETS,
+                                Math.max(visibleHoneycombCount(preferences), defaults.length()))
                         .putString(ConfigContract.KEY_HONEYCOMB_POSITIONS, positions.serialize()).apply();
             }
-        } else preferences.edit().putString(key, defaults.toString()).apply();
+        } else preferences.edit().putString(key, defaults.toString())
+                .putInt(ConfigContract.KEY_FAN_MAX_TARGETS, Math.max(preferences.getInt(
+                        ConfigContract.KEY_FAN_MAX_TARGETS, ConfigContract.DEFAULT_FAN_MAX_TARGETS),
+                        defaults.length()))
+                .apply();
         notifyChanged();
     }
 
@@ -581,6 +590,48 @@ public final class ConfigStore {
         }
         uiHandler.removeCallbacks(flushPendingWrites);
         uiHandler.postDelayed(flushPendingWrites, 120L);
+    }
+
+    private static boolean migrateMoreAppsTargets(SharedPreferences preferences) {
+        if (preferences.getBoolean(KEY_MORE_APPS_TARGET_MIGRATED, false)) return false;
+        SharedPreferences.Editor editor = preferences.edit()
+                .putBoolean(KEY_MORE_APPS_TARGET_MIGRATED, true);
+        boolean changed = appendMoreAppsIfRoom(preferences, editor, ConfigContract.KEY_COMPONENTS,
+                ConfigContract.MAX_FAN_MAX_TARGETS);
+        changed |= appendMoreAppsIfRoom(preferences, editor, ConfigContract.KEY_HONEYCOMB_COMPONENTS,
+                ConfigContract.MAX_HONEYCOMB_MAX_TARGETS);
+        editor.apply();
+        return changed;
+    }
+
+    private static boolean appendMoreAppsIfRoom(SharedPreferences preferences,
+                                             SharedPreferences.Editor editor,
+                                             String key, int maximum) {
+        try {
+            JSONArray array = new JSONArray(preferences.getString(key, "[]"));
+            for (int i = 0; i < array.length(); i++) {
+                AppTarget target = AppTarget.fromJson(array.optJSONObject(i));
+                if (target != null && target.isMoreApps()) return false;
+            }
+            if (array.length() >= maximum) return false;
+            array.put(AppTarget.moreApps().toJson());
+            editor.putString(key, array.toString());
+            if (ConfigContract.KEY_COMPONENTS.equals(key)) {
+                editor.putInt(ConfigContract.KEY_FAN_MAX_TARGETS, Math.max(preferences.getInt(
+                        ConfigContract.KEY_FAN_MAX_TARGETS,
+                        ConfigContract.DEFAULT_FAN_MAX_TARGETS), array.length()));
+            } else {
+                int maxTargets = Math.max(preferences.getInt(
+                        ConfigContract.KEY_HONEYCOMB_MAX_TARGETS,
+                        ConfigContract.DEFAULT_HONEYCOMB_MAX_TARGETS), array.length());
+                editor.putInt(ConfigContract.KEY_HONEYCOMB_MAX_TARGETS, maxTargets);
+                HoneycombPositions positions = HoneycombPositions.read(preferences.getString(
+                        ConfigContract.KEY_HONEYCOMB_POSITIONS, ""), honeycombOwners(array.toString()),
+                        maxTargets);
+                editor.putString(ConfigContract.KEY_HONEYCOMB_POSITIONS, positions.serialize());
+            }
+            return true;
+        } catch (Exception ignored) { return false; }
     }
 
     public void putFanRowAllocation(int inner, int middle, int outer) {

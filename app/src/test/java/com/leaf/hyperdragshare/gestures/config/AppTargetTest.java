@@ -19,4 +19,14 @@ public final class AppTargetTest {
         assertEquals(original, restored);
         assertEquals(original.shortcutIntentUri, restored.shortcutIntentUri);
     }
+
+    @Test public void moreAppsTargetRoundTripsAsASelectableSpecialTarget() {
+        AppTarget original = AppTarget.moreApps();
+        AppTarget restored = AppTarget.fromJson(original.toJson());
+
+        assertNotNull(restored);
+        assertTrue(restored.isMoreApps());
+        assertEquals(original, restored);
+        assertEquals(AppTarget.MORE_APPS_POSITION_ID, restored.positionIdentity());
+    }
 }

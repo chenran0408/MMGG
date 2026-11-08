@@ -76,7 +76,6 @@ final class FanRuntime {
 
     private final MoreAppsOverlayController moreAppsOverlay;
 
-    private final RuntimeTarget moreAppsTarget;
 
     private final FanTriggerCapture triggerCapture;
 
@@ -257,8 +256,6 @@ final class FanRuntime {
         overlay = new FanOverlayController(context, mainHandler);
         honeycombOverlay = new HoneycombOverlayController(context, mainHandler);
         fullscreenLauncher = new FullscreenAppLauncher(context);
-        moreAppsTarget = RuntimeTarget.moreApps("更多应用",
-                context.getDrawable(android.R.drawable.ic_menu_more));
         moreAppsOverlay = new MoreAppsOverlayController(context, mainHandler);
         triggerCapture = new FanTriggerCapture(context, mainHandler, new FanTriggerCapture.Listener() {
 
@@ -1927,8 +1924,8 @@ final class FanRuntime {
                 updateRecentsCleanCover(next);
                 refreshForegroundGestureExclusion();
                 outsideGestures.setDoubleTapTimeout(next.outsideTapWindowMs);
-                targets = appendMoreTarget(nextTargets);
-                honeycombTargets = appendMoreTarget(nextHoneycombTargets);
+                targets = Collections.unmodifiableList(new ArrayList<>(nextTargets));
+                honeycombTargets = Collections.unmodifiableList(new ArrayList<>(nextHoneycombTargets));
                 if (activeTargets.isEmpty())
                     activeTargets = targets;
                 freeform.updateConfig(next);
@@ -1961,12 +1958,6 @@ final class FanRuntime {
         }
         configLoadQueued = true;
         configHandler.post(this::reloadConfig);
-    }
-
-    private List<RuntimeTarget> appendMoreTarget(List<RuntimeTarget> source) {
-        ArrayList<RuntimeTarget> result = new ArrayList<>(source);
-        result.add(moreAppsTarget);
-        return Collections.unmodifiableList(result);
     }
 
     private void scheduleConfigRetry() {

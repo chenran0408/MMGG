@@ -643,6 +643,11 @@ private suspend fun loadPickerRows(context: Context, store: ConfigStore): List<G
     val pm = context.packageManager
     val rows = LinkedHashMap<String, GestureTargetRow>()
     val iconSizePx = (44f * context.resources.displayMetrics.density).roundToInt().coerceAtLeast(1)
+    val moreApps = AppTarget.moreApps()
+    rows[targetKey(moreApps)] = GestureTargetRow(
+        moreApps, "更多应用", "打开可搜索的完整应用目录",
+        drawableToBitmap(context.getDrawable(android.R.drawable.ic_menu_more)!!, iconSizePx),
+    )
     @Suppress("DEPRECATION")
     val launcherActivities = pm.queryIntentActivities(
         Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER), 0,
@@ -737,6 +742,12 @@ private fun loadSavedTargetRows(
     appendShortcuts(context, store, shortcuts, iconSizePx)
     return targets.map { target ->
         shortcuts[targetKey(target)]?.let { return@map it }
+        if (target.isMoreApps) {
+            return@map GestureTargetRow(
+                target, "更多应用", "打开可搜索的完整应用目录",
+                drawableToBitmap(context.getDrawable(android.R.drawable.ic_menu_more)!!, iconSizePx),
+            )
+        }
         val component = target.componentName()
         val packageName = target.packageName()
         val label: String
@@ -827,8 +838,8 @@ private fun mergeRows(rows: List<GestureTargetRow>, targets: List<AppTarget>): L
 
 private fun fallbackRow(target: AppTarget) = GestureTargetRow(
     target,
-    target.shortcutLabel.ifBlank { target.packageName() },
-    targetSummary(target),
+    if (target.isMoreApps) "更多应用" else target.shortcutLabel.ifBlank { target.packageName() },
+    if (target.isMoreApps) "打开可搜索的完整应用目录" else targetSummary(target),
     null,
 )
 

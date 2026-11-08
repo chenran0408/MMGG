@@ -55,9 +55,8 @@ import java.util.concurrent.Executors;
 
 /** Runtime launcher surface for targets that do not fit in the configured fan. */
 final class MoreAppsOverlayController {
-    private static final int MODE_ALL = 0;
-    private static final int MODE_RECENT = 1;
-    private static final int MODE_SHORTCUTS = 2;
+    private static final int MODE_ALL = MoreAppsCatalog.MODE_APPS;
+    private static final int MODE_SHORTCUTS = MoreAppsCatalog.MODE_SHORTCUTS;
     private static final int[] COLOR_IDS = {MoreAppsCatalog.COLOR_ALL,
             MoreAppsCatalog.COLOR_GRAY, MoreAppsCatalog.COLOR_RED,
             MoreAppsCatalog.COLOR_ORANGE, MoreAppsCatalog.COLOR_YELLOW,
@@ -74,14 +73,15 @@ final class MoreAppsOverlayController {
         thread.setPriority(Thread.NORM_PRIORITY - 1);
         return thread;
     });
-    private final ArrayList<RuntimeTarget> recent = new ArrayList<>();
     private volatile List<Entry> cachedEntries;
     private volatile String changedPackage;
     private volatile boolean shortcutCatalogChanged;
     private boolean loading;
-    private View attached;
+    private volatile View attached;
+    private WindowManager.LayoutParams attachedParams;
     private LaunchAction launchAction;
     private MoreAdapter adapter;
+    private Button[] tabButtons;
     private GridView grid;
     private ListView basicList;
     private TextView empty;
@@ -94,6 +94,7 @@ final class MoreAppsOverlayController {
     private String selectedInitial = "";
     private String query = "";
     private long panelOpenedAt;
+    private Palette palette;
 
     private final BroadcastReceiver packageChanges = new BroadcastReceiver() {
         @Override public void onReceive(Context ignored, Intent intent) {
@@ -124,11 +125,16 @@ final class MoreAppsOverlayController {
         catch (Throwable error) { Log.e("Cannot observe app catalog changes", error); }
         context.getContentResolver().registerContentObserver(ConfigContract.CATALOG_URI,
                 false, catalogChanges);
+        handler.post(this::loadEntriesAsync);
     }
 
     boolean isVisible() { return attached != null; }
 
     void show(LaunchAction action, boolean enhanced) {
+        if (!handler.getLooper().isCurrentThread()) {
+            handler.post(() -> show(action, enhanced));
+            return;
+        }
         removeNow();
         launchAction = action;
         this.enhanced = enhanced;
@@ -136,17 +142,18 @@ final class MoreAppsOverlayController {
         selectedColor = MoreAppsCatalog.COLOR_ALL;
         selectedInitial = "";
         query = "";
+        palette = Palette.forContext(context);
         if (windowManager == null) return;
         long start = android.os.SystemClock.elapsedRealtime();
         panelOpenedAt = start;
 
         FrameLayout root = new FrameLayout(context);
-        root.setBackgroundColor(0x99000000);
+        root.setBackgroundColor(palette.scrim);
         root.setOnClickListener(v -> removeNow());
         LinearLayout panel = new LinearLayout(context);
         panel.setOrientation(LinearLayout.VERTICAL);
         panel.setPadding(dp(12), dp(10), dp(12), dp(10));
-        panel.setBackground(roundRect(0xff202124, dp(20)));
+        panel.setBackground(roundRect(palette.panel, dp(20)));
         panel.setOnClickListener(v -> { });
         int maxWidth = Math.max(dp(280), Math.min(dp(520), screenWidth() - dp(24)));
         int maxHeight = Math.max(dp(300), Math.min(dp(720), screenHeight() - dp(64)));
@@ -160,26 +167,25 @@ final class MoreAppsOverlayController {
         search = new EditText(context);
         search.setSingleLine(true);
         search.setHint("搜索应用或快捷方式");
-        search.setHintTextColor(0xff9aa0a6);
-        search.setTextColor(Color.WHITE);
+        search.setHintTextColor(palette.secondaryText);
+        search.setTextColor(palette.primaryText);
         search.setTextSize(15f);
         search.setPadding(dp(12), 0, dp(12), 0);
-        search.setBackground(roundRect(0xff303134, dp(12)));
+        search.setBackground(roundRect(palette.search, dp(12)));
         searchHost.addView(search, new LinearLayout.LayoutParams(-1, dp(44)));
         panel.addView(searchHost);
 
         LinearLayout tabs = new LinearLayout(context);
         tabs.setGravity(Gravity.CENTER_VERTICAL);
-        Button all = tab("全部");
-        Button latest = tab("最近");
+        Button all = tab("全部应用");
         Button shortcuts = tab("快捷方式");
+        tabButtons = new Button[]{all, shortcuts};
         tabs.addView(all, new LinearLayout.LayoutParams(0, dp(40), 1));
-        tabs.addView(latest, new LinearLayout.LayoutParams(0, dp(40), 1));
         tabs.addView(shortcuts, new LinearLayout.LayoutParams(0, dp(40), 1));
         panel.addView(tabs);
         all.setOnClickListener(v -> setMode(MODE_ALL));
-        latest.setOnClickListener(v -> setMode(MODE_RECENT));
         shortcuts.setOnClickListener(v -> setMode(MODE_SHORTCUTS));
+        updateTabs();
 
         FrameLayout content = new FrameLayout(context);
         panel.addView(content, new LinearLayout.LayoutParams(-1, 0, 1f));
@@ -202,7 +208,7 @@ final class MoreAppsOverlayController {
 
         empty = new TextView(context);
         empty.setText("正在加载应用…");
-        empty.setTextColor(0xffb0b4b8);
+        empty.setTextColor(palette.secondaryText);
         empty.setTextSize(14f);
         empty.setGravity(Gravity.CENTER);
         empty.setVisibility(View.VISIBLE);
@@ -226,7 +232,8 @@ final class MoreAppsOverlayController {
             final int color = COLOR_IDS[i];
             TextView chip = new TextView(context);
             chip.setText(color == MoreAppsCatalog.COLOR_ALL ? "全" : "");
-            chip.setTextColor(color == MoreAppsCatalog.COLOR_ALL ? 0xff202124 : Color.WHITE);
+            chip.setTextColor(color == MoreAppsCatalog.COLOR_ALL
+                    ? palette.primaryText : Color.WHITE);
             chip.setTextSize(10f);
             chip.setGravity(Gravity.CENTER);
             chip.setContentDescription(colorName(color));
@@ -269,6 +276,7 @@ final class MoreAppsOverlayController {
         try {
             windowManager.addView(root, params);
             attached = root;
+            attachedParams = params;
             root.setAlpha(1f);
             if (animationsEnabled()) {
                 panel.setAlpha(0.94f);
@@ -301,16 +309,29 @@ final class MoreAppsOverlayController {
     }
 
     void removeNow() {
+        if (!handler.getLooper().isCurrentThread()) {
+            handler.post(this::removeNow);
+            return;
+        }
         View view = attached;
         attached = null;
+        WindowManager.LayoutParams params = attachedParams;
+        attachedParams = null;
         launchAction = null;
         if (view != null) view.animate().cancel();
         adapter = null;
+        tabButtons = null;
         grid = null;
         basicList = null;
         indexBar = null;
+        EditText currentSearch = search;
         search = null;
         if (view == null || windowManager == null) return;
+        if (currentSearch != null && params != null
+                && (params.flags & WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE) == 0) {
+            InputMethodManager imm = context.getSystemService(InputMethodManager.class);
+            if (imm != null) imm.hideSoftInputFromWindow(currentSearch.getWindowToken(), 0);
+        }
         try { windowManager.removeViewImmediate(view); }
         catch (Throwable error) { Log.e("Cannot remove more-apps overlay", error); }
     }
@@ -318,35 +339,47 @@ final class MoreAppsOverlayController {
     interface LaunchAction { void launch(RuntimeTarget target); }
 
     private void loadEntriesAsync() {
-        if (loading || attached == null) return;
+        if (loading) return;
         loading = true;
         String packageToRefresh = changedPackage;
         boolean refreshShortcutCatalog = shortcutCatalogChanged;
         loader.execute(() -> {
             long start = android.os.SystemClock.elapsedRealtime();
             List<Entry> entries = loadEntries(cachedEntries, packageToRefresh,
-                    refreshShortcutCatalog);
+                    refreshShortcutCatalog, apps -> publishEntries(apps, start, "apps"));
             if (packageToRefresh != null && packageToRefresh.equals(changedPackage)) {
                 changedPackage = null;
             }
             if (refreshShortcutCatalog) shortcutCatalogChanged = false;
-            cachedEntries = entries;
-            long elapsed = android.os.SystemClock.elapsedRealtime() - start;
+            publishEntries(entries, start, "names");
+            List<Entry> withIcons = loadEntryIcons(entries,
+                    firstPage -> publishEntries(firstPage, start, "first-icons"));
+            publishEntries(withIcons, start, "icons");
             handler.post(() -> {
                 loading = false;
-                if (attached == null || adapter == null) return;
-                adapter.setEntries(entries);
-                applyFilters();
-                Log.i("More-apps catalog ready count=" + entries.size() + " load=" + elapsed
-                        + "ms sinceOpen="
-                        + (android.os.SystemClock.elapsedRealtime() - panelOpenedAt) + "ms");
                 if (changedPackage != null || shortcutCatalogChanged) loadEntriesAsync();
             });
         });
     }
 
+    private void publishEntries(List<Entry> entries, long start, String stage) {
+        long loadElapsed = android.os.SystemClock.elapsedRealtime() - start;
+        handler.post(() -> {
+            cachedEntries = entries;
+            if (attached != null && adapter != null) {
+                adapter.setEntries(entries);
+                applyFilters();
+                Log.i("More-apps " + stage + " ready count=" + entries.size()
+                        + " load=" + loadElapsed + "ms sinceOpen="
+                        + Math.max(0L, android.os.SystemClock.elapsedRealtime()
+                        - panelOpenedAt) + "ms");
+            }
+        });
+    }
+
     private List<Entry> loadEntries(List<Entry> previous, String changedPackage,
-                                    boolean refreshShortcutCatalog) {
+                                    boolean refreshShortcutCatalog,
+                                    java.util.function.Consumer<List<Entry>> onAppsReady) {
         ArrayList<Entry> out = new ArrayList<>();
         Map<String, Entry> oldByKey = new HashMap<>();
         if (previous != null) for (Entry entry : previous) oldByKey.put(entry.key, entry);
@@ -369,10 +402,12 @@ final class MoreAppsOverlayController {
                     }
                     CharSequence label = info.getLabel();
                     String name = label == null ? component.getPackageName() : label.toString();
-                    Drawable icon = info.getBadgedIcon(context.getResources().getDisplayMetrics().densityDpi);
-                    out.add(entry(key, name, component.getPackageName(), false, icon,
-                            new RuntimeTarget(component, name, icon)));
+                    RuntimeTarget target = new RuntimeTarget(component, name, null);
+                    out.add(entry(key, name, component.getPackageName(), false, null,
+                            target, new IconRequest(info, null, null, null, 0)));
                 }
+                // The default category can be searched before the shortcut service returns.
+                if (previous == null) onAppsReady.accept(sortedEntries(out));
                 android.content.pm.LauncherApps.ShortcutQuery query =
                         new android.content.pm.LauncherApps.ShortcutQuery().setQueryFlags(
                                 android.content.pm.LauncherApps.ShortcutQuery.FLAG_MATCH_DYNAMIC
@@ -392,10 +427,9 @@ final class MoreAppsOverlayController {
                     }
                     CharSequence label = info.getShortLabel();
                     String name = label == null ? info.getId() : label.toString();
-                    Drawable icon = apps.getShortcutIconDrawable(info,
-                            context.getResources().getDisplayMetrics().densityDpi);
-                    out.add(entry(key, name, info.getPackage(), true, icon,
-                            new RuntimeTarget(info.getPackage(), info.getId(), name, icon)));
+                    RuntimeTarget target = new RuntimeTarget(info.getPackage(), info.getId(), name, null);
+                    out.add(entry(key, name, info.getPackage(), true, null, target,
+                            new IconRequest(null, info, null, null, 0)));
                 }
                 Bundle catalog = context.getContentResolver().call(
                         ConfigContract.URI, "get_catalog", null, null);
@@ -418,10 +452,11 @@ final class MoreAppsOverlayController {
                             continue;
                         }
                         int userId = item.optInt("userId", 0);
-                        Drawable icon = ShortcutIconLoader.load(context, pkg, id, userId);
                         String name = item.optString("label", id);
-                        out.add(entry(key, name, pkg, true, icon,
-                                new RuntimeTarget(pkg, id, intentUri, name, icon, userId)));
+                        RuntimeTarget target = new RuntimeTarget(pkg, id, intentUri, name,
+                                null, userId);
+                        out.add(entry(key, name, pkg, true, null, target,
+                                new IconRequest(null, null, pkg, id, userId)));
                     }
                 }
             }
@@ -429,16 +464,75 @@ final class MoreAppsOverlayController {
             Log.e("Cannot read runtime app catalog", error);
             if (previous != null) return previous;
         }
-        out.sort(Comparator.comparing((Entry item) -> item.initial)
+        return sortedEntries(out);
+    }
+
+    private static List<Entry> sortedEntries(List<Entry> entries) {
+        ArrayList<Entry> out = new ArrayList<>(entries);
+        out.sort(Comparator.comparing((Entry item) -> item.shortcut)
+                .thenComparing(item -> item.initial)
                 .thenComparing(item -> item.target.label.toLowerCase(Locale.ROOT))
                 .thenComparing(item -> item.key));
         return Collections.unmodifiableList(out);
     }
 
     private Entry entry(String key, String label, String pkg, boolean shortcut,
-                        Drawable icon, RuntimeTarget target) {
+                        Drawable icon, RuntimeTarget target, IconRequest iconRequest) {
         return new Entry(key, target, shortcut, MoreAppsCatalog.initialFor(label),
-                iconColor(icon));
+                icon == null ? MoreAppsCatalog.COLOR_GRAY : iconColor(icon), iconRequest);
+    }
+
+    private List<Entry> loadEntryIcons(List<Entry> entries,
+                                      java.util.function.Consumer<List<Entry>> onFirstPageReady) {
+        android.content.pm.LauncherApps apps = context.getSystemService(
+                android.content.pm.LauncherApps.class);
+        ArrayList<Entry> resolved = new ArrayList<>(entries.size());
+        for (Entry entry : entries) {
+            IconRequest request = entry.iconRequest;
+            if (request == null) {
+                resolved.add(entry);
+                continue;
+            }
+            Drawable icon = null;
+            try {
+                if (request.activity != null) {
+                    icon = request.activity.getBadgedIcon(
+                            context.getResources().getDisplayMetrics().densityDpi);
+                } else if (request.shortcut != null && apps != null) {
+                    icon = apps.getShortcutIconDrawable(request.shortcut,
+                            context.getResources().getDisplayMetrics().densityDpi);
+                } else if (request.packageName != null) {
+                    icon = ShortcutIconLoader.load(context, request.packageName,
+                            request.shortcutId, request.userId);
+                }
+            } catch (Throwable error) {
+                Log.e("Cannot load more-apps icon key=" + entry.key, error);
+            }
+            RuntimeTarget target = withIcon(entry.target, icon);
+            resolved.add(new Entry(entry.key, target, entry.shortcut, entry.initial,
+                    iconColor(icon), null));
+            if (resolved.size() == 24 && entries.size() > 24) {
+                ArrayList<Entry> firstPage = new ArrayList<>(resolved);
+                firstPage.addAll(entries.subList(resolved.size(), entries.size()));
+                onFirstPageReady.accept(Collections.unmodifiableList(firstPage));
+            }
+        }
+        return Collections.unmodifiableList(resolved);
+    }
+
+    private RuntimeTarget withIcon(RuntimeTarget target, Drawable icon) {
+        if (target.component != null) {
+            return new RuntimeTarget(target.component, target.label, icon, target.userId);
+        }
+        if (target.isLauncherShortcut()) {
+            return new RuntimeTarget(target.packageName, target.shortcutId,
+                    target.shortcutIntentUri, target.label, icon, target.userId);
+        }
+        if (target.isShortcut()) {
+            return new RuntimeTarget(target.packageName, target.shortcutId,
+                    target.label, icon);
+        }
+        return target;
     }
 
     private int iconColor(Drawable source) {
@@ -466,7 +560,6 @@ final class MoreAppsOverlayController {
         if (adapter == null) return;
         Entry entry = adapter.getItem(position);
         if (entry == null) return;
-        addRecent(entry.target);
         LaunchAction selectedAction = launchAction;
         removeNow();
         if (selectedAction != null) {
@@ -475,12 +568,6 @@ final class MoreAppsOverlayController {
             Log.i("More-apps launch request returned target=" + entry.key + " elapsed="
                     + (android.os.SystemClock.elapsedRealtime() - start) + "ms");
         }
-    }
-
-    private void addRecent(RuntimeTarget target) {
-        recent.removeIf(item -> item.positionIdentity().equals(target.positionIdentity()));
-        recent.add(0, target);
-        if (recent.size() > 16) recent.remove(recent.size() - 1);
     }
 
     private void applyFilters() {
@@ -500,13 +587,25 @@ final class MoreAppsOverlayController {
     private void setMode(int value) {
         mode = value;
         selectedInitial = "";
+        updateTabs();
         applyFilters();
+    }
+
+    private void updateTabs() {
+        if (tabButtons == null) return;
+        for (int i = 0; i < tabButtons.length; i++) {
+            boolean selected = i == mode;
+            Button button = tabButtons[i];
+            button.setTextColor(selected ? palette.accent : palette.secondaryText);
+            button.setBackground(selected ? roundRect(palette.selectedTab, dp(10))
+                    : roundRect(0x00000000, dp(10)));
+        }
     }
 
     private void updateIndexBar() {
         if (indexBar == null) return;
         indexBar.removeAllViews();
-        if (!enhanced || adapter == null || mode == MODE_RECENT) {
+        if (!enhanced || adapter == null) {
             indexLetters = Collections.emptyList();
             indexBar.setVisibility(View.GONE);
             return;
@@ -523,7 +622,7 @@ final class MoreAppsOverlayController {
             item.setText(letter);
             item.setTextSize(9f);
             item.setGravity(Gravity.CENTER);
-            item.setTextColor(letter.equals(selectedInitial) ? 0xff8ab4f8 : 0xffc4c7c5);
+            item.setTextColor(letter.equals(selectedInitial) ? palette.accent : palette.indexText);
             indexBar.addView(item, new LinearLayout.LayoutParams(-1, 0, 1f));
         }
     }
@@ -543,7 +642,7 @@ final class MoreAppsOverlayController {
         for (int i = 0; i < indexBar.getChildCount(); i++) {
             TextView child = (TextView) indexBar.getChildAt(i);
             child.setTextColor(child.getText().toString().equals(selectedInitial)
-                    ? 0xff8ab4f8 : 0xffc4c7c5);
+                    ? palette.accent : palette.indexText);
         }
         int position = adapter.positionFor(selectedInitial);
         if (position >= 0 && grid != null) grid.setSelection(position);
@@ -569,7 +668,7 @@ final class MoreAppsOverlayController {
     private Button tab(String label) {
         Button button = new Button(context);
         button.setText(label);
-        button.setTextColor(Color.WHITE);
+        button.setTextColor(palette.primaryText);
         button.setTextSize(13f);
         button.setAllCaps(false);
         button.setMinHeight(0);
@@ -583,7 +682,7 @@ final class MoreAppsOverlayController {
         GradientDrawable drawable = new GradientDrawable();
         drawable.setShape(GradientDrawable.OVAL);
         drawable.setColor(color);
-        drawable.setStroke(dp(selected ? 3 : 1), selected ? 0xff8ab4f8 : 0xff5f6368);
+        drawable.setStroke(dp(selected ? 3 : 1), selected ? palette.accent : palette.chipBorder);
         return drawable;
     }
 
@@ -618,13 +717,34 @@ final class MoreAppsOverlayController {
         final boolean shortcut;
         final String initial;
         final int color;
-        Entry(String key, RuntimeTarget target, boolean shortcut, String initial, int color) {
+        final IconRequest iconRequest;
+        Entry(String key, RuntimeTarget target, boolean shortcut, String initial, int color,
+              IconRequest iconRequest) {
             this.key = key; this.target = target; this.shortcut = shortcut;
             this.initial = MoreAppsCatalog.normalizeInitial(initial); this.color = color;
+            this.iconRequest = iconRequest;
         }
         MoreAppsCatalog.Item model() {
             return new MoreAppsCatalog.Item(key, target.label, target.packageName,
                     shortcut, initial, color, this);
+        }
+    }
+
+    private static final class IconRequest {
+        final android.content.pm.LauncherActivityInfo activity;
+        final android.content.pm.ShortcutInfo shortcut;
+        final String packageName;
+        final String shortcutId;
+        final int userId;
+
+        IconRequest(android.content.pm.LauncherActivityInfo activity,
+                    android.content.pm.ShortcutInfo shortcut, String packageName,
+                    String shortcutId, int userId) {
+            this.activity = activity;
+            this.shortcut = shortcut;
+            this.packageName = packageName;
+            this.shortcutId = shortcutId;
+            this.userId = userId;
         }
     }
 
@@ -637,31 +757,19 @@ final class MoreAppsOverlayController {
             allEntries = entries;
             model.clear();
             for (Entry entry : entries) model.add(entry.model());
-            apply(mode, query, selectedColor, selectedInitial);
         }
 
         void apply(int mode, String query, int color, String initial) {
             visible.clear();
-            if (mode == MODE_RECENT) {
-                for (RuntimeTarget target : recent) {
-                    for (Entry entry : allEntries) {
-                        if (entry.target.positionIdentity().equals(target.positionIdentity())
-                                && !MoreAppsCatalog.filter(Collections.singletonList(entry.model()),
-                                MODE_ALL, query, color, initial).isEmpty()) {
-                            visible.add(entry); break;
-                        }
-                    }
-                }
-            } else {
-                List<MoreAppsCatalog.Item> filtered = MoreAppsCatalog.filter(model,
-                        mode, query, color, initial);
-                for (MoreAppsCatalog.Item item : filtered) visible.add((Entry) item.payload);
-            }
+            List<MoreAppsCatalog.Item> filtered = MoreAppsCatalog.filter(model,
+                    mode, query, color, initial);
+            for (MoreAppsCatalog.Item item : filtered) visible.add((Entry) item.payload);
             notifyDataSetChanged();
         }
         List<String> presentInitials(int mode, int color, String query) {
             ArrayList<String> letters = new ArrayList<>();
             for (Entry entry : allEntries) {
+                if (mode == MODE_ALL && entry.shortcut) continue;
                 if (mode == MODE_SHORTCUTS && !entry.shortcut) continue;
                 if (color != MoreAppsCatalog.COLOR_ALL && entry.color != color) continue;
                 if (query != null && !query.trim().isEmpty()
@@ -702,7 +810,7 @@ final class MoreAppsOverlayController {
             icon.setScaleType(ImageView.ScaleType.FIT_CENTER);
             row.addView(icon, new LinearLayout.LayoutParams(dp(42), dp(42)));
             TextView label = new TextView(context);
-            label.setTextColor(Color.WHITE);
+            label.setTextColor(palette.primaryText);
             label.setTextSize(15f);
             label.setMaxLines(1);
             label.setEllipsize(android.text.TextUtils.TruncateAt.END);
@@ -731,13 +839,13 @@ final class MoreAppsOverlayController {
             setOrientation(VERTICAL);
             setGravity(Gravity.CENTER);
             setPadding(dp(4), dp(6), dp(4), dp(4));
-            setBackground(roundRect(0x00303134, dp(10)));
+            setBackground(roundRect(palette.cell, dp(10)));
             setMinimumHeight(dp(98));
             icon = new ImageView(context);
             icon.setScaleType(ImageView.ScaleType.FIT_CENTER);
             addView(icon, new LayoutParams(dp(48), dp(48)));
             label = new TextView(context);
-            label.setTextColor(Color.WHITE);
+            label.setTextColor(palette.primaryText);
             label.setTextSize(11f);
             label.setGravity(Gravity.CENTER);
             label.setMaxLines(2);
@@ -756,6 +864,44 @@ final class MoreAppsOverlayController {
                 if (position >= 0) launchPosition(position);
             });
             setAlpha(1f);
+        }
+    }
+
+    private static final class Palette {
+        final int scrim;
+        final int panel;
+        final int search;
+        final int cell;
+        final int selectedTab;
+        final int primaryText;
+        final int secondaryText;
+        final int indexText;
+        final int chipBorder;
+        final int accent;
+
+        private Palette(int scrim, int panel, int search, int cell, int selectedTab, int primaryText,
+                         int secondaryText, int indexText, int chipBorder, int accent) {
+            this.scrim = scrim;
+            this.panel = panel;
+            this.search = search;
+            this.cell = cell;
+            this.selectedTab = selectedTab;
+            this.primaryText = primaryText;
+            this.secondaryText = secondaryText;
+            this.indexText = indexText;
+            this.chipBorder = chipBorder;
+            this.accent = accent;
+        }
+
+        static Palette forContext(Context context) {
+            int mode = context.getResources().getConfiguration().uiMode
+                    & android.content.res.Configuration.UI_MODE_NIGHT_MASK;
+            if (mode == android.content.res.Configuration.UI_MODE_NIGHT_YES) {
+                return new Palette(0x88000000, 0xff292a30, 0xff3a3b43, 0x183a3b43, 0xff3a3b43,
+                        0xfff6f6f8, 0xffb8bac2, 0xffc4c7d0, 0xff686b75, 0xff8ab4f8);
+            }
+            return new Palette(0x55000000, 0xfff7f7f8, 0xffe9e9ee, 0x12000000, 0xffe1e5ef,
+                    0xff24242a, 0xff686872, 0xff6e707a, 0xffb5b6be, 0xff3f73d8);
         }
     }
 

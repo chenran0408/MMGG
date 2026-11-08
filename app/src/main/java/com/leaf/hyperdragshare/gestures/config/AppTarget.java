@@ -7,6 +7,8 @@ import org.json.JSONObject;
 import java.util.Objects;
 
 public final class AppTarget {
+    public static final String MORE_APPS_PACKAGE = "com.leaf.hyperdragshare.more_apps";
+    public static final String MORE_APPS_POSITION_ID = "[\"more_apps\"]";
     public final String component;
     public final String shortcutPackage;
     public final String shortcutId;
@@ -51,6 +53,10 @@ public final class AppTarget {
         return new AppTarget(packageName, shortcutId, label, intentUri, userId);
     }
 
+    public static AppTarget moreApps() {
+        return new AppTarget(MORE_APPS_PACKAGE, "", "更多应用", "", 0);
+    }
+
     public boolean isShortcut() {
         return !shortcutPackage.isEmpty() && !shortcutId.isEmpty();
     }
@@ -59,18 +65,24 @@ public final class AppTarget {
         return isShortcut() && !shortcutIntentUri.isEmpty();
     }
 
+    public boolean isMoreApps() {
+        return MORE_APPS_PACKAGE.equals(shortcutPackage) && shortcutId.isEmpty()
+                && component.isEmpty();
+    }
+
     public ComponentName componentName() {
         if (isShortcut()) return null;
         return ComponentName.unflattenFromString(component);
     }
 
     public String packageName() {
-        if (isShortcut()) return shortcutPackage;
+        if (isShortcut() || isMoreApps()) return shortcutPackage;
         ComponentName name = componentName();
         return name == null ? "" : name.getPackageName();
     }
 
     public String positionIdentity() {
+        if (isMoreApps()) return MORE_APPS_POSITION_ID;
         return HoneycombPositions.identity(component, shortcutPackage, shortcutId,
                 shortcutIntentUri, userId);
     }
@@ -78,7 +90,10 @@ public final class AppTarget {
     public JSONObject toJson() {
         JSONObject out = new JSONObject();
         try {
-            if (isShortcut()) {
+            if (isMoreApps()) {
+                out.put("type", "more_apps");
+                out.put("label", "更多应用");
+            } else if (isShortcut()) {
                 out.put("userId", userId);
                 out.put("type", "shortcut");
                 out.put("package", shortcutPackage);
@@ -101,6 +116,7 @@ public final class AppTarget {
     public static AppTarget fromJson(JSONObject value) {
         if (value == null) return null;
         String type = value.optString("type");
+        if ("more_apps".equals(type)) return moreApps();
         if ("shortcut".equals(type) || "launcher_shortcut".equals(type)) {
             AppTarget target = "launcher_shortcut".equals(type)
                     ? launcherShortcut(value.optString("package"), value.optString("id"),

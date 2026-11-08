@@ -157,7 +157,16 @@ final class GestureConfig {
                     Math.max(0, userId));
         }
 
+        static TargetSpec moreApps() {
+            return new TargetSpec("", com.leaf.hyperdragshare.gestures.config.AppTarget.MORE_APPS_PACKAGE,
+                    "", "更多应用", "", 0);
+        }
+
         boolean isShortcut() { return !packageName.isEmpty() && !shortcutId.isEmpty(); }
+        boolean isMoreApps() {
+            return com.leaf.hyperdragshare.gestures.config.AppTarget.MORE_APPS_PACKAGE.equals(packageName)
+                    && shortcutId.isEmpty() && component.isEmpty();
+        }
         boolean isLauncherShortcut() {
             return isShortcut() && !shortcutIntentUri.isEmpty();
         }
@@ -288,7 +297,9 @@ final class GestureConfig {
                 if (raw instanceof JSONObject) {
                     JSONObject object = (JSONObject) raw;
                     String type = object.optString("type");
-                    if ("shortcut".equals(type) || "launcher_shortcut".equals(type)) {
+                    if ("more_apps".equals(type)) {
+                        target = TargetSpec.moreApps();
+                    } else if ("shortcut".equals(type) || "launcher_shortcut".equals(type)) {
                         String packageName = object.optString("package");
                         String shortcutId = object.optString("id");
                         if (!packageName.isEmpty() && !shortcutId.isEmpty()) {
@@ -479,7 +490,9 @@ final class GestureConfig {
                 ConfigContract.DEFAULT_LANDSCAPE_POSITION_Y), 0, 100);
         ArrayList<String> positionOwners = new ArrayList<>();
         for (TargetSpec target : honeycombTargets) {
-            positionOwners.add(com.leaf.hyperdragshare.gestures.config.HoneycombPositions.identity(
+            positionOwners.add(target.isMoreApps()
+                    ? com.leaf.hyperdragshare.gestures.config.AppTarget.MORE_APPS_POSITION_ID
+                    : com.leaf.hyperdragshare.gestures.config.HoneycombPositions.identity(
                     target.component, target.packageName, target.shortcutId,
                     target.shortcutIntentUri, target.userId));
         }
@@ -675,7 +688,9 @@ final class GestureConfig {
                 if (rawTarget instanceof JSONObject) {
                     JSONObject object = (JSONObject) rawTarget;
                     String type = object.optString("type");
-                    if ("shortcut".equals(type) || "launcher_shortcut".equals(type)) {
+                    if ("more_apps".equals(type)) {
+                        target = TargetSpec.moreApps();
+                    } else if ("shortcut".equals(type) || "launcher_shortcut".equals(type)) {
                         String packageName = object.optString("package");
                         String shortcutId = object.optString("id");
                         if (!packageName.isEmpty() && !shortcutId.isEmpty()) {

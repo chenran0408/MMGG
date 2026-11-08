@@ -39,12 +39,17 @@ public class MoreAppsCatalogTest {
                 item("2", "Weather shortcut", "org.weather", true, "W", 5),
                 item("3", "Browser", "org.browser", false, "B", 5),
                 item("4", "Wallet", "org.wallet", true, "W", 1));
-        List<MoreAppsCatalog.Item> matched = MoreAppsCatalog.filter(source, 2,
+        List<MoreAppsCatalog.Item> matched = MoreAppsCatalog.filter(source,
+                MoreAppsCatalog.MODE_SHORTCUTS,
                 "weather", 5, "W");
         assertEquals(1, matched.size());
         assertEquals("2", matched.get(0).key);
-        assertTrue(MoreAppsCatalog.filter(source, 0, "", -1, "").size() == 4);
-        assertFalse(MoreAppsCatalog.filter(source, 0, "nothing", -1, "").size() > 0);
+        List<MoreAppsCatalog.Item> apps = MoreAppsCatalog.filter(source,
+                MoreAppsCatalog.MODE_APPS, "", -1, "");
+        assertEquals(2, apps.size());
+        assertFalse(apps.stream().anyMatch(item -> item.shortcut));
+        assertFalse(MoreAppsCatalog.filter(source, MoreAppsCatalog.MODE_APPS,
+                "nothing", -1, "").size() > 0);
     }
 
     @Test public void classifiesIconColorsIntoStableGroups() {

@@ -61,6 +61,9 @@ final class RuntimeTarget {
     }
 
     String positionIdentity() {
+        if (isMoreApps()) {
+            return com.leaf.hyperdragshare.gestures.config.AppTarget.MORE_APPS_POSITION_ID;
+        }
         return com.leaf.hyperdragshare.gestures.config.HoneycombPositions.identity(
                 component == null ? "" : component.flattenToString(), packageName,
                 shortcutId, shortcutIntentUri, userId);
