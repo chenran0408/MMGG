@@ -193,7 +193,9 @@ public final class PressPreviewHandoffTest {
 
         try {
             assertTrue(source.acceptPortalContent(content));
-            assertTrue((boolean) field(rootSession, "cancelled").get(rootSession));
+            assertFalse("Portal content arriving before confirmation must not take over the root drag",
+                    (boolean) field(rootSession, "cancelled").get(rootSession));
+            assertTrue(field(source, "cached").get(source) == content);
         } finally {
             source.stop();
             controller.destroy();
@@ -215,7 +217,9 @@ public final class PressPreviewHandoffTest {
                 context, null, controller, DragShareSettings.defaults());
         field(source, "pointerDown").setBoolean(source, true);
         field(source, "downTime").setLong(source, 100L);
-        ((PressTriggerDetector) field(source, "detector").get(source)).start(20f, 30f, 100L, 500L);
+        PressTriggerDetector detector = (PressTriggerDetector) field(source, "detector").get(source);
+        detector.start(20f, 30f, 100L, 500L);
+        assertTrue(detector.fire(600L));
         Bitmap portalBitmap = Bitmap.createBitmap(3, 3, Bitmap.Config.ARGB_8888);
         CapturedContent portal = CapturedContent.portalMediaImage(
                 portalBitmap, "com.tencent.mm", new Rect(0, 0, 3, 3));
@@ -239,7 +243,7 @@ public final class PressPreviewHandoffTest {
         }
     }
 
-    @Test public void actualPortalImageStillReplacesRecognizedOcrText() throws Exception {
+    @Test public void acceptedSegmentationTextIsNotReplacedByLatePortalImage() throws Exception {
         Context context = RuntimeEnvironment.getApplication();
         registerShareProvider(context);
         DragShareController controller = controller();
@@ -255,6 +259,7 @@ public final class PressPreviewHandoffTest {
         field(source, "downTime").setLong(source, 100L);
         field(source, "confirmedAt").setLong(source, 600L);
         field(source, "generation").setLong(source, 5L);
+        field(source, "twoFingerModeForGesture").setBoolean(source, true);
         setCandidate(source, pending);
         ((PressTriggerDetector) field(source, "detector").get(source))
                 .start(20f, 30f, 100L, 500L);
@@ -265,12 +270,11 @@ public final class PressPreviewHandoffTest {
             assertTrue(source.acceptPortalContent(actualPortalImage));
             ShadowLooper.shadowMainLooper().idle();
 
-            Object session = field(controller, "session").get(controller);
-            CapturedContent payload = (CapturedContent) field(session, "payload").get(session);
-            assertEquals(CapturedContent.Kind.IMAGE, payload.kind);
-            assertTrue(payload.bitmap == portalImage);
-            assertTrue(screenshot.isRecycled());
-            assertFalse(portalImage.isRecycled());
+            assertNull("late Portal media must not replace an accepted segmentation result",
+                    field(controller, "session").get(controller));
+            assertTrue(candidateOf(source) == pending);
+            assertFalse(screenshot.isRecycled());
+            assertTrue(portalImage.isRecycled());
         } finally {
             source.stop();
             controller.destroy();
@@ -313,45 +317,6 @@ public final class PressPreviewHandoffTest {
             source.stop();
             controller.destroy();
             if (!screenshot.isRecycled()) screenshot.recycle();
-            ShadowLooper.shadowMainLooper().idle();
-        }
-    }
-
-    @Test public void directImageDragTakeoverStartsSessionWhileHolding() throws Exception {
-        Context context = RuntimeEnvironment.getApplication();
-        DragShareController controller = controller();
-        down(controller, 100L);
-        PressCaptureSource source = new PressCaptureSource(
-                context, null, controller, DragShareSettings.defaults());
-        Bitmap portalBitmap = Bitmap.createBitmap(4, 4, Bitmap.Config.ARGB_8888);
-        CapturedContent portalMediaImage = CapturedContent.portalMediaImage(
-                portalBitmap, "com.tencent.mm", new Rect(0, 0, 4, 4));
-        PressTriggerDetector detector =
-                (PressTriggerDetector) field(source, "detector").get(source);
-        detector.start(20f, 30f, 100L, 500L);
-        field(source, "pointerDown").setBoolean(source, true);
-        field(source, "downTime").setLong(source, 100L);
-        field(source, "directDragArmed").setBoolean(source, true);
-        field(source, "twoFingerModeForGesture").setBoolean(source, false);
-
-        try {
-            assertTrue(detector.fire(700L));
-            java.lang.reflect.Method openImage = PressCaptureSource.class.getDeclaredMethod(
-                    "openImage", long.class, CapturedContent.class);
-            openImage.setAccessible(true);
-            openImage.invoke(source, 4L, portalMediaImage);
-            ShadowLooper.shadowMainLooper().idle();
-
-            Object session = field(controller, "session").get(controller);
-            assertNotNull("confirmed hold moving into drag starts the shared session", session);
-            CapturedContent payload =
-                    (CapturedContent) field(session, "payload").get(session);
-            assertTrue(payload.bitmap == portalBitmap);
-            assertFalse(portalBitmap.isRecycled());
-        } finally {
-            source.stop();
-            controller.destroy();
-            if (!portalBitmap.isRecycled()) portalBitmap.recycle();
             ShadowLooper.shadowMainLooper().idle();
         }
     }
@@ -442,21 +407,34 @@ public final class PressPreviewHandoffTest {
     @Test public void unclassifiedPressOcrImageIsNotPresentedAsAnOriginal() throws Exception {
         DragShareController controller = controller();
         down(controller, 100L);
-        PressCaptureSource source = new PressCaptureSource(
-                RuntimeEnvironment.getApplication(), null, controller, DragShareSettings.defaults());
+        Context context = RuntimeEnvironment.getApplication();
+        boolean[] ocrStarted = {false};
+        PressCaptureSource source = new PressCaptureSource(context, null, controller,
+                DragShareSettings.defaults(), (ocrContext, image, callback) -> {
+                    ocrStarted[0] = true;
+                    return () -> { };
+                });
         Bitmap bitmap = Bitmap.createBitmap(3, 3, Bitmap.Config.ARGB_8888);
         CapturedContent candidate = CapturedContent.image(
                 bitmap, "com.tencent.mm", new Rect(10, 20, 300, 500), true);
+        field(source, "pointerDown").setBoolean(source, false);
+        field(source, "released").setBoolean(source, true);
+        field(source, "releaseMode").set(source, PressReleaseMode.Mode.NORMAL);
+        field(source, "downTime").setLong(source, 100L);
+        field(source, "confirmedAt").setLong(source, 700L);
+        field(source, "twoFingerModeForGesture").setBoolean(source, true);
+        PressTriggerDetector detector = (PressTriggerDetector) field(source, "detector").get(source);
+        detector.startTwoFinger(20f, 30f, 40f, 50f, 100L, 500L, 8f);
+        assertTrue(detector.fire(700L));
 
         try {
-            java.lang.reflect.Method openImage = PressCaptureSource.class.getDeclaredMethod(
-                    "openImage", long.class, CapturedContent.class);
-            openImage.setAccessible(true);
-            openImage.invoke(source, 8L, candidate);
+            assertTrue(source.acceptPortalContent(candidate));
             ShadowLooper.shadowMainLooper().idle();
 
             assertNull(field(controller, "session").get(controller));
-            assertTrue(bitmap.isRecycled());
+            assertTrue("two-finger image confirmation starts OCR", ocrStarted[0]);
+            assertTrue(flowOf(source).hasCandidate());
+            assertFalse("the OCR candidate remains owned until recognition finishes", bitmap.isRecycled());
         } finally {
             source.stop();
             controller.destroy();

@@ -80,7 +80,7 @@ public final class TwoFingerPressTest {
     }
 
     @Test
-    public void earlyCachedCaptureStartsOcrAtConfirmation() throws Exception {
+    public void earlyCachedCaptureStartsSingleFingerDragPreviewAtConfirmation() throws Exception {
         Context context = RuntimeEnvironment.getApplication();
         clearPortalSettings(context);
         BigBangProvider provider = new BigBangProvider(context);
@@ -115,10 +115,12 @@ public final class TwoFingerPressTest {
             ShadowLooper.shadowMainLooper().idle();
 
             PressTriggerDetector detector = (PressTriggerDetector) field(source, "detector").get(source);
-            assertTrue("a confirmed hold starts OCR without waiting for release",
+            assertFalse("single-finger confirmation must not start OCR",
                     ocrStarted.get());
             assertTrue("combined triggers confirm the lone single-finger press",
                     detector.isFired());
+            assertTrue("single-finger confirmation shows a cancellable drag preview",
+                    controller.hasPendingImagePreview());
             assertFalse(controller.isActive());
         } finally {
             source.stop();
@@ -271,7 +273,7 @@ public final class TwoFingerPressTest {
     }
 
     @Test
-    public void confirmedTwoFingerHoldStartsImageFlowAtConfirmation() throws Exception {
+    public void confirmedTwoFingerHoldStartsImageOcrAtConfirmation() throws Exception {
         Context context = RuntimeEnvironment.getApplication();
         clearPortalSettings(context);
         BigBangProvider provider = new BigBangProvider(context);
@@ -304,13 +306,15 @@ public final class TwoFingerPressTest {
             ShadowLooper.shadowMainLooper().idle();
             assertTrue("the hold is qualified and presents the image flow at confirmation",
                     ((PressTriggerDetector) field(source, "detector").get(source)).isFired());
-            assertTrue("the confirmed two-finger image flow starts immediately",
+            assertFalse("two-finger image flow must not start a drag session",
                     controller.isActive());
+            assertTrue("two-finger confirmation starts the segmentation OCR candidate",
+                    ((PressOcrFlow) field(source, "pressOcr").get(source)).hasCandidate());
 
             new Handler(Looper.getMainLooper()).post(() -> source.onContactEvent(
                     MotionEvent.ACTION_POINTER_UP, 20f, 30f, 40f, 50f, 1, downTime + 601L));
             ShadowLooper.shadowMainLooper().idle();
-            assertTrue("the confirmed image flow remains active until Root release",
+            assertFalse("the confirmed two-finger image flow never starts a drag session",
                     controller.isActive());
             assertFalse("the remaining finger should leave two-contact qualification mode",
                     field(source, "twoFingerContactSequence").getBoolean(source));
@@ -322,7 +326,7 @@ public final class TwoFingerPressTest {
                         source.onPointerEvent(MotionEvent.ACTION_MOVE, 80f, 90f, downTime + 850L);
                     });
             ShadowLooper.shadowMainLooper().idle();
-            assertTrue("the confirmed image flow continues with the remaining pointer",
+            assertFalse("movement after two-finger confirmation remains in OCR mode",
                     controller.isActive());
 
             new Handler(Looper.getMainLooper()).post(() ->
@@ -333,7 +337,7 @@ public final class TwoFingerPressTest {
             ShadowLooper.shadowMainLooper().idle();
             source.onPointerEvent(MotionEvent.ACTION_UP, 80f, 90f, downTime + 900L);
             ShadowLooper.shadowMainLooper().idle();
-            assertFalse("root release finishes the already-started image flow",
+            assertFalse("root release leaves no image drag session",
                     controller.isActive());
         } finally {
             source.stop();
@@ -390,7 +394,7 @@ public final class TwoFingerPressTest {
     }
 
     @Test
-    public void twoFingerPortalImageWaitsForConfirmationBeforePreviewTakeover() throws Exception {
+    public void twoFingerPortalImageWaitsForConfirmationBeforeStartingOcr() throws Exception {
         Context context = RuntimeEnvironment.getApplication();
         clearPortalSettings(context);
         BigBangProvider provider = new BigBangProvider(context);
@@ -438,8 +442,10 @@ public final class TwoFingerPressTest {
 
             ShadowSystemClock.advanceBy(java.time.Duration.ofMillis(101));
             ShadowLooper.shadowMainLooper().idle();
-            assertTrue("confirmed hold displays the cached image immediately",
+            assertFalse("confirmed two-finger image must not enter drag mode",
                     controller.isActive());
+            assertTrue("confirmed hold starts image segmentation OCR",
+                    ((PressOcrFlow) field(source, "pressOcr").get(source)).hasCandidate());
             assertFalse("confirmed image is no longer waiting in the cache",
                     field(source, "cached").get(source) == portalImage);
             source.onContactEvent(MotionEvent.ACTION_POINTER_UP, 20f, 30f,
@@ -447,7 +453,7 @@ public final class TwoFingerPressTest {
             source.onPointerEvent(MotionEvent.ACTION_UP, 20f, 30f,
                     downTime + 700L);
             ShadowLooper.shadowMainLooper().idle();
-            assertTrue("two-finger release shows the existing image preview",
+            assertFalse("two-finger image release must not leave a drag preview",
                     controller.hasPendingImagePreview() || controller.isActive());
         } finally {
             source.stop();
@@ -545,7 +551,7 @@ public final class TwoFingerPressTest {
     }
 
     @Test
-    public void singleFingerTextHandoffOpensSegmentationWithDragPreview() throws Exception {
+    public void singleFingerTextShowsCancellableDragPreview() throws Exception {
         Context context = RuntimeEnvironment.getApplication();
         clearPortalSettings(context);
         BigBangProvider provider = new BigBangProvider(context);
@@ -577,14 +583,16 @@ public final class TwoFingerPressTest {
 
             ShadowSystemClock.advanceBy(java.time.Duration.ofMillis(700));
             ShadowLooper.shadowMainLooper().idle();
-            assertNotNull("single-finger duration opens BigBang immediately",
+            assertNull("single-finger duration must not open BigBang",
                     provider.bigBangRequest);
+            assertTrue("single-finger text shows a cancellable drag preview",
+                    controller.hasPendingImagePreview());
             new Handler(Looper.getMainLooper()).post(() ->
                     activeSource.onPointerEvent(MotionEvent.ACTION_UP, 20f, 30f, downTime + 701L));
             ShadowLooper.shadowMainLooper().idle();
-            assertEquals("single-finger release does not reopen BigBang",
-                    1, provider.bigBangOpenCount);
-            assertFalse("single-finger text handoff does not leave a drag preview",
+            assertEquals("single-finger release does not open BigBang",
+                    0, provider.bigBangOpenCount);
+            assertFalse("single-finger release cancels the drag preview",
                     controller.hasPendingImagePreview());
         } finally {
             if (source != null) source.stop();
