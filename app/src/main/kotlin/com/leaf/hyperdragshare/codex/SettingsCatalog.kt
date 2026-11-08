@@ -78,10 +78,21 @@ internal fun settingEntryListKeys(entries: List<SettingEntry>): List<String> =
         listOf("group:$group") + rows.map { it.id }
     }
 
+internal fun settingEntryListKeys(entries: List<SettingEntry>, collapsedGroups: Set<String>): List<String> =
+    entries.groupBy { it.group }.flatMap { (group, rows) ->
+        listOf("group:$group") + if (group in collapsedGroups) emptyList() else rows.map { it.id }
+    }
+
 /** LazyColumn index including one group header before each contiguous group. */
 internal fun settingEntryListIndex(entries: List<SettingEntry>, entryId: String): Int? {
     return settingEntryListKeys(entries).indexOf(entryId).takeIf { it >= 0 }
 }
+
+internal fun settingEntryListIndex(
+    entries: List<SettingEntry>,
+    entryId: String,
+    collapsedGroups: Set<String>,
+): Int? = settingEntryListKeys(entries, collapsedGroups).indexOf(entryId).takeIf { it >= 0 }
 
 internal data class SettingsFocusTarget(val id: String?, val index: Int?)
 
@@ -143,6 +154,14 @@ internal fun settingGroupIcon(module: SettingModule, group: String): ImageVector
     group.contains("关于") -> MiuixIcons.Info
     group.contains("底角") -> MiuixIcons.ExpandLess
     else -> module.icon
+}
+
+/** Low-frequency tuning groups start closed on the long settings pages. */
+internal fun defaultCollapsedSettingGroups(module: SettingModule): Set<String> = when (module) {
+    SettingModule.PORTAL -> setOf("拖拽菜单外观", "拖拽触摸与滚动")
+    SettingModule.FREEFORM -> setOf("窗体布局", "窗外操作")
+    SettingModule.GENERAL -> setOf("工具与诊断", "关于")
+    else -> emptySet()
 }
 
 /** A row is declared once: its metadata drives navigation/search and its body renders the control. */

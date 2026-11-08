@@ -412,10 +412,6 @@ private fun portalSettingEntries(
             enabled = enabled,
         )
     }
-    row("ocr.system", "系统 AICR 识字", SettingModule.PORTAL, "触发与识别",
-        summary = "图片与屏幕识字使用系统 AICR V2",
-        keywords = "OCR 识字 图片 屏幕 AICR 小米", icon = MiuixIcons.Show,
-    ) { title, summary, _ -> BasicComponent(title = title, summary = summary) }
     val openStash = { StashOverlayPanel.show(context); Unit }
     navigationRow("stash.open", "打开侧边中转站", SettingModule.PORTAL, "中转站",
         summary = "临时收集图文，按住内容拖出",

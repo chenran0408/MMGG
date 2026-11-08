@@ -65,6 +65,9 @@ final class FanRuntime {
 
     private final Handler configHandler;
 
+    /** Reused across reloads so unchanged targets do not re-query PackageManager or icons. */
+    private final FanRuntimeConfigLoader configLoader;
+
     private final FanOverlayController overlay;
 
     private final HoneycombOverlayController honeycombOverlay;
@@ -237,6 +240,8 @@ final class FanRuntime {
         HandlerThread configThread = new HandlerThread("FanFreeformConfig");
         configThread.start();
         configHandler = new Handler(configThread.getLooper());
+        configLoader = new FanRuntimeConfigLoader(context);
+        registerTargetPackageObserver();
         density = context.getResources().getDisplayMetrics().density;
         windowManager = context.getSystemService(WindowManager.class);
         refreshDisplayGeometry();
@@ -1886,10 +1891,30 @@ final class FanRuntime {
         }
     }
 
+    private void registerTargetPackageObserver() {
+        IntentFilter filter = new IntentFilter();
+        filter.addAction(Intent.ACTION_PACKAGE_ADDED);
+        filter.addAction(Intent.ACTION_PACKAGE_REMOVED);
+        filter.addAction(Intent.ACTION_PACKAGE_REPLACED);
+        filter.addDataScheme("package");
+        context.registerReceiver(new BroadcastReceiver() {
+            @Override public void onReceive(Context receiverContext, Intent intent) {
+                Uri data = intent.getData();
+                String packageName = data == null ? null : data.getSchemeSpecificPart();
+                if (packageName == null || packageName.isEmpty()) return;
+                configHandler.post(() -> {
+                    configLoader.invalidatePackage(packageName);
+                    requestConfigReload();
+                });
+            }
+        }, filter, Context.RECEIVER_NOT_EXPORTED);
+    }
+
     private void reloadConfig() {
         configReloadPending = false;
+        long loadStartedAt = android.os.SystemClock.elapsedRealtime();
         try {
-            FanRuntimeConfigLoader.LoadedConfig loaded = new FanRuntimeConfigLoader(context).load();
+            FanRuntimeConfigLoader.LoadedConfig loaded = configLoader.load();
             GestureConfig next = loaded.config;
             List<RuntimeTarget> nextTargets = loaded.targets;
             List<RuntimeTarget> nextHoneycombTargets = loaded.honeycombTargets;
@@ -1917,7 +1942,7 @@ final class FanRuntime {
                     resetFan();
                 refreshTriggerCapture();
                 refreshOutsideCapture();
-                Log.i("Configuration loaded targets=" + nextTargets.size() + " trigger=" + next.triggerPercent + "% selection=" + next.selectionRadiusPercent + "% hot=" + next.hotWidthPercent + "x" + next.hotHeightPercent + "% icon=" + next.iconSizeDp + "dp animation=" + next.fanAnimationsEnabled + "@" + next.fanAnimationSpeed + "% reveal=" + next.fanRevealAmount + "% rotation=" + next.fanRotationDegrees + "deg ring=" + next.fanSelectionRing + " circularIcons=" + next.forceCircularIcons + " honeycomb=" + next.honeycombEnabled + "/" + nextHoneycombTargets.size() + " mode=" + next.honeycombMode + " bottomFullscreen=" + next.bottomPortraitFullscreen + "/" + next.bottomLandscapeFullscreen + " bottomFreeform=" + next.bottomPortraitHoneycombFreeform + "/" + next.bottomLandscapeHoneycombFreeform + " blankSettle=" + next.bottomHoneycombSettleMs + "ms returnToFan=" + next.triggerPercent + "% outsideTap=" + next.outsideTapWindowMs + "ms outsideEnabled=" + next.outsideEnabled + "/" + next.outsidePortraitEnabled + "/" + next.outsideLandscapeEnabled + " honeycombFollow=" + next.honeycombFollowFinger);
+            Log.i("Configuration loaded targets=" + nextTargets.size() + " trigger=" + next.triggerPercent + "% selection=" + next.selectionRadiusPercent + "% hot=" + next.hotWidthPercent + "x" + next.hotHeightPercent + "% icon=" + next.iconSizeDp + "dp animation=" + next.fanAnimationsEnabled + "@" + next.fanAnimationSpeed + "% reveal=" + next.fanRevealAmount + "% rotation=" + next.fanRotationDegrees + "deg ring=" + next.fanSelectionRing + " circularIcons=" + next.forceCircularIcons + " honeycomb=" + next.honeycombEnabled + "/" + nextHoneycombTargets.size() + " mode=" + next.honeycombMode + " bottomFullscreen=" + next.bottomPortraitFullscreen + "/" + next.bottomLandscapeFullscreen + " bottomFreeform=" + next.bottomPortraitHoneycombFreeform + "/" + next.bottomLandscapeHoneycombFreeform + " blankSettle=" + next.bottomHoneycombSettleMs + "ms returnToFan=" + next.triggerPercent + "% outsideTap=" + next.outsideTapWindowMs + "ms outsideEnabled=" + next.outsideEnabled + "/" + next.outsidePortraitEnabled + "/" + next.outsideLandscapeEnabled + " honeycombFollow=" + next.honeycombFollowFinger + " loadMs=" + (android.os.SystemClock.elapsedRealtime() - loadStartedAt));
             });
         } catch (Throwable error) {
             Log.e("Cannot read module configuration", error);

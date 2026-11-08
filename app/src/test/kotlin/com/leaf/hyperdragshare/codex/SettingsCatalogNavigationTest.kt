@@ -82,6 +82,43 @@ class SettingsCatalogNavigationTest {
         assertEquals(36, restoredBottom.firstVisibleItemScrollOffset)
     }
 
+    @Test
+    fun lowFrequencyGroupsStartCollapsedWithoutRemovingSettings() {
+        assertEquals(
+            setOf("拖拽菜单外观", "拖拽触摸与滚动"),
+            defaultCollapsedSettingGroups(SettingModule.PORTAL),
+        )
+        assertEquals(
+            setOf("窗体布局", "窗外操作"),
+            defaultCollapsedSettingGroups(SettingModule.FREEFORM),
+        )
+        assertTrue(defaultCollapsedSettingGroups(SettingModule.GESTURES).isEmpty())
+        assertTrue(defaultCollapsedSettingGroups(SettingModule.PORTAL).all {
+            it in SettingModule.PORTAL.groups
+        })
+    }
+
+    @Test
+    fun collapsedRowsStayInCatalogAndFocusedRowsCanBeIndexedAfterExpansion() {
+        val entries = listOf(
+            testEntry("main", "常用"),
+            testEntry("tuning", "高级"),
+        )
+        val collapsed = setOf("高级")
+        assertEquals(listOf("group:常用", "main", "group:高级"), settingEntryListKeys(entries, collapsed))
+        assertEquals(1, settingEntryListIndex(entries, "main", collapsed))
+        assertEquals(3, settingEntryListIndex(entries, "tuning", emptySet()))
+        assertEquals(null, settingEntryListIndex(entries, "tuning", collapsed))
+    }
+
+    private fun testEntry(id: String, group: String) = SettingEntry(
+        id = id,
+        title = id,
+        module = SettingModule.GENERAL,
+        group = group,
+        content = {},
+    )
+
     private fun productionGestureEntries(): List<SettingEntry> {
         val controller = Robolectric.buildActivity(ComponentActivity::class.java).setup()
         val activity = controller.get()

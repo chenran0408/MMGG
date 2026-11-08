@@ -11,9 +11,11 @@ import java.util.List;
 /** Reads and resolves one complete fan runtime configuration snapshot. */
 final class FanRuntimeConfigLoader {
     private final Context context;
+    private final FanRuntimeTargetResolver targetResolver;
 
     FanRuntimeConfigLoader(Context context) {
         this.context = context;
+        this.targetResolver = new FanRuntimeTargetResolver(context);
     }
 
     LoadedConfig load() {
@@ -21,8 +23,12 @@ final class FanRuntimeConfigLoader {
         GestureDiagnostics.configure(bundle);
         GestureConfig config = GestureConfig.from(bundle);
         FanRuntimeTargetResolver.ResolvedTargets resolved =
-                new FanRuntimeTargetResolver(context).resolve(config);
+                targetResolver.resolve(config);
         return new LoadedConfig(config, resolved.targets, resolved.honeycombTargets);
+    }
+
+    void invalidatePackage(String packageName) {
+        targetResolver.invalidatePackage(packageName);
     }
 
     static final class LoadedConfig {

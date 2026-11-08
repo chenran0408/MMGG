@@ -11,20 +11,29 @@ import com.leaf.hyperdragshare.gestures.config.ShortcutIconLoader;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
+import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
 
 /** Resolves configured fan targets without changing runtime or gesture state. */
 final class FanRuntimeTargetResolver {
     private final Context context;
+    private final Map<String, RuntimeTarget> targetCache = new HashMap<>();
 
     FanRuntimeTargetResolver(Context context) {
         this.context = context;
     }
 
+    void invalidatePackage(String packageName) {
+        if (packageName == null || packageName.isEmpty()) return;
+        Iterator<Map.Entry<String, RuntimeTarget>> iterator = targetCache.entrySet().iterator();
+        while (iterator.hasNext()) {
+            if (packageName.equals(iterator.next().getValue().packageName)) iterator.remove();
+        }
+    }
+
     ResolvedTargets resolve(GestureConfig config) {
         PackageManager packageManager = context.getPackageManager();
-        Map<String, RuntimeTarget> targetCache = new HashMap<>();
         return new ResolvedTargets(
                 resolveTargets(packageManager, config.targets, config.fanMaxTargets,
                         "Configured target is unavailable", targetCache),

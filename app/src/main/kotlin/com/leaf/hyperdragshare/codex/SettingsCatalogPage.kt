@@ -3,6 +3,7 @@ package com.leaf.hyperdragshare.codex
 import android.content.Context
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListState
@@ -23,6 +24,8 @@ import top.yukonga.miuix.kmp.basic.*
 import top.yukonga.miuix.kmp.icon.MiuixIcons
 import top.yukonga.miuix.kmp.icon.extended.Back
 import top.yukonga.miuix.kmp.icon.extended.Close
+import top.yukonga.miuix.kmp.icon.extended.ExpandLess
+import top.yukonga.miuix.kmp.icon.extended.ExpandMore
 import top.yukonga.miuix.kmp.theme.MiuixTheme
 
 @Composable
@@ -94,10 +97,10 @@ internal fun SettingsHomePage(
                         Card(Modifier.padding(horizontal = 12.dp)) {
                             SettingsNavigationPreference(module.title,
                                 when (module) {
-                                    SettingModule.PORTAL -> "取词识字、分词、拖拽分享与中转站"
-                                    SettingModule.GESTURES -> "底角、蜂巢与小窗启动方式"
-                                    SettingModule.FREEFORM -> "启动、窗体尺寸、位置与窗外操作"
-                                    SettingModule.COPY_DIRECT -> "复制卡片、识别动作与目标应用"
+                                    SettingModule.PORTAL -> "取词、分词与分享"
+                                    SettingModule.GESTURES -> "底角手势与应用启动"
+                                    SettingModule.FREEFORM -> "小窗启动与操作"
+                                    SettingModule.COPY_DIRECT -> "复制卡片与浏览器"
                                     else -> error("Unexpected home module")
                                 }, module.icon, onClick = { focus.clearFocus(); onOpenModule(module) })
                         }
@@ -105,7 +108,7 @@ internal fun SettingsHomePage(
                     item("general") {
                         Card(Modifier.padding(horizontal = 12.dp)) {
                             SettingsNavigationPreference(SettingModule.GENERAL.title,
-                                "主题、权限、重载、日志与关于", SettingModule.GENERAL.icon,
+                                "权限、显示与诊断", SettingModule.GENERAL.icon,
                                 onClick = { focus.clearFocus(); onOpenModule(SettingModule.GENERAL) })
                         }
                     }
@@ -148,15 +151,22 @@ private fun StandardSettingsModulePage(
     // with its prerequisite instead of enabling the feature on the user's behalf.
     val visibleEntries = entries.filter { it.enabled || it.prerequisite == null || it.id == focusId }
     val groups = visibleEntries.groupBy { it.group }
+    var collapsedGroups by rememberSaveable(module) {
+        mutableStateOf(defaultCollapsedSettingGroups(module).toList())
+    }
     // Headers and rows share the same flattened order used by LazyColumn.
-    val rowKeys = settingEntryListKeys(visibleEntries)
+    val rowKeys = settingEntryListKeys(visibleEntries, collapsedGroups.toSet())
     val focusTarget = settingsFocusTarget(rowKeys, focusId)
     var focusHandled by rememberSaveable(module, focusId) { mutableStateOf(false) }
     var highlighted by rememberSaveable(module, focusId) { mutableStateOf(focusId) }
-    LaunchedEffect(focusId) {
+    LaunchedEffect(focusId, collapsedGroups) {
+        val focusGroup = visibleEntries.firstOrNull { it.id == focusId }?.group ?: return@LaunchedEffect
+        if (focusGroup in collapsedGroups) {
+            collapsedGroups = collapsedGroups - focusGroup
+            return@LaunchedEffect
+        }
         if (focusId != null && !focusHandled) {
-            val index = focusTarget.index
-                ?: error("Setting is no longer registered: $focusId")
+            val index = focusTarget.index ?: error("Setting is no longer registered: $focusId")
             listState.scrollToItem(index)
             focusHandled = true
             delay(1800)
@@ -176,27 +186,40 @@ private fun StandardSettingsModulePage(
         ) {
             groups.forEach { (group, rows) ->
                 item("group:$group") {
-                    Row(Modifier.padding(start = 28.dp, top = 12.dp, bottom = 6.dp),
+                    val expanded = group !in collapsedGroups
+                    Row(Modifier
+                        .fillMaxWidth()
+                        .clickable { collapsedGroups = if (expanded) collapsedGroups + group else collapsedGroups - group }
+                        .padding(start = 28.dp, end = 20.dp, top = 12.dp, bottom = 6.dp),
                         verticalAlignment = Alignment.CenterVertically) {
                         Icon(settingGroupIcon(module, group), contentDescription = null,
                             tint = MiuixTheme.colorScheme.onBackgroundVariant, modifier = Modifier.size(18.dp))
                         SmallTitle(group, insideMargin = PaddingValues(start = 8.dp))
+                        Spacer(Modifier.weight(1f))
+                        Icon(
+                            if (expanded) MiuixIcons.ExpandLess else MiuixIcons.ExpandMore,
+                            contentDescription = if (expanded) "收起" else "展开",
+                            tint = MiuixTheme.colorScheme.onBackgroundVariant,
+                            modifier = Modifier.size(18.dp),
+                        )
                     }
                 }
-                items(rows, key = { it.id }) { entry ->
-                    Card(Modifier.padding(horizontal = 12.dp, vertical = 2.dp)) {
-                        Column(Modifier.background(if (highlighted == entry.id)
-                            MiuixTheme.colorScheme.primary.copy(alpha = .14f)
-                            else MiuixTheme.colorScheme.surfaceContainer)) {
-                            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                                Icon(entry.icon, contentDescription = null,
-                                    tint = MiuixTheme.colorScheme.onSurfaceVariantActions.copy(alpha = if (entry.enabled) 1f else .4f),
-                                    modifier = Modifier.padding(start = 16.dp).size(22.dp))
-                                Box(Modifier.weight(1f)) { entry.content(entry.enabled) }
+                if (group !in collapsedGroups) {
+                    items(rows, key = { it.id }) { entry ->
+                        Card(Modifier.padding(horizontal = 12.dp, vertical = 2.dp)) {
+                            Column(Modifier.background(if (highlighted == entry.id)
+                                MiuixTheme.colorScheme.primary.copy(alpha = .14f)
+                                else MiuixTheme.colorScheme.surfaceContainer)) {
+                                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                                    Icon(entry.icon, contentDescription = null,
+                                        tint = MiuixTheme.colorScheme.onSurfaceVariantActions.copy(alpha = if (entry.enabled) 1f else .4f),
+                                        modifier = Modifier.padding(start = 16.dp).size(22.dp))
+                                    Box(Modifier.weight(1f)) { entry.content(entry.enabled) }
+                                }
+                                if (!entry.enabled && entry.prerequisite != null) Text(entry.prerequisite,
+                                    modifier = Modifier.padding(start = 54.dp, end = 16.dp, bottom = 12.dp),
+                                    fontSize = 12.sp, color = MiuixTheme.colorScheme.onSurfaceVariantSummary)
                             }
-                            if (!entry.enabled && entry.prerequisite != null) Text(entry.prerequisite,
-                                modifier = Modifier.padding(start = 54.dp, end = 16.dp, bottom = 12.dp),
-                                fontSize = 12.sp, color = MiuixTheme.colorScheme.onSurfaceVariantSummary)
                         }
                     }
                 }
@@ -251,9 +274,6 @@ private fun GestureSettingsModulePage(
                     bottom = padding.calculateBottomPadding() + 20.dp),
                 verticalArrangement = Arrangement.spacedBy(8.dp),
             ) {
-                item("gesture-categories-intro") {
-                    SmallTitle("按触发方式和用途查看")
-                }
                 items(categories, key = { it.id }) { item ->
                     val count = entriesForGestureCategory(entries, item).size
                     Card(Modifier.padding(horizontal = 12.dp)) {
@@ -269,11 +289,19 @@ private fun GestureSettingsModulePage(
         } else {
             val categoryEntries = entriesForGestureCategory(entries, category)
                 .filter { it.enabled || it.prerequisite == null || it.id == focusId }
+            var collapsedGroups by rememberSaveable(category.id) {
+                mutableStateOf(if (category.id == "appearance") listOf("高级设置", "布局动效") else emptyList())
+            }
             stateHolder.SaveableStateProvider(category.id) {
                 val listState = rememberSettingsListState(scrollPositions, gestureCategoryListKey(category.id))
-                LaunchedEffect(focusId, category.id) {
+                LaunchedEffect(focusId, category.id, collapsedGroups) {
+                    val focusGroup = categoryEntries.firstOrNull { it.id == focusId }?.group ?: return@LaunchedEffect
+                    if (focusGroup in collapsedGroups) {
+                        collapsedGroups = collapsedGroups - focusGroup
+                        return@LaunchedEffect
+                    }
                     if (!focusHandled && focusId != null) {
-                        val index = settingEntryListIndex(categoryEntries, focusId)
+                        val index = settingEntryListIndex(categoryEntries, focusId, collapsedGroups.toSet())
                         if (index != null) listState.scrollToItem(index)
                         focusHandled = true
                         delay(1800)
@@ -287,27 +315,40 @@ private fun GestureSettingsModulePage(
                 ) {
                     categoryEntries.groupBy { it.group }.forEach { (group, rows) ->
                         item("group:$group") {
-                            Row(Modifier.padding(start = 28.dp, top = 12.dp, bottom = 6.dp),
+                            val expanded = group !in collapsedGroups
+                            Row(Modifier
+                                .fillMaxWidth()
+                                .clickable { collapsedGroups = if (expanded) collapsedGroups + group else collapsedGroups - group }
+                                .padding(start = 28.dp, end = 20.dp, top = 12.dp, bottom = 6.dp),
                                 verticalAlignment = Alignment.CenterVertically) {
                                 Icon(settingGroupIcon(SettingModule.GESTURES, group), contentDescription = null,
                                     tint = MiuixTheme.colorScheme.onBackgroundVariant, modifier = Modifier.size(18.dp))
                                 SmallTitle(group, insideMargin = PaddingValues(start = 8.dp))
+                                Spacer(Modifier.weight(1f))
+                                Icon(
+                                    if (expanded) MiuixIcons.ExpandLess else MiuixIcons.ExpandMore,
+                                    contentDescription = if (expanded) "收起" else "展开",
+                                    tint = MiuixTheme.colorScheme.onBackgroundVariant,
+                                    modifier = Modifier.size(18.dp),
+                                )
                             }
                         }
-                        items(rows, key = { it.id }) { entry ->
-                            Card(Modifier.padding(horizontal = 12.dp, vertical = 2.dp)) {
-                                Column(Modifier.background(if (highlighted == entry.id)
-                                    MiuixTheme.colorScheme.primary.copy(alpha = .14f)
-                                    else MiuixTheme.colorScheme.surfaceContainer)) {
-                                    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                                        Icon(entry.icon, contentDescription = null,
-                                            tint = MiuixTheme.colorScheme.onSurfaceVariantActions.copy(alpha = if (entry.enabled) 1f else .4f),
-                                            modifier = Modifier.padding(start = 16.dp).size(22.dp))
-                                        Box(Modifier.weight(1f)) { entry.content(entry.enabled) }
+                        if (group !in collapsedGroups) {
+                            items(rows, key = { it.id }) { entry ->
+                                Card(Modifier.padding(horizontal = 12.dp, vertical = 2.dp)) {
+                                    Column(Modifier.background(if (highlighted == entry.id)
+                                        MiuixTheme.colorScheme.primary.copy(alpha = .14f)
+                                        else MiuixTheme.colorScheme.surfaceContainer)) {
+                                        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                                            Icon(entry.icon, contentDescription = null,
+                                                tint = MiuixTheme.colorScheme.onSurfaceVariantActions.copy(alpha = if (entry.enabled) 1f else .4f),
+                                                modifier = Modifier.padding(start = 16.dp).size(22.dp))
+                                            Box(Modifier.weight(1f)) { entry.content(entry.enabled) }
+                                        }
+                                        if (!entry.enabled && entry.prerequisite != null) Text(entry.prerequisite,
+                                            modifier = Modifier.padding(start = 54.dp, end = 16.dp, bottom = 12.dp),
+                                            fontSize = 12.sp, color = MiuixTheme.colorScheme.onSurfaceVariantSummary)
                                     }
-                                    if (!entry.enabled && entry.prerequisite != null) Text(entry.prerequisite,
-                                        modifier = Modifier.padding(start = 54.dp, end = 16.dp, bottom = 12.dp),
-                                        fontSize = 12.sp, color = MiuixTheme.colorScheme.onSurfaceVariantSummary)
                                 }
                             }
                         }
