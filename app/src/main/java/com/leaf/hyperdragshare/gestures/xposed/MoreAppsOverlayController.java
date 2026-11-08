@@ -31,7 +31,6 @@ import android.widget.FrameLayout;
 import android.widget.GridView;
 import android.widget.HorizontalScrollView;
 import android.widget.ImageView;
-import android.widget.ImageButton;
 import android.widget.LinearLayout;
 import android.widget.ListView;
 import android.widget.TextView;
@@ -155,16 +154,9 @@ final class MoreAppsOverlayController {
                 maxWidth, maxHeight, Gravity.CENTER);
         root.addView(panel, panelParams);
 
-        TextView title = new TextView(context);
-        title.setText("更多应用");
-        title.setTextColor(Color.WHITE);
-        title.setTextSize(18f);
-        title.setGravity(Gravity.CENTER_VERTICAL);
-        title.setPadding(dp(4), 0, dp(4), 0);
-        panel.addView(title, new LinearLayout.LayoutParams(-1, dp(42)));
-
         LinearLayout searchHost = new LinearLayout(context);
-        searchHost.setVisibility(View.GONE);
+        searchHost.setGravity(Gravity.CENTER_VERTICAL);
+        searchHost.setPadding(0, 0, 0, dp(6));
         search = new EditText(context);
         search.setSingleLine(true);
         search.setHint("搜索应用或快捷方式");
@@ -250,31 +242,8 @@ final class MoreAppsOverlayController {
                 applyFilters();
             });
         }
-        ImageButton searchButton = new ImageButton(context);
-        searchButton.setImageResource(android.R.drawable.ic_menu_search);
-        searchButton.setBackgroundColor(Color.TRANSPARENT);
-        searchButton.setContentDescription("搜索");
-        colorBar.addView(searchButton, new LinearLayout.LayoutParams(dp(44), dp(40)));
-        searchButton.setOnClickListener(v -> {
-            boolean visible = searchHost.getVisibility() == View.VISIBLE;
-            searchHost.setVisibility(visible ? View.GONE : View.VISIBLE);
-            if (!visible) {
-                search.requestFocus();
-                search.post(() -> {
-                    InputMethodManager imm = context.getSystemService(InputMethodManager.class);
-                    if (imm != null) imm.showSoftInput(search, InputMethodManager.SHOW_IMPLICIT);
-                });
-            } else {
-                search.setText("");
-                selectedInitial = "";
-                selectedColor = MoreAppsCatalog.COLOR_ALL;
-            updateColorSelection(colorBar);
-                applyFilters();
-            }
-        });
         colorScroll.addView(colorBar);
         panel.addView(colorScroll, new LinearLayout.LayoutParams(-1, dp(42)));
-        if (!enhanced) searchHost.setVisibility(View.VISIBLE);
 
         adapter = new MoreAdapter();
         grid.setAdapter(adapter);
