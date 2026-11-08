@@ -33,6 +33,7 @@
 - 已在b0ba578f覆盖安装并重载SystemUI/传送门；新SystemUI诊断明确version291，传送门注入、Root输入和节点连接均报告291/ready。逐包核对SystemUI PID=23895、Portal PID=23813；任务早期记录写反的PID已纠正。横屏和面板完整交互尚未验收。旧版缓存窗口创建15/12/11ms，缺少新旧冷目录对比，不宣称提升百分比。完整记录在上述任务outputs/DELIVERY.md。
 - 追加现场验收：19:30:58微信双指图片已完成原生viewBitmap回调→OCR→分词窗口accepted；微信单指仍失败，Root输入和时长正常，但节点查询连续window_not_ready。微信前台时WMS可见窗口存在，无障碍窗口却无应用窗口、Active/Top Focused Window Id=-1；酷安前台可列出应用窗口。原生support_long_press_mode=2只提供双指内容；不能把切换成1当组合手势完整修复。
 - 用户提供的432×432圆角裁剪图与1200×2608完整图片来自酷安，不能归为微信图片证据。19:34:44酷安实际捕获为com.coolapk.market_image_node_capture；源码captureImageRegion调用takeScreenshot再裁剪，不含原媒体引用，因此延长imgUrl等待不会修复该路径。此项与微信单指均尚未修复，Beta49不得标为全部验收通过。现场调查见上述任务outputs/WECHAT_COOLAPK_FINDINGS.md。用户已确认另一个微信模块不影响，未修改其设置。
+- 用户补充多个App都有原图问题，酷安仅为已抓到日志的样本，后续按共用图片来源处理。微信无障碍公开资料发现GKD维护者2026-04-17答复提及特定服务筛选；Andee记录MIUI/微信8.0.78在MiuiEnhanceTBService开关前后的节点差异。本机已安装该系统辅助服务，但当前仅Monica启用；服务身份/启用状态是待验证线索，尚未做本机开关对照，也未修改系统服务。2026-08-27澎湃4微信误封报道是涉及模拟点击类第三方App的媒体转述，不能据此判定节点缺失原因或MMGG账号风险。来源与边界见上述任务outputs/WECHAT_ACCESSIBILITY_RESEARCH.md。
 
 ### 2026-11-06 手势优先路由与 Beta44 交付
 
