@@ -11,19 +11,19 @@ import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertTrue;
 
 /**
- * The Xposed API artifact is a compile-time stub ("Stub!" bodies), so the vendor
- * reflection helpers can only be JVM-verified on their fallback paths; successful
- * parsing still needs the real framework on device.
+ * The API 102 compatibility adapter uses Java reflection locally. Verify both
+ * available vendor methods and the missing-method fallback paths.
  */
 @RunWith(RobolectricTestRunner.class)
 public final class MiniMediaControlsTest {
 
-    @Test public void taskIdAndBoundsFallBackWhenVendorReflectionIsUnavailable() {
+    @Test public void taskIdUsesAvailableMethodAndMissingValuesFallBack() {
         Object info = new Object() {
             public int getTaskId() { return 7; }
             public Object getScaledBounds() { return new Object(); }
         };
-        assertEquals(-1, MiniMediaControls.miniMediaTaskId(info));
+        assertEquals(7, MiniMediaControls.miniMediaTaskId(info));
+        assertEquals(-1, MiniMediaControls.miniMediaTaskId(new Object()));
         assertEquals(-1, MiniMediaControls.miniMediaTaskId(null));
         assertNull(MiniMediaControls.miniMediaBounds(info));
         assertNull(MiniMediaControls.miniMediaBounds(null));
@@ -42,12 +42,12 @@ public final class MiniMediaControlsTest {
         assertTrue(MiniMediaControls.isMiniMediaTaskVisible(null));
     }
 
-    @Test public void booleanCallFallsBackOnNullTargetsAndUnavailableReflection() {
+    @Test public void booleanCallUsesAvailableMethodAndFallsBackOnMissingMethod() {
         Object info = new Object() {
             public boolean isMiniState() { return true; }
         };
         assertTrue(MiniMediaControls.booleanCall(null, "isMiniState", true));
-        assertFalse(MiniMediaControls.booleanCall(info, "isMiniState", false));
+        assertTrue(MiniMediaControls.booleanCall(info, "isMiniState", false));
         assertFalse(MiniMediaControls.booleanCall(new Object(), "isMiniState", false));
     }
 
