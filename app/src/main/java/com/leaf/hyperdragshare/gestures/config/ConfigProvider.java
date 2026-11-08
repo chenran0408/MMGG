@@ -75,6 +75,9 @@ public final class ConfigProvider extends ContentProvider {
             out.putBoolean(ConfigContract.KEY_ENABLED, prefs.getBoolean(ConfigContract.KEY_ENABLED, ConfigContract.DEFAULT_ENABLED));
             out.putBoolean(ConfigContract.KEY_HAPTIC, prefs.getBoolean(ConfigContract.KEY_HAPTIC, ConfigContract.DEFAULT_HAPTIC));
             out.putBoolean(ConfigContract.KEY_FAN_SHADOW, prefs.getBoolean(ConfigContract.KEY_FAN_SHADOW, ConfigContract.DEFAULT_FAN_SHADOW));
+            out.putBoolean(ConfigContract.KEY_MORE_APPS_ENHANCED, prefs.getBoolean(
+                    ConfigContract.KEY_MORE_APPS_ENHANCED,
+                    ConfigContract.DEFAULT_MORE_APPS_ENHANCED));
             out.putBoolean(ConfigContract.KEY_FAN_ANIMATIONS_ENABLED, prefs.getBoolean(
                     ConfigContract.KEY_FAN_ANIMATIONS_ENABLED,
                     ConfigContract.DEFAULT_FAN_ANIMATIONS_ENABLED));

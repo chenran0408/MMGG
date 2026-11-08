@@ -29,6 +29,7 @@ final class GestureConfig {
     int selectionTransformLevel = ConfigContract.DEFAULT_SELECTION_TRANSFORM_LEVEL;
     boolean hideSystemRecentsClear = ConfigContract.DEFAULT_HIDE_SYSTEM_RECENTS_CLEAR;
     boolean forceCircularIcons = ConfigContract.DEFAULT_FORCE_CIRCULAR_ICONS;
+    boolean moreAppsEnhanced = ConfigContract.DEFAULT_MORE_APPS_ENHANCED;
     final boolean showSelectedAppName;
     final int triggerPercent;
     final int selectionRadiusPercent;
@@ -389,6 +390,9 @@ final class GestureConfig {
         result.forceCircularIcons = bundle.getBoolean(
                 ConfigContract.KEY_FORCE_CIRCULAR_ICONS,
                 ConfigContract.DEFAULT_FORCE_CIRCULAR_ICONS);
+        result.moreAppsEnhanced = bundle.getBoolean(
+                ConfigContract.KEY_MORE_APPS_ENHANCED,
+                ConfigContract.DEFAULT_MORE_APPS_ENHANCED);
         boolean legacyFixedRows = bundle.getBoolean(
                 ConfigContract.KEY_FAN_FIXED_SEVEN_ROWS,
                 ConfigContract.DEFAULT_FAN_FIXED_SEVEN_ROWS);

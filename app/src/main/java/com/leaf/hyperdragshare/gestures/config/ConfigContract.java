@@ -22,6 +22,7 @@ public final class ConfigContract {
     public static final String KEY_ENABLED = "enabled";
     public static final String KEY_HAPTIC = "haptic";
     public static final String KEY_FAN_SHADOW = "fan_shadow";
+    public static final String KEY_MORE_APPS_ENHANCED = "more_apps_enhanced";
     public static final String KEY_FAN_ANIMATIONS_ENABLED = "fan_animations_enabled";
     public static final String KEY_FAN_ANIMATION_SPEED = "fan_animation_speed";
     public static final String KEY_BOTTOM_ANIMATION_SPEED = "bottom_animation_speed";
@@ -243,6 +244,7 @@ public final class ConfigContract {
     public static final boolean DEFAULT_ENABLED = true;
     public static final boolean DEFAULT_HAPTIC = true;
     public static final boolean DEFAULT_FAN_SHADOW = false;
+    public static final boolean DEFAULT_MORE_APPS_ENHANCED = true;
     public static final boolean DEFAULT_FAN_ANIMATIONS_ENABLED = true;
     public static final int DEFAULT_FAN_ANIMATION_SPEED = 140;
     public static final int MIN_FAN_ANIMATION_SPEED = 75;

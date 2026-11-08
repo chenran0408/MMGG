@@ -308,6 +308,8 @@ public final class ConfigStore {
         preferences.edit()
                 .putBoolean(ConfigContract.KEY_ENABLED, ConfigContract.DEFAULT_ENABLED)
                 .putBoolean(ConfigContract.KEY_HAPTIC, ConfigContract.DEFAULT_HAPTIC)
+                .putBoolean(ConfigContract.KEY_MORE_APPS_ENHANCED,
+                        ConfigContract.DEFAULT_MORE_APPS_ENHANCED)
                 .putBoolean(ConfigContract.KEY_SHOW_SELECTED_APP_NAME,
                         ConfigContract.DEFAULT_SHOW_SELECTED_APP_NAME)
                 .putBoolean(ConfigContract.KEY_FORCE_CIRCULAR_ICONS,
@@ -683,6 +685,8 @@ public final class ConfigStore {
                 .putBoolean(ConfigContract.KEY_HAPTIC, ConfigContract.DEFAULT_HAPTIC)
 
                 .putBoolean(ConfigContract.KEY_FAN_SHADOW, ConfigContract.DEFAULT_FAN_SHADOW)
+                .putBoolean(ConfigContract.KEY_MORE_APPS_ENHANCED,
+                        ConfigContract.DEFAULT_MORE_APPS_ENHANCED)
                 .putBoolean(ConfigContract.KEY_FAN_ANIMATIONS_ENABLED,
                         ConfigContract.DEFAULT_FAN_ANIMATIONS_ENABLED)
                 .putInt(ConfigContract.KEY_FAN_ANIMATION_SPEED,

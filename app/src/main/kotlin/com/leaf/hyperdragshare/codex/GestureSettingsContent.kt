@@ -315,6 +315,7 @@ internal fun gestureSettingEntries(
     bool("启用手势", "总开关", C.KEY_ENABLED, C.DEFAULT_ENABLED)
     bool("触发震动", "手势成功触发时反馈", C.KEY_HAPTIC, C.DEFAULT_HAPTIC)
     bool("显示当前应用名称", "手势选择过程中显示应用名称", C.KEY_SHOW_SELECTED_APP_NAME, C.DEFAULT_SHOW_SELECTED_APP_NAME)
+    bool("更多应用增强面板", "启用网格、字母索引、颜色筛选和异步应用目录；关闭后使用基础列表", C.KEY_MORE_APPS_ENHANCED, C.DEFAULT_MORE_APPS_ENHANCED)
     bool("强制圆形图标", "将目标图标裁切为圆形", C.KEY_FORCE_CIRCULAR_ICONS, C.DEFAULT_FORCE_CIRCULAR_ICONS)
     chooser("图标旋转形变", listOf("关闭", "轻微", "标准", "明显"), C.KEY_SELECTION_TRANSFORM_LEVEL, C.DEFAULT_SELECTION_TRANSFORM_LEVEL)
     currentGroup = "底角触发"

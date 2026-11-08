@@ -1048,7 +1048,7 @@ final class FanRuntime {
                                 freeform.launch(moreTarget, launchConfig, this::refreshOutsideCapture);
                                 refreshOutsideCaptureAfterLaunch();
                             }
-                        });
+                        }, launchConfig.moreAppsEnhanced);
                         return;
                     }
                     boolean fullscreen = config.bottomFullscreenFor(isLandscape());
@@ -1127,7 +1127,7 @@ final class FanRuntime {
                         } else {
                             launchFullscreenTarget(moreTarget, centeredFullscreen);
                         }
-                    });
+                    }, launchConfig.moreAppsEnhanced);
                     return;
                 }
                 if (config.bottomHoneycombFreeformFor(isLandscape())) {
