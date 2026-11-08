@@ -1,6 +1,8 @@
 package com.leaf.hyperdragshare.codex;
 
 import android.graphics.Bitmap;
+import android.graphics.BitmapFactory;
+import android.net.Uri;
 import android.graphics.Point;
 import android.graphics.PointF;
 import android.graphics.Rect;
@@ -8,6 +10,10 @@ import android.os.Bundle;
 import android.os.Parcelable;
 
 import java.net.URI;
+import java.net.HttpURLConnection;
+import java.net.URL;
+import java.io.InputStream;
+import java.io.IOException;
 import java.util.Map;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -173,7 +179,7 @@ final class PortalContentCaptureSource {
                     Bundle imageMode = (Bundle) mode;
                     bestBitmap = largerBitmap(bestBitmap, imageMode.get("viewBitmap"), "viewBitmap");
                     String imageUrl = imageMode.getString("imgUrl");
-                    if (isLoadableImageUrl(imageUrl)) {
+                    if (isSupportedImageReference(imageUrl)) {
                         Bitmap original = loadPortalImage(taplusService, imageUrl);
                         urlBitmap = original;
                         bestBitmap = largerBitmap(bestBitmap, original, "imgUrl");
@@ -192,10 +198,10 @@ final class PortalContentCaptureSource {
             } catch (RuntimeException ignored) {
                 // The image_pick map remains sufficient on supported builds.
             }
-            // An imgUrl is Taplus' original-media authority. Prefer it even
-            // when a screenshot/viewBitmap happens to contain more pixels and
-            // includes rounded clipping or overlay chrome.
-            if (urlBitmap != null && !urlBitmap.isRecycled()) {
+            // Prefer the media reference over a same-sized rendered preview,
+            // which may include rounded clipping or overlay chrome.
+            if (urlBitmap != null && !urlBitmap.isRecycled()
+                    && (bestBitmap == null || pixelCount(urlBitmap) >= pixelCount(bestBitmap))) {
                 bestBitmap = urlBitmap;
             }
             if (bestBitmap == null || bestBitmap.isRecycled()) {
@@ -249,9 +255,11 @@ final class PortalContentCaptureSource {
         DragShareLog.i("DragShare/PortalCapture", "callback image candidate source=" + source
                 + " size=" + bitmap.getWidth() + "x" + bitmap.getHeight());
         if (current == null) return bitmap;
-        long currentPixels = (long) current.getWidth() * current.getHeight();
-        long candidatePixels = (long) bitmap.getWidth() * bitmap.getHeight();
-        return candidatePixels > currentPixels ? bitmap : current;
+        return pixelCount(bitmap) > pixelCount(current) ? bitmap : current;
+    }
+
+    private static long pixelCount(Bitmap bitmap) {
+        return (long) bitmap.getWidth() * bitmap.getHeight();
     }
 
     private static Bitmap loadPortalImage(Object taplusService, String url) {
@@ -277,15 +285,54 @@ final class PortalContentCaptureSource {
 
     private static Bitmap loadPortalImageUnbounded(Object taplusService, String normalized) {
         try {
-            Class<?> iconManager = XposedHelpers.findClassIfExists(
-                    "com.miui.contentextension.utils.IconManager",
-                    taplusService.getClass().getClassLoader());
-            if (iconManager == null) return null;
             android.content.Context context = (android.content.Context) taplusService;
-            android.content.Context appContext = context.getApplicationContext();
-            Object result = XposedHelpers.callStaticMethod(
-                    iconManager, "loadImageSync", appContext == null ? context : appContext, normalized);
-            return result instanceof Bitmap ? (Bitmap) result : null;
+            String scheme = Uri.parse(normalized).getScheme();
+            if ("http".equalsIgnoreCase(scheme) || "https".equalsIgnoreCase(scheme)) {
+                try {
+                    URL url = new URL(normalized);
+                    HttpURLConnection connection = (HttpURLConnection) url.openConnection();
+                    connection.setConnectTimeout(1200);
+                    connection.setReadTimeout(1800);
+                    connection.setInstanceFollowRedirects(true);
+                    connection.setRequestProperty("User-Agent", "MMGG-PortalCapture/1");
+                    connection.setRequestProperty("Accept", "image/avif,image/webp,image/apng,image/*,*/*;q=0.8");
+                    connection.setRequestProperty("Referer", url.getProtocol() + "://" + url.getHost() + "/");
+                    try (InputStream input = connection.getInputStream()) {
+                        Bitmap original = BitmapFactory.decodeStream(input);
+                        if (original != null && !original.isRecycled()) return original;
+                    } finally {
+                        connection.disconnect();
+                    }
+                } catch (IOException networkError) {
+                    DragShareLog.i("DragShare/PortalCapture",
+                            "direct Portal image request failed; trying Taplus loader error="
+                                    + networkError.getClass().getSimpleName());
+                }
+                Class<?> iconManager = XposedHelpers.findClassIfExists(
+                        "com.miui.contentextension.utils.IconManager",
+                        taplusService.getClass().getClassLoader());
+                if (iconManager != null) {
+                    android.content.Context appContext = context.getApplicationContext();
+                    Object result = XposedHelpers.callStaticMethod(
+                            iconManager, "loadImageSync", appContext == null ? context : appContext, normalized);
+                    if (result instanceof Bitmap && !((Bitmap) result).isRecycled()) {
+                        return (Bitmap) result;
+                    }
+                }
+                return null;
+            }
+            if ("content".equalsIgnoreCase(scheme)) {
+                try (InputStream input = context.getContentResolver().openInputStream(Uri.parse(normalized))) {
+                    return input == null ? null : BitmapFactory.decodeStream(input);
+                }
+            }
+            if ("file".equalsIgnoreCase(scheme)) {
+                return BitmapFactory.decodeFile(Uri.parse(normalized).getPath());
+            }
+            if (normalized.startsWith("/")) {
+                return BitmapFactory.decodeFile(normalized);
+            }
+            return null;
         } catch (Throwable error) {
             DragShareLog.w("DragShare/PortalCapture",
                     "Portal original image load failed error="
@@ -300,7 +347,7 @@ final class PortalContentCaptureSource {
         if (!(taplusService instanceof android.content.Context)
                 || catcherResult == null || callback == null) return;
         String imageUrl = imageUrlFromResult(catcherResult);
-        if (!isLoadableImageUrl(imageUrl)) return;
+        if (!isSupportedImageReference(imageUrl)) return;
         String normalized = imageUrl.startsWith("//") ? "http:" + imageUrl : imageUrl;
         ORIGINAL_IMAGE_EXECUTOR.execute(() -> {
             Bitmap original = loadPortalImageUnbounded(taplusService, normalized);
@@ -366,7 +413,7 @@ final class PortalContentCaptureSource {
         if (imageMode == null) return false;
         if (imageMode.containsKey("imgUrl")) {
             Object url = imageMode.get("imgUrl");
-            return url instanceof String && isLoadableImageUrl((String) url);
+            return url instanceof String && isSupportedImageReference((String) url);
         }
         if (imageMode.containsKey("viewBitmap")) {
             Object candidate = imageMode.get("viewBitmap");
@@ -393,6 +440,21 @@ final class PortalContentCaptureSource {
             return ("http".equals(scheme) || "https".equals(scheme))
                     && uri.getHost() != null && !uri.getHost().isEmpty();
         } catch (java.net.URISyntaxException error) {
+            return false;
+        }
+    }
+
+    private static boolean isSupportedImageReference(String value) {
+        if (value == null || value.isEmpty() || !value.equals(value.trim())) return false;
+        String normalized = value.startsWith("//") ? "http:" + value : value;
+        if (isLoadableImageUrl(normalized)) return true;
+        if (normalized.startsWith("/")) return true;
+        try {
+            Uri uri = Uri.parse(normalized);
+            String scheme = uri.getScheme();
+            return ("content".equalsIgnoreCase(scheme) || "file".equalsIgnoreCase(scheme))
+                    && uri.getPath() != null && !uri.getPath().isEmpty();
+        } catch (RuntimeException error) {
             return false;
         }
     }

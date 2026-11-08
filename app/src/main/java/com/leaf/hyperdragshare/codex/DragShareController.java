@@ -543,7 +543,7 @@ final class DragShareController {
             long currentPixels = (long) current.bitmap.getWidth() * current.bitmap.getHeight();
             long replacementPixels = (long) replacement.bitmap.getWidth()
                     * replacement.bitmap.getHeight();
-            if (replacementPixels <= currentPixels) {
+            if (replacementPixels < currentPixels) {
                 recycleOwnedImage(replacement);
                 return;
             }

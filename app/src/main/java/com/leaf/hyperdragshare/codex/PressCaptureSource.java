@@ -565,7 +565,7 @@ final class PressCaptureSource implements RootTouchSource.ContactListener, Press
                 long currentPixels = (long) cached.bitmap.getWidth() * cached.bitmap.getHeight();
                 long replacementPixels = (long) replacement.bitmap.getWidth()
                         * replacement.bitmap.getHeight();
-                if (replacementPixels <= currentPixels) {
+                if (replacementPixels < currentPixels) {
                     recycle(replacement);
                     return;
                 }

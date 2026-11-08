@@ -108,7 +108,7 @@ public final class PortalImagePayloadTest {
             Files.write(raw.toPath(), log.toString().getBytes(StandardCharsets.UTF_8));
             String filtered = DiagnosticBundleExporter.filterRuntimeLog(raw, false);
             assertTrue(filtered.contains("stage=portal_capture outcome=com.tencent.mm_missing_payload"));
-            assertFalse(filtered.contains("com.tencent.mm"));
+            assertTrue(filtered.contains("com.tencent.mm"));
         } finally {
             Files.deleteIfExists(raw.toPath());
             stale.recycle();
@@ -141,7 +141,7 @@ public final class PortalImagePayloadTest {
         stale.recycle();
     }
 
-    @Test public void onlyLoadableHttpUrlsQualifyAsCurrentImagePayload() {
+    @Test public void supportedHttpAndLocalReferencesQualifyAsCurrentImagePayload() {
         Bitmap hostBitmap = bitmap();
         Bundle mode = new Bundle();
         mode.putString("imgUrl", "https://cdn.example.test/image.png");
@@ -150,7 +150,15 @@ public final class PortalImagePayloadTest {
 
         mode.putString("imgUrl", "//cdn.example.test/image.png");
         assertTrue(PortalContentCaptureSource.hasCurrentImagePayload(mode));
+        mode.putString("imgUrl", "content://media/external/images/media/42");
+        assertTrue(PortalContentCaptureSource.hasCurrentImagePayload(mode));
+        mode.putString("imgUrl", "file:///sdcard/DCIM/image.png");
+        assertTrue(PortalContentCaptureSource.hasCurrentImagePayload(mode));
+        mode.putString("imgUrl", "/sdcard/DCIM/image.png");
+        assertTrue(PortalContentCaptureSource.hasCurrentImagePayload(mode));
         mode.putString("imgUrl", "ftp://cdn.example.test/image.png");
+        assertFalse(PortalContentCaptureSource.hasCurrentImagePayload(mode));
+        mode.putString("imgUrl", "data:image/png;base64,AAAA");
         assertFalse(PortalContentCaptureSource.hasCurrentImagePayload(mode));
         mode.putString("imgUrl", "https://");
         assertFalse(PortalContentCaptureSource.hasCurrentImagePayload(mode));

@@ -1,6 +1,6 @@
 # MMGG 当前状态与接手入口
 
-核对日期：2026-11-06。本文只维护当前事实；历史批次原文已归档到 `docs/archive/2026-10-30/CURRENT_STATUS_2026-10-30_before_compaction.md`，任务级证据仍保留在各任务目录。
+核对日期：2026-11-08。本文只维护当前事实；历史批次原文已归档到 `docs/archive/2026-10-30/CURRENT_STATUS_2026-10-30_before_compaction.md`，任务级证据仍保留在各任务目录。
 
 ## 工作线
 
@@ -18,6 +18,7 @@
 - Freeform 队列使用 generation、重试预算和 `QUEUED / REQUESTED / OBSERVED / UNKNOWN` 证据阶段。任务出现不等于最终启动成功。
 - Activation 首页与诊断页共用 `ActivationPresentation`；`UNKNOWN` 不转换为权限缺失。
 - 跨进程追踪只报告最后一个可观察阶段。`startActivity` 返回、拖放接受和 Provider descriptor 打开都不代表接收方已经读取或发送。
+- 传送门原图候选现在直接下载 HTTP(S) `imgUrl` 解码，避免宿主 `IconManager` 返回预览尺寸；并接受 `content://`、`file://` 和绝对路径图片引用。传送门异步返回的媒体即使与预览同像素尺寸，也可替换，避免一直保留带圆角的宿主截图。若 `imgUrl` 本身指向缩略图，仍需来源专用的 URL/附件解析才能得到原媒体；不把未知 URI 或任意 Bitmap 当原图。
 
 ### 2026-11-06 手势优先路由与 Beta44 交付
 
