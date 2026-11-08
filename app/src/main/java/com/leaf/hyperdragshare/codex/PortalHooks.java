@@ -293,7 +293,6 @@ final class PortalHooks {
                 applyPortalRuntime();
                 DragShareController current = controller;
                 if (current != null) {
-                    PressCaptureSource press = thumbCaptureSource;
                     String methodName = param.method.getName();
                     Object catcherResult = null;
                     boolean currentPickCallback = ON_PICK_TEXT_METHOD.equals(methodName)
@@ -311,31 +310,8 @@ final class PortalHooks {
                     }
                     CapturedContent content = PortalContentCaptureSource.capture(
                             param.thisObject, settings, catcherResult);
-                    if (content != null && press != null && press.acceptPortalContent(content)) {
-                        schedulePortalOriginal(param.thisObject, catcherResult, press, content);
-                        return;
-                    }
-                    if (current.isAwaitingRootRelease()) {
-                        if (content != null && content.isImage()) content.bitmap.recycle();
-                        log("portal pick ignored while Root press owns the gesture");
-                        return;
-                    }
-                    if (content == null) {
-                        return;
-                    }
-                    PointF point = PortalContentCaptureSource.touchPointFromResult(catcherResult);
-                    if (point == null) {
-                        point = PortalContentCaptureSource.initialPoint(
-                                param.thisObject,
-                                current.latestPointerX(),
-                                current.latestPointerY());
-                    }
-                    current.reservePortalHostFloatWindowSuppression();
-                    current.show(
-                            content,
-                            point == null ? -1f : point.x,
-                            point == null ? -1f : point.y,
-                            settings);
+                    if (content != null) dispatchPortalContent(param.thisObject,
+                            catcherResult, settings, content);
                 }
             }
         };
@@ -359,6 +335,43 @@ final class PortalHooks {
             currentPickCallbacksHooked = false;
             log("unable to hook Taplus current pick callbacks", error);
         }
+    }
+
+    /** Native callbacks can arrive on Binder threads; qualification owns the main queue. */
+    static void dispatchPortalContent(Object service, Object result,
+                                      DragShareSettings settings, CapturedContent content) {
+        DragShareController current = controller;
+        PressCaptureSource press = thumbCaptureSource;
+        Runnable deliver = () -> {
+            if (current == null || current != controller || press != thumbCaptureSource) {
+                if (content.isImage()) content.bitmap.recycle();
+                return;
+            }
+            if (press != null) {
+                if (press.acceptPortalContent(content)) {
+                    schedulePortalOriginal(service, result, press, content);
+                } else {
+                    if (content.isImage()) content.bitmap.recycle();
+                    log("portal pick ignored without a qualified live press");
+                }
+                // With combined gestures enabled, only the detector chooses drag
+                // versus segmentation. A native result cannot create its own drag.
+                return;
+            }
+            if (current.isAwaitingRootRelease()) {
+                if (content.isImage()) content.bitmap.recycle();
+                log("portal pick ignored while Root press owns the gesture");
+                return;
+            }
+            PointF point = PortalContentCaptureSource.touchPointFromResult(result);
+            if (point == null) point = PortalContentCaptureSource.initialPoint(
+                    service, current.latestPointerX(), current.latestPointerY());
+            current.reservePortalHostFloatWindowSuppression();
+            current.show(content, point == null ? -1f : point.x,
+                    point == null ? -1f : point.y, settings);
+        };
+        if (Looper.myLooper() == Looper.getMainLooper()) deliver.run();
+        else new Handler(Looper.getMainLooper()).post(deliver);
     }
 
     private static void schedulePortalOriginal(Object taplusService, Object catcherResult,

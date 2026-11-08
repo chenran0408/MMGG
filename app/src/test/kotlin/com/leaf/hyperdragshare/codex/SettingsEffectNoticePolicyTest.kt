@@ -30,6 +30,10 @@ class SettingsEffectNoticePolicyTest {
             classifySettingsEffectNotices(defaults, changed { setTwoFingerLongPressTimeoutMillis(900) }),
         )
         assertEquals(
+            listOf(SettingsEffectNotice.ROOT_INPUT),
+            classifySettingsEffectNotices(defaults, changed { setDisableSingleFingerInLandscape(false) }),
+        )
+        assertEquals(
             listOf(SettingsEffectNotice.PORTAL_SESSION),
             classifySettingsEffectNotices(defaults, changed {
                 setSimpleMenuPosition(DragShareSettings.SIMPLE_MENU_POSITION_BOTTOM)

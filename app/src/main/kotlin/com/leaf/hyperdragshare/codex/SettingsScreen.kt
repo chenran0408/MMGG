@@ -391,6 +391,20 @@ private fun portalSettingEntries(
             setAccessibilityLongPressTimeoutMillis(timeout)
         }
     }
+    row("drag.disableSingleFingerInLandscape", "横屏时禁用单指长按", SettingModule.PORTAL, "触发与识别",
+        summary = "双指长按分词仍可使用",
+        keywords = "横屏 单指 长按 拖拽 误触",
+    ) { title, summary, enabled ->
+        SwitchPreference(
+            title = title,
+            summary = summary,
+            checked = settings.disableSingleFingerInLandscape,
+            onCheckedChange = { disabled ->
+                persist { _ -> setDisableSingleFingerInLandscape(disabled) }
+            },
+            enabled = enabled,
+        )
+    }
     row("drag.twoFingerLongPressTimeout", "双指分词确认时间", SettingModule.PORTAL, "触发与识别",
         summary = "第二指加入后开始计时，达到时长后打开分词与大爆炸；单指使用独立确认时间",
         keywords = "双指 长按 时间 毫秒 分词 大爆炸 触发 拖拽 单指 第二指",

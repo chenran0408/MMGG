@@ -99,6 +99,7 @@ public final class DragShareSettings {
     public static final int MIN_TWO_FINGER_LONG_PRESS_TIMEOUT_MILLIS = 250;
     public static final int DEFAULT_TWO_FINGER_LONG_PRESS_TIMEOUT_MILLIS = 600;
     public static final int MAX_TWO_FINGER_LONG_PRESS_TIMEOUT_MILLIS = 3000;
+    public static final boolean DEFAULT_DISABLE_SINGLE_FINGER_IN_LANDSCAPE = true;
     public static final int MIN_ACCESSIBILITY_RECOGNITION_SENSITIVITY_PERCENT = 50;
     public static final int DEFAULT_ACCESSIBILITY_RECOGNITION_SENSITIVITY_PERCENT = 100;
     public static final int MAX_ACCESSIBILITY_RECOGNITION_SENSITIVITY_PERCENT = 200;
@@ -148,6 +149,8 @@ public final class DragShareSettings {
             "accessibility_long_press_timeout_millis";
     private static final String KEY_TWO_FINGER_LONG_PRESS_TIMEOUT_MILLIS =
             "two_finger_long_press_timeout_millis";
+    private static final String KEY_DISABLE_SINGLE_FINGER_IN_LANDSCAPE =
+            "disable_single_finger_in_landscape";
     private static final String KEY_ACCESSIBILITY_RECOGNITION_SENSITIVITY_PERCENT =
             "accessibility_recognition_sensitivity_percent";
     private static final String KEY_LOG_LEVEL = "log_level";
@@ -177,6 +180,7 @@ public final class DragShareSettings {
     public final Set<String> accessibilityBlacklistedPackages;
     public final int accessibilityLongPressTimeoutMillis;
     public final int twoFingerLongPressTimeoutMillis;
+    public final boolean disableSingleFingerInLandscape;
     public final int accessibilityRecognitionSensitivityPercent;
     public final int logLevel;
     public final int logDestination;
@@ -645,7 +649,8 @@ public final class DragShareSettings {
             boolean pauseAutomaticInGames,
             Set<String> manualGamePackages) {
         this(colorMode, uiStyle, edgeTriggerDp, scrollSpeedDpPerSecond, blockBackgroundScroll, textSharingEnabled, imageSharingEnabled, simpleMenuPosition, simpleMenuOpacityPercent, simpleMenuCornerRadiusDp, simpleMenuEdgeDistanceDp, iconOpacityPercent, closeMenuWhenPointerLeaves, hiddenTargetKeys, targetOrder, contentCaptureMode, accessibilityLandscapeRecognitionEnabled, accessibilityBlacklistedPackages, accessibilityLongPressTimeoutMillis, accessibilityRecognitionSensitivityPercent, modernBlurRadiusDp, modernGlassOpacityPercent, logLevel, logDestination, pauseAutomaticInGames, manualGamePackages,
-                DEFAULT_TWO_FINGER_LONG_PRESS_TIMEOUT_MILLIS);
+                DEFAULT_TWO_FINGER_LONG_PRESS_TIMEOUT_MILLIS,
+                DEFAULT_DISABLE_SINGLE_FINGER_IN_LANDSCAPE);
     }
 
     public DragShareSettings(
@@ -675,7 +680,8 @@ public final class DragShareSettings {
             int logDestination,
             boolean pauseAutomaticInGames,
             Set<String> manualGamePackages,
-            int twoFingerLongPressTimeoutMillis) {
+            int twoFingerLongPressTimeoutMillis,
+            boolean disableSingleFingerInLandscape) {
         this.colorMode = colorMode == COLOR_DARK || colorMode == COLOR_SYSTEM
                 ? colorMode : COLOR_LIGHT;
         this.contentCaptureMode = normalizeContentCaptureMode(contentCaptureMode);
@@ -740,6 +746,7 @@ public final class DragShareSettings {
         this.twoFingerLongPressTimeoutMillis = clamp(twoFingerLongPressTimeoutMillis,
                 MIN_TWO_FINGER_LONG_PRESS_TIMEOUT_MILLIS,
                 MAX_TWO_FINGER_LONG_PRESS_TIMEOUT_MILLIS);
+        this.disableSingleFingerInLandscape = disableSingleFingerInLandscape;
     }
 
     /** Starts a settings builder populated with the current defaults. */
@@ -780,6 +787,7 @@ public final class DragShareSettings {
         private Set<String> accessibilityBlacklistedPackages;
         private int accessibilityLongPressTimeoutMillis;
         private int twoFingerLongPressTimeoutMillis;
+        private boolean disableSingleFingerInLandscape;
         private int accessibilityRecognitionSensitivityPercent;
         private int logLevel;
         private int logDestination;
@@ -810,6 +818,7 @@ public final class DragShareSettings {
             accessibilityBlacklistedPackages = copySet(source.accessibilityBlacklistedPackages);
             accessibilityLongPressTimeoutMillis = source.accessibilityLongPressTimeoutMillis;
             twoFingerLongPressTimeoutMillis = source.twoFingerLongPressTimeoutMillis;
+            disableSingleFingerInLandscape = source.disableSingleFingerInLandscape;
             accessibilityRecognitionSensitivityPercent =
                     source.accessibilityRecognitionSensitivityPercent;
             logLevel = source.logLevel;
@@ -936,6 +945,11 @@ public final class DragShareSettings {
             return this;
         }
 
+        public Builder setDisableSingleFingerInLandscape(boolean value) {
+            disableSingleFingerInLandscape = value;
+            return this;
+        }
+
         public Builder setAccessibilityRecognitionSensitivityPercent(int value) {
             accessibilityRecognitionSensitivityPercent = value;
             return this;
@@ -989,7 +1003,8 @@ public final class DragShareSettings {
                     logDestination,
                     pauseAutomaticInGames,
                     manualGamePackages,
-                    twoFingerLongPressTimeoutMillis);
+                    twoFingerLongPressTimeoutMillis,
+                    disableSingleFingerInLandscape);
         }
     }
 
@@ -1093,7 +1108,9 @@ public final class DragShareSettings {
                 preferences.getBoolean(KEY_PAUSE_AUTOMATIC_IN_GAMES, false),
                 preferences.getStringSet(KEY_MANUAL_GAME_PACKAGES, Collections.emptySet()),
                 preferences.getInt(KEY_TWO_FINGER_LONG_PRESS_TIMEOUT_MILLIS,
-                        DEFAULT_TWO_FINGER_LONG_PRESS_TIMEOUT_MILLIS));
+                        DEFAULT_TWO_FINGER_LONG_PRESS_TIMEOUT_MILLIS),
+                preferences.getBoolean(KEY_DISABLE_SINGLE_FINGER_IN_LANDSCAPE,
+                        DEFAULT_DISABLE_SINGLE_FINGER_IN_LANDSCAPE));
     }
 
     /** Export-only switch; not part of the provider settings bundle or hooked processes. */
@@ -1154,6 +1171,8 @@ public final class DragShareSettings {
                 .putStringSet(KEY_MANUAL_GAME_PACKAGES, new LinkedHashSet<>(manualGamePackages))
                 .putInt(KEY_TWO_FINGER_LONG_PRESS_TIMEOUT_MILLIS,
                         twoFingerLongPressTimeoutMillis)
+                .putBoolean(KEY_DISABLE_SINGLE_FINGER_IN_LANDSCAPE,
+                        disableSingleFingerInLandscape)
                 .apply();
         DragShareLog.configure(this);
         DragShareLog.i("DragShare/Settings", "logging configured level=" + logLevel
@@ -1224,6 +1243,8 @@ public final class DragShareSettings {
         result.putStringArrayList(KEY_MANUAL_GAME_PACKAGES, new ArrayList<>(manualGamePackages));
         result.putInt(KEY_TWO_FINGER_LONG_PRESS_TIMEOUT_MILLIS,
                 twoFingerLongPressTimeoutMillis);
+        result.putBoolean(KEY_DISABLE_SINGLE_FINGER_IN_LANDSCAPE,
+                disableSingleFingerInLandscape);
         return result;
     }
 
@@ -1305,7 +1326,9 @@ public final class DragShareSettings {
                         ? new LinkedHashSet<>(bundle.getStringArrayList(KEY_MANUAL_GAME_PACKAGES))
                         : Collections.emptySet(),
                 bundle.getInt(KEY_TWO_FINGER_LONG_PRESS_TIMEOUT_MILLIS,
-                        DEFAULT_TWO_FINGER_LONG_PRESS_TIMEOUT_MILLIS));
+                        DEFAULT_TWO_FINGER_LONG_PRESS_TIMEOUT_MILLIS),
+                bundle.getBoolean(KEY_DISABLE_SINGLE_FINGER_IN_LANDSCAPE,
+                        DEFAULT_DISABLE_SINGLE_FINGER_IN_LANDSCAPE));
     }
 
     public boolean isDarkTheme(Context context) {

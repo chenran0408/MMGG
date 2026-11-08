@@ -252,7 +252,8 @@ final class PressCaptureSource implements RootTouchSource.ContactListener, Press
         DragShareSettings previous = settings;
         settings = updated;
         boolean pressConfigurationChanged =
-                previous.twoFingerLongPressTimeoutMillis != updated.twoFingerLongPressTimeoutMillis;
+                previous.twoFingerLongPressTimeoutMillis != updated.twoFingerLongPressTimeoutMillis
+                || previous.disableSingleFingerInLandscape != updated.disableSingleFingerInLandscape;
         boolean capturePolicyChanged = previous.pauseAutomaticInGames != updated.pauseAutomaticInGames
                 || !previous.manualGamePackages.equals(updated.manualGamePackages)
                 || !previous.accessibilityBlacklistedPackages.equals(updated.accessibilityBlacklistedPackages);
@@ -400,7 +401,7 @@ final class PressCaptureSource implements RootTouchSource.ContactListener, Press
         if (pointerCount == 2 && action == MotionEvent.ACTION_POINTER_DOWN) {
             if (twoFingerModeForGesture
                     || !canStartTwoFingerCandidate(controller, detector, eventTime,
-                    x, y, secondX, secondY)) return false;
+                    x, y, secondX, secondY, singleFingerSuppressed())) return false;
             detector.startTwoFinger(x, y, secondX, secondY, eventTime,
                     settings.resolveTwoFingerPressConfirmationTimeoutMillis(),
                     ViewConfiguration.get(context).getScaledTouchSlop());
@@ -469,10 +470,11 @@ final class PressCaptureSource implements RootTouchSource.ContactListener, Press
     static boolean canStartTwoFingerCandidate(DragShareController controller,
                                               PressTriggerDetector detector,
                                               long eventTime,
-                                              float x, float y, float secondX, float secondY) {
+                                              float x, float y, float secondX, float secondY,
+                                              boolean singleFingerSuppressed) {
         return controller != null && !controller.isActive()
                 && detector != null && detector.isActive() && !detector.isFired()
-                && eventTime < detector.deadline()
+                && (singleFingerSuppressed || eventTime < detector.deadline())
                 && Float.isFinite(x) && Float.isFinite(y)
                 && Float.isFinite(secondX) && Float.isFinite(secondY);
     }
@@ -524,6 +526,10 @@ final class PressCaptureSource implements RootTouchSource.ContactListener, Press
         cached = content;
         lookupRunning = false;
         displayQueued = false;
+        if (singleFingerSuppressed()) {
+            schedule();
+            return true;
+        }
         if (!twoFingerModeForGesture || detector.isFired()) {
             controller.notePressPipeline(downTime);
         }
@@ -578,7 +584,9 @@ final class PressCaptureSource implements RootTouchSource.ContactListener, Press
     }
 
     private boolean allowed() {
-        return !stopped && nodeSession != null && input.isReady()
+        // Capture still requires its Root lease; touch can come from the MIUI
+        // fallback while the evdev reader is unavailable.
+        return !stopped && nodeSession != null
                 && (settings.isSharingEnabled(false) || settings.isSharingEnabled(true))
                 && controller.canContinuePress(downTime)
                 && context.getSystemService(PowerManager.class).isInteractive()
@@ -588,16 +596,20 @@ final class PressCaptureSource implements RootTouchSource.ContactListener, Press
     private void schedule() {
         main.removeCallbacks(classify);
         main.removeCallbacks(fire);
+        // Keep the first contact eligible for a second finger, without capturing
+        // or confirming a disabled single-finger hold.
+        if (singleFingerSuppressed()) return;
         if (detector.classificationDeadline() >= 0L) main.postAtTime(classify, detector.classificationDeadline());
         if (detector.isActive() && !detector.isFired()) main.postAtTime(fire, detector.deadline());
     }
 
     private void classifyPress() {
-        if (allowed()
+        if (!singleFingerSuppressed() && allowed()
                 && detector.takeClassification(SystemClock.uptimeMillis()) && cached == null) lookup();
     }
 
     private void firePress() {
+        if (singleFingerSuppressed()) return;
         if (!allowed()) {
             cancelGesture();
             return;
@@ -616,7 +628,7 @@ final class PressCaptureSource implements RootTouchSource.ContactListener, Press
 
     /** Routes content by gesture kind after the duration threshold is reached. */
     private void routeConfirmedContentIfReady() {
-        if (released || directDragArmed) return;
+        if (released || directDragArmed || singleFingerSuppressed()) return;
         CapturedContent content = cached;
         if (content == null) return;
         if (!settings.isSharingEnabled(content.isImage())) return;
@@ -684,13 +696,22 @@ final class PressCaptureSource implements RootTouchSource.ContactListener, Press
                     }
                     lookupRunning = false;
                     if (content == null) {
-                        if (detector.isFired() && !excludedByPolicy.get()) {
-                            showFailure("当前位置没有可读取的文字或安全识字区域");
+                        if (excludedByPolicy.get()
+                                || "excluded_hold_control".equals(result.rejectionReason)) {
+                            cancelGesture();
+                        } else {
+                            // A missing node is not a cancelled touch. Taplus may still
+                            // return the actual message while this same hold is down.
+                            OperationTrace.event(operationId(), "capture", "waiting_for_portal");
+                            schedule();
                         }
-                        cancelGesture();
                         return;
                     }
                     cached = content;
+                    if (singleFingerSuppressed()) {
+                        schedule();
+                        return;
+                    }
                     controller.notePressDiagnostics(requestDownTime, content.sourcePackage,
                             detector.isFired() ? "ARMED" : "PENDING", "capture_result_available");
                     if (released) {
@@ -744,6 +765,7 @@ final class PressCaptureSource implements RootTouchSource.ContactListener, Press
     }
 
     private void display() {
+        if (singleFingerSuppressed()) return;
         if (displayQueued) return;
         displayQueued = true;
         CapturedContent content = cached;
@@ -767,6 +789,12 @@ final class PressCaptureSource implements RootTouchSource.ContactListener, Press
         } else {
             openText(request, content);
         }
+    }
+
+    private boolean singleFingerSuppressed() {
+        return !twoFingerModeForGesture && settings.disableSingleFingerInLandscape
+                && context.getResources().getConfiguration().orientation
+                == android.content.res.Configuration.ORIENTATION_LANDSCAPE;
     }
 
     private void openText(long request, CapturedContent content) {

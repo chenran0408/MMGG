@@ -19,7 +19,7 @@ internal enum class SettingsEffectNotice(
     GESTURE_EXCLUSIONS(
         "已保存：传送门下次读取避让名单；系统界面（SystemUI）在后续手势读取更新后的名单。无需重启。",
     ),
-    ROOT_INPUT("已保存：根输入（Root）会在下一次按压确认时读取双指长按设置。"),
+    ROOT_INPUT("已保存：根输入（Root）会在下一次按压时读取长按设置，无需重启。"),
     PORTAL_SESSION("已保存：传送门在下一次取词或选图时读取；当前操作不变。无需重启作用域。"),
 }
 
@@ -43,7 +43,9 @@ internal fun classifySettingsEffectNotices(
         add(SettingsEffectNotice.GESTURE_EXCLUSIONS)
     }
 
-    if (previous.twoFingerLongPressTimeoutMillis != next.twoFingerLongPressTimeoutMillis) {
+    if (previous.twoFingerLongPressTimeoutMillis != next.twoFingerLongPressTimeoutMillis
+        || previous.disableSingleFingerInLandscape != next.disableSingleFingerInLandscape
+    ) {
         add(SettingsEffectNotice.ROOT_INPUT)
     }
 

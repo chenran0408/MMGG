@@ -41,6 +41,207 @@ import java.util.concurrent.TimeUnit;
 @RunWith(RobolectricTestRunner.class)
 @Config(manifest = Config.NONE)
 public final class TwoFingerPressTest {
+    @Test public void emptyEarlyRootResultKeepsSingleFingerEligibleForPortalText() throws Exception {
+        checkEmptyRootThenPortal(false, false, true);
+    }
+
+    @Test public void emptyEarlyRootResultKeepsTwoFingerPortalOnSegmentationRoute() throws Exception {
+        checkEmptyRootThenPortal(true, false, true);
+    }
+
+    @Test public void binderPortalCallbackUsesTheSameTwoFingerRoute() throws Exception {
+        checkEmptyRootThenPortal(true, true, true);
+    }
+
+    @Test public void miuiFallbackCanQualifyWhenRootInputIsUnavailable() throws Exception {
+        checkEmptyRootThenPortal(true, true, false);
+    }
+
+    private void checkEmptyRootThenPortal(boolean twoFinger, boolean binderCallback,
+                                        boolean rootInputReady) throws Exception {
+        Context context = RuntimeEnvironment.getApplication();
+        clearPortalSettings(context);
+        BigBangProvider provider = new BigBangProvider(context);
+        ShadowContentResolver.registerProviderInternal(ImageStagingClient.AUTHORITY, provider);
+        DragShareSettings settings = DragShareSettings.defaults();
+        DragShareController controller = new DragShareController(context, OverlayWindowPolicy.portal());
+        RootTouchSource input = new RootTouchSource(context,
+                (action, x, y, time, major, minor, width) -> { }, (ready, reason) -> { });
+        field(input, "ready").setBoolean(input, rootInputReady);
+        PressCaptureSource source = new PressCaptureSource(context, input, controller, settings);
+        java.lang.reflect.Field hookController = PortalHooks.class.getDeclaredField("controller");
+        java.lang.reflect.Field hookPress = PortalHooks.class.getDeclaredField("thumbCaptureSource");
+        java.lang.reflect.Field hookInput = PortalHooks.class.getDeclaredField("rootTouchSource");
+        hookController.setAccessible(true);
+        hookPress.setAccessible(true);
+        hookInput.setAccessible(true);
+        Object previousController = hookController.get(null);
+        Object previousPress = hookPress.get(null);
+        Object previousInput = hookInput.get(null);
+        Handler ui = new Handler(Looper.getMainLooper());
+        long downTime = SystemClock.uptimeMillis();
+        try {
+            field(source, "nodeSession").set(source, provider.connection);
+            hookController.set(null, controller);
+            hookPress.set(null, source);
+            hookInput.set(null, input);
+            controller.acceptPointerEvent(MotionEvent.ACTION_DOWN, 20f, 30f, downTime, "root");
+            ShadowLooper.shadowMainLooper().idle();
+            ui.post(() -> {
+                if (rootInputReady) source.onPointerEvent(MotionEvent.ACTION_DOWN, 20f, 30f, downTime);
+                else {
+                    try {
+                        java.lang.reflect.Method dispatch = PortalHooks.class.getDeclaredMethod(
+                                "dispatchMotion", MotionEvent.class);
+                        dispatch.setAccessible(true);
+                        dispatch.invoke(null, MotionEvent.obtain(downTime, downTime,
+                                MotionEvent.ACTION_DOWN, 20f, 30f, 0));
+                    } catch (ReflectiveOperationException error) {
+                        throw new AssertionError(error);
+                    }
+                }
+            });
+            ShadowLooper.shadowMainLooper().idle();
+            ShadowSystemClock.advanceBy(java.time.Duration.ofMillis(120));
+            ShadowLooper.shadowMainLooper().idle();
+            ExecutorService worker = (ExecutorService) field(source, "worker").get(source);
+            worker.submit(() -> { }).get(5, TimeUnit.SECONDS);
+            ShadowLooper.shadowMainLooper().idle();
+            PressTriggerDetector detector = (PressTriggerDetector) field(source, "detector").get(source);
+            assertTrue("Empty node capture must not cancel the physical hold", detector.isActive());
+            ui.post(() -> {
+                if (twoFinger) assertTrue(source.onContactEvent(MotionEvent.ACTION_POINTER_DOWN,
+                        20f, 30f, 40f, 50f, 2, SystemClock.uptimeMillis()));
+                if (!binderCallback) assertTrue(source.acceptPortalContent(CapturedContent.text(
+                        "portal message", "com.tencent.mm", null)));
+            });
+            ShadowLooper.shadowMainLooper().idle();
+            if (binderCallback) {
+                Thread binder = new Thread(() -> PortalHooks.dispatchPortalContent(null, null,
+                        settings, CapturedContent.text("portal message", "com.tencent.mm", null)),
+                        "binder:portal-test");
+                binder.start();
+                binder.join();
+                assertNull("Binder result must wait for the qualification queue",
+                        field(source, "cached").get(source));
+                ShadowLooper.shadowMainLooper().idle();
+                assertNotNull(field(source, "cached").get(source));
+            }
+            ShadowSystemClock.advanceBy(java.time.Duration.ofMillis(600));
+            ShadowLooper.shadowMainLooper().idle();
+            assertEquals(!twoFinger, controller.hasPendingImagePreview());
+            assertEquals(twoFinger ? 1 : 0, provider.bigBangOpenCount);
+            if (twoFinger) assertFalse(provider.bigBangRequest.getBoolean("drag_preview"));
+            if (binderCallback) {
+                ui.post(source::cancelGesture);
+                ShadowLooper.shadowMainLooper().idle();
+                Bitmap late = Bitmap.createBitmap(2, 2, Bitmap.Config.ARGB_8888);
+                ui.post(() -> PortalHooks.dispatchPortalContent(null, null, settings,
+                        CapturedContent.portalMediaImage(late, "com.tencent.mm", new Rect())));
+                ShadowLooper.shadowMainLooper().idle();
+                assertTrue("An unowned native image must be released without a drag fallback", late.isRecycled());
+                assertFalse(controller.hasPendingImagePreview() || controller.isActive());
+            }
+        } finally {
+            hookController.set(null, previousController);
+            hookPress.set(null, previousPress);
+            hookInput.set(null, previousInput);
+            source.stop();
+            controller.destroy();
+            ShadowLooper.shadowMainLooper().idle();
+            clearPortalSettings(context);
+        }
+    }
+
+    @Test @Config(qualifiers = "land")
+    public void landscapeDefaultConsumesPortalResultWithoutSingleFingerPreview() throws Exception {
+        checkLandscapePress(true, -1L);
+    }
+
+    @Test @Config(qualifiers = "land")
+    public void landscapeSwitchOffRestoresSingleFingerPreview() throws Exception {
+        checkLandscapePress(false, -1L);
+    }
+
+    @Test @Config(qualifiers = "land")
+    public void landscapeStillConfirmsTwoFingerAtItsOwnDeadline() throws Exception {
+        checkLandscapePress(true, 100L);
+    }
+
+    @Test @Config(qualifiers = "land")
+    public void landscapeSecondFingerCanJoinAfterSuppressedSingleFingerDeadline() throws Exception {
+        checkLandscapePress(true, 900L);
+    }
+
+    private void checkLandscapePress(boolean disableSingleFinger, long secondFingerDelay)
+            throws Exception {
+        Context context = RuntimeEnvironment.getApplication();
+        clearPortalSettings(context);
+        BigBangProvider provider = new BigBangProvider(context);
+        ShadowContentResolver.registerProviderInternal(ImageStagingClient.AUTHORITY, provider);
+        Bundle stored = new Bundle();
+        if (!disableSingleFinger) stored.putBoolean("disable_single_finger_in_landscape", false);
+        DragShareSettings settings = DragShareSettings.fromBundle(stored);
+        DragShareController controller = new DragShareController(context, OverlayWindowPolicy.portal());
+        RootTouchSource input = new RootTouchSource(context,
+                (action, x, y, time, major, minor, width) -> { }, (ready, reason) -> { });
+        field(input, "ready").setBoolean(input, true);
+        PressCaptureSource source = new PressCaptureSource(context, input, controller, settings);
+        long downTime = SystemClock.uptimeMillis();
+        Handler ui = new Handler(Looper.getMainLooper());
+        try {
+            field(source, "nodeSession").set(source, provider.connection);
+            BackgroundTouchBlocker original = (BackgroundTouchBlocker) field(source, "blocker").get(source);
+            original.close();
+            field(source, "blocker").set(source, new BackgroundTouchBlocker(
+                    context, (target, method, args) -> null, () -> false));
+            controller.acceptPointerEvent(MotionEvent.ACTION_DOWN, 20f, 30f, downTime, "root");
+            ShadowLooper.shadowMainLooper().idle();
+            ui.post(() -> {
+                source.onPointerEvent(MotionEvent.ACTION_DOWN, 20f, 30f, downTime);
+                assertTrue("Portal callback must be consumed by the live press, without fallback",
+                        source.acceptPortalContent(CapturedContent.text("landscape text", "test.source", null)));
+            });
+            ShadowLooper.shadowMainLooper().idle();
+
+            if (secondFingerDelay >= 0L) {
+                ShadowSystemClock.advanceBy(java.time.Duration.ofMillis(secondFingerDelay));
+                ShadowLooper.shadowMainLooper().idle();
+                assertFalse(controller.hasPendingImagePreview());
+                ui.post(() -> assertTrue("Second finger must remain eligible in landscape",
+                        source.onContactEvent(MotionEvent.ACTION_POINTER_DOWN,
+                                20f, 30f, 40f, 50f, 2, downTime + secondFingerDelay)));
+                ShadowLooper.shadowMainLooper().idle();
+                ShadowSystemClock.advanceBy(java.time.Duration.ofMillis(599));
+                ShadowLooper.shadowMainLooper().idle();
+                assertNull("Two fingers must wait for their own duration", provider.bigBangRequest);
+                ShadowSystemClock.advanceBy(java.time.Duration.ofMillis(1));
+            } else {
+                ShadowSystemClock.advanceBy(java.time.Duration.ofMillis(900));
+            }
+            ShadowLooper.shadowMainLooper().idle();
+            PressTriggerDetector detector = (PressTriggerDetector) field(source, "detector").get(source);
+            if (secondFingerDelay >= 0L) {
+                assertNotNull("Two-finger hold opens segmentation before release", provider.bigBangRequest);
+                assertFalse(provider.bigBangRequest.getBoolean("drag_preview"));
+                assertEquals(1, provider.bigBangOpenCount);
+            } else {
+                assertEquals(!disableSingleFinger, detector.isFired());
+                assertEquals(!disableSingleFinger, controller.hasPendingImagePreview());
+                assertNull(provider.bigBangRequest);
+                ui.post(() -> source.onPointerEvent(MotionEvent.ACTION_UP, 20f, 30f,
+                        SystemClock.uptimeMillis()));
+                ShadowLooper.shadowMainLooper().idle();
+                assertFalse(controller.hasPendingImagePreview());
+            }
+        } finally {
+            source.stop();
+            controller.destroy();
+            ShadowLooper.shadowMainLooper().idle();
+            clearPortalSettings(context);
+        }
+    }
+
     @Test
     public void loneSinglePointerStillConfirms() throws Exception {
         Context context = RuntimeEnvironment.getApplication();
@@ -750,7 +951,7 @@ public final class TwoFingerPressTest {
         Bitmap bitmap = Bitmap.createBitmap(2, 2, Bitmap.Config.ARGB_8888);
         try {
             assertTrue(PressCaptureSource.canStartTwoFingerCandidate(controller, detector,
-                    200L, 20f, 30f, 40f, 50f));
+                    200L, 20f, 30f, 40f, 50f, false));
 
             controller.acceptPointerEvent(MotionEvent.ACTION_DOWN, 20f, 30f, 100L, "root");
             ShadowLooper.shadowMainLooper().idle();
@@ -762,7 +963,7 @@ public final class TwoFingerPressTest {
 
             assertTrue(controller.isActive());
             assertFalse(PressCaptureSource.canStartTwoFingerCandidate(controller, detector,
-                    200L, 20f, 30f, 40f, 50f));
+                    200L, 20f, 30f, 40f, 50f, false));
         } finally {
             controller.destroy();
             if (!bitmap.isRecycled()) bitmap.recycle();

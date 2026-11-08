@@ -24,6 +24,28 @@ import java.util.Set;
 @RunWith(RobolectricTestRunner.class)
 @Config(manifest = Config.NONE)
 public final class DragShareSettingsTest {
+    @Test public void landscapeSingleFingerDefaultsOnAndExplicitOffSurvivesEverySettingsPath() {
+        Context context = RuntimeEnvironment.getApplication();
+        DragShareSettings previous = DragShareSettings.readLocal(context);
+        try {
+            assertTrue(DragShareSettings.defaults().disableSingleFingerInLandscape);
+            assertTrue(DragShareSettings.fromBundle(new Bundle()).disableSingleFingerInLandscape);
+            context.getSharedPreferences("drag_share_settings", Context.MODE_PRIVATE).edit()
+                    .remove("disable_single_finger_in_landscape").commit();
+            assertTrue(DragShareSettings.readLocal(context).disableSingleFingerInLandscape);
+            DragShareSettings disabled = previous.toBuilder()
+                    .setDisableSingleFingerInLandscape(false).build();
+            disabled.saveLocal(context);
+            assertFalse(DragShareSettings.readLocal(context).disableSingleFingerInLandscape);
+            assertFalse(DragShareSettings.fromBundle(disabled.toBundle()).disableSingleFingerInLandscape);
+            assertFalse(disabled.toBuilder().setEdgeTriggerDp(93).build().disableSingleFingerInLandscape);
+            disabled.toBuilder().setDisableSingleFingerInLandscape(true).build().saveLocal(context);
+            assertTrue(DragShareSettings.readLocal(context).disableSingleFingerInLandscape);
+        } finally {
+            previous.saveLocal(context);
+        }
+    }
+
     @Test public void menuDirectionsPreserveAllSupportedValuesAndRejectUnknownValues() {
         for (int position = DragShareSettings.SIMPLE_MENU_POSITION_TOP;
                 position <= DragShareSettings.SIMPLE_MENU_POSITION_DRAG_EDGE; position++) {
@@ -968,6 +990,7 @@ public final class DragShareSettingsTest {
                 .setPauseAutomaticInGames(true)
                 .setManualGamePackages(new LinkedHashSet<>(Arrays.asList("app.game")))
                 .setTwoFingerLongPressTimeoutMillis(1375)
+                .setDisableSingleFingerInLandscape(false)
                 .build();
     }
 
@@ -1009,6 +1032,7 @@ public final class DragShareSettingsTest {
         if (!excluded.contains("pauseAutomaticInGames")) assertEquals(expected.pauseAutomaticInGames, actual.pauseAutomaticInGames);
         if (!excluded.contains("manualGamePackages")) assertEquals(expected.manualGamePackages, actual.manualGamePackages);
         if (!excluded.contains("twoFingerLongPressTimeoutMillis")) assertEquals(expected.twoFingerLongPressTimeoutMillis, actual.twoFingerLongPressTimeoutMillis);
+        if (!excluded.contains("disableSingleFingerInLandscape")) assertEquals(expected.disableSingleFingerInLandscape, actual.disableSingleFingerInLandscape);
     }
 
     private static void assertUnmodifiableSet(Set<String> values) {
