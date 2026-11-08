@@ -30,7 +30,9 @@
 - 定向回归覆盖空捕获后Portal接入、Binder回调、MIUI备用输入、迟到图片丢弃、横屏默认/关闭/双指晚加入，以及面板线程和应用/快捷方式分组。设备触发的最终结论以本轮交付记录为准，源码复现不等于微信现场根因已全部确认。
 - 最终验证：870项单测全部通过；Lint 0 errors、197 warnings、2 hints；assembleDebug与assembleBeta（R8、资源收缩、lintVitalBeta）通过。修正两条仍按legacy stub断言的历史API102反射测试，没有改媒体功能生产逻辑。
 - 本地提交：`d216d87`（反射测试）、`f2740bc`（更多应用）、`540979b`（按压链和横屏开关）。APK：`D:/CODEX/Tasks/2026-11-08/mmgg-more-apps-fix/outputs/MMGG-1.7.219-beta.49.apk`，SHA-256 `E9B3E7983DC3AD0D88D65F6EDD47EADF1FB4793310AB2D171D2D101A1981146F`，v2签名通过、Android Debug证书，与Beta48证书一致。
-- 已在b0ba578f覆盖安装并重载SystemUI/传送门；新SystemUI诊断明确version291，传送门注入、Root输入和节点连接均报告291/ready。用户解锁后继续操作手机，本轮未抢占其界面；微信真实手指触发、横屏和面板完整交互尚未验收。旧版缓存窗口创建15/12/11ms，缺少新旧冷目录对比，不宣称提升百分比。完整记录在上述任务outputs/DELIVERY.md。
+- 已在b0ba578f覆盖安装并重载SystemUI/传送门；新SystemUI诊断明确version291，传送门注入、Root输入和节点连接均报告291/ready。逐包核对SystemUI PID=23895、Portal PID=23813；任务早期记录写反的PID已纠正。横屏和面板完整交互尚未验收。旧版缓存窗口创建15/12/11ms，缺少新旧冷目录对比，不宣称提升百分比。完整记录在上述任务outputs/DELIVERY.md。
+- 追加现场验收：19:30:58微信双指图片已完成原生viewBitmap回调→OCR→分词窗口accepted；微信单指仍失败，Root输入和时长正常，但节点查询连续window_not_ready。微信前台时WMS可见窗口存在，无障碍窗口却无应用窗口、Active/Top Focused Window Id=-1；酷安前台可列出应用窗口。原生support_long_press_mode=2只提供双指内容；不能把切换成1当组合手势完整修复。
+- 用户提供的432×432圆角裁剪图与1200×2608完整图片来自酷安，不能归为微信图片证据。19:34:44酷安实际捕获为com.coolapk.market_image_node_capture；源码captureImageRegion调用takeScreenshot再裁剪，不含原媒体引用，因此延长imgUrl等待不会修复该路径。此项与微信单指均尚未修复，Beta49不得标为全部验收通过。现场调查见上述任务outputs/WECHAT_COOLAPK_FINDINGS.md。用户已确认另一个微信模块不影响，未修改其设置。
 
 ### 2026-11-06 手势优先路由与 Beta44 交付
 
