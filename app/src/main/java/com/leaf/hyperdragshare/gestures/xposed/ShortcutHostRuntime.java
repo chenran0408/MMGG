@@ -135,7 +135,7 @@ final class ShortcutHostRuntime {
     private static synchronized void installCatalogObserver(Context context) {
         if (catalogObserverInstalled) return;
         try {
-            context.getContentResolver().registerContentObserver(ConfigContract.CATALOG_URI,
+            context.getContentResolver().registerContentObserver(ConfigContract.CATALOG_REFRESH_URI,
                     false, new android.database.ContentObserver(MAIN_HANDLER) {
                         @Override public void onChange(boolean selfChange) {
                             requestCatalogRefresh(context, CATALOG_DEBOUNCE_MS);
@@ -371,12 +371,13 @@ final class ShortcutHostRuntime {
                         label.toString()));
                 item.put("kind", "standard");
                 out.put(item);
+                String key = ShortcutIconLoader.key(shortcut.getPackage(), shortcut.getId(), 0);
+                long version = shortcut.getLastChangedTimestamp();
+                if (iconVersionMatches(key, version)) continue;
                 try {
                     Drawable icon = launcherApps.getShortcutIconDrawable(shortcut,
                             context.getResources().getDisplayMetrics().densityDpi);
-                    queueShortcutIcon(context, iconKeys, icons,
-                            ShortcutIconLoader.key(shortcut.getPackage(), shortcut.getId(), 0),
-                            shortcut.getLastChangedTimestamp(), icon);
+                    queueShortcutIcon(context, iconKeys, icons, key, version, icon);
                 } catch (RuntimeException iconError) {
                     Log.i("SystemUI could not read icon for shortcut " + shortcut.getPackage()
                             + "/" + shortcut.getId() + ": " + iconError.getClass().getSimpleName());
@@ -462,11 +463,13 @@ final class ShortcutHostRuntime {
                 out.put(item);
                 if (iconColumn >= 0 && !cursor.isNull(iconColumn)) {
                     byte[] encoded = cursor.getBlob(iconColumn);
-                    Bitmap icon = encoded == null ? null : BitmapFactory.decodeByteArray(
-                            encoded, 0, encoded.length);
-                    queueShortcutIcon(context, pendingKeys, pendingIcons,
-                            ShortcutIconLoader.key(packageName, shortcutId, 0),
-                            encoded == null ? 0L : java.util.Arrays.hashCode(encoded), icon);
+                    if (encoded == null) continue;
+                    String iconKey = ShortcutIconLoader.key(packageName, shortcutId, 0);
+                    long version = java.util.Arrays.hashCode(encoded);
+                    if (!iconVersionMatches(iconKey, version)) {
+                        Bitmap icon = BitmapFactory.decodeByteArray(encoded, 0, encoded.length);
+                        queueShortcutIcon(context, pendingKeys, pendingIcons, iconKey, version, icon);
+                    }
                 }
                 added++;
             }
@@ -557,18 +560,21 @@ final class ShortcutHostRuntime {
         queueShortcutIcon(context, keys, icons, key, version, bitmap);
     }
 
-    private static void prunePublishedIconVersions(JSONArray catalog) {
+    private static synchronized boolean iconVersionMatches(String key, long version) {
+        Long previous = publishedIconVersions.get(key);
+        return previous != null && previous == version;
+    }
+
+    private static synchronized void prunePublishedIconVersions(JSONArray catalog) {
         java.util.HashSet<String> current = new java.util.HashSet<>();
         for (int i = 0; i < catalog.length(); i++) {
             JSONObject item = catalog.optJSONObject(i);
             if (item != null) {
-                current.add(item.optString("package", "") + "\n"
-                        + item.optString("id", ""));
+                current.add(ShortcutIconLoader.key(item.optString("package", ""),
+                        item.optString("id", ""), item.optInt("userId", 0)));
             }
         }
-        synchronized (publishedIconVersions) {
-            publishedIconVersions.keySet().retainAll(current);
-        }
+        publishedIconVersions.keySet().retainAll(current);
     }
 
     private static synchronized void queueShortcutIcon(Context context, ArrayList<String> keys,
@@ -583,18 +589,26 @@ final class ShortcutHostRuntime {
         if (keys.size() >= 6) flushShortcutIcons(context, keys, icons);
     }
 
-    private static void flushShortcutIcons(Context context, ArrayList<String> keys,
-                                           ArrayList<Bitmap> icons) {
+    private static synchronized void flushShortcutIcons(Context context, ArrayList<String> keys,
+                                                        ArrayList<Bitmap> icons) {
         if (keys.isEmpty()) return;
         Bundle extras = new Bundle();
         extras.putStringArrayList(ShortcutIconLoader.EXTRA_KEYS,
                 new ArrayList<>(keys));
         extras.putParcelableArrayList(ShortcutIconLoader.EXTRA_ICONS,
                 new ArrayList<>(icons));
-        context.getContentResolver().call(ConfigContract.URI,
-                ShortcutIconLoader.METHOD_REPORT, null, extras);
-        keys.clear();
-        icons.clear();
+        try {
+            if (context.getContentResolver().call(ConfigContract.URI,
+                    ShortcutIconLoader.METHOD_REPORT, null, extras) == null) {
+                throw new IllegalStateException("Shortcut icon report did not reach the provider");
+            }
+        } catch (RuntimeException error) {
+            keys.forEach(publishedIconVersions::remove);
+            throw error;
+        } finally {
+            keys.clear();
+            icons.clear();
+        }
     }
 
     private static String packageName(Context context, Intent intent) {

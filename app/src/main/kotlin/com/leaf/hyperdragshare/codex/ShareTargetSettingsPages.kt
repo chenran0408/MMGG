@@ -49,7 +49,6 @@ import androidx.core.graphics.createBitmap
 import top.yukonga.miuix.kmp.basic.BasicComponent
 import top.yukonga.miuix.kmp.basic.Card
 import top.yukonga.miuix.kmp.basic.Checkbox
-import top.yukonga.miuix.kmp.basic.DropdownArrowEndAction
 import top.yukonga.miuix.kmp.basic.DropdownEntry
 import top.yukonga.miuix.kmp.basic.DropdownItem
 import top.yukonga.miuix.kmp.basic.Icon
@@ -60,16 +59,33 @@ import top.yukonga.miuix.kmp.basic.Text
 import top.yukonga.miuix.kmp.basic.TopAppBar
 import top.yukonga.miuix.kmp.icon.MiuixIcons
 import top.yukonga.miuix.kmp.icon.extended.More
+import top.yukonga.miuix.kmp.icon.extended.Sort
 import top.yukonga.miuix.kmp.menu.OverlayIconDropdownMenu
 import top.yukonga.miuix.kmp.squircle.squircleBackground
 import top.yukonga.miuix.kmp.theme.MiuixTheme
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import me.zhanghai.android.appiconloader.AppIconLoader
-import java.util.LinkedHashSet
 import kotlin.math.roundToInt
 
 private const val ORDER_LIST_INDEX_OFFSET = 1
+
+internal fun updateTargetVisibility(
+    hidden: Set<String>,
+    targetKeys: Collection<String>,
+    visible: Boolean,
+): Set<String> = if (visible) hidden - targetKeys else hidden + targetKeys
+
+internal fun reorderVisibleTargets(savedOrder: List<String>, visibleOrder: List<String>): List<String> {
+    val visibleKeys = visibleOrder.toHashSet()
+    val reordered = visibleOrder.iterator()
+    return buildList {
+        for (key in savedOrder) {
+            add(if (key in visibleKeys) reordered.next() else key)
+        }
+        addAll(reordered.asSequence())
+    }
+}
 
 @Composable
 internal fun VisibilityPage(
@@ -82,22 +98,22 @@ internal fun VisibilityPage(
     var expandedGroupKeys by remember { mutableStateOf(emptySet<String>()) }
     val scrollBehavior = MiuixScrollBehavior()
     val groups = pageData?.groups.orEmpty()
-    val allKeys = pageData?.targets?.mapNotNull { it.key() }.orEmpty()
+    val allKeys = remember(pageData) { pageData?.targets?.mapNotNull { it.key() }.orEmpty() }
     val bulkEntry = DropdownEntry(
         items = listOf(
             DropdownItem(
-                text = "全选",
+                text = "全部显示",
                 onClick = {
-                    persist { _ ->
-                        setHiddenTargetKeys(emptySet())
+                    persist { current ->
+                        setHiddenTargetKeys(updateTargetVisibility(current.hiddenTargetKeys, allKeys, true))
                     }
                 },
             ),
             DropdownItem(
-                text = "全不选",
+                text = "全部隐藏",
                 onClick = {
-                    persist { _ ->
-                        setHiddenTargetKeys(LinkedHashSet(allKeys))
+                    persist { current ->
+                        setHiddenTargetKeys(updateTargetVisibility(current.hiddenTargetKeys, allKeys, false))
                     }
                 },
             ),
@@ -180,20 +196,16 @@ internal fun VisibilityPage(
                                 },
                                 onGroupCheckedChange = { checked ->
                                     persist { current ->
-                                        val hidden = LinkedHashSet(current.hiddenTargetKeys)
-                                        group.targets.forEach { target ->
-                                            if (checked) hidden.remove(target.key())
-                                            else hidden.add(target.key())
-                                        }
-                                        setHiddenTargetKeys(hidden)
+                                        setHiddenTargetKeys(updateTargetVisibility(
+                                            current.hiddenTargetKeys, group.targets.map { it.key() }, checked,
+                                        ))
                                     }
                                 },
                                 onTargetCheckedChange = { target, checked ->
                                     persist { current ->
-                                        val hidden = LinkedHashSet(current.hiddenTargetKeys)
-                                        if (checked) hidden.remove(target.key())
-                                        else hidden.add(target.key())
-                                        setHiddenTargetKeys(hidden)
+                                        setHiddenTargetKeys(updateTargetVisibility(
+                                            current.hiddenTargetKeys, listOf(target.key()), checked,
+                                        ))
                                     }
                                 },
                             )
@@ -357,18 +369,28 @@ internal fun OrderPage(
     var iconBitmaps by remember { mutableStateOf<Map<String, Bitmap>>(emptyMap()) }
     val listState = rememberLazyListState()
     val currentPersist = rememberUpdatedState(persist)
+    var orderBeforeDrag by remember { mutableStateOf<List<ShareTarget>?>(null) }
     val dragDropState = rememberDragDropState(
         lazyListState = listState,
+        canDrag = { it - ORDER_LIST_INDEX_OFFSET in items.indices },
         onMove = { fromIndex, toIndex ->
             val from = fromIndex - ORDER_LIST_INDEX_OFFSET
-            val to = (toIndex - ORDER_LIST_INDEX_OFFSET).coerceAtLeast(0)
+            val to = toIndex - ORDER_LIST_INDEX_OFFSET
             if (from in items.indices && to in items.indices && from != to) {
+                if (orderBeforeDrag == null) orderBeforeDrag = items.toList()
                 items.add(to, items.removeAt(from))
             }
         },
-        onDragFinished = {
-            currentPersist.value { _ ->
-                setTargetOrder(items.map { it.key() })
+        onDragFinished = { cancelled ->
+            val startingOrder = orderBeforeDrag
+            orderBeforeDrag = null
+            if (cancelled && startingOrder != null) {
+                items.clear()
+                items.addAll(startingOrder)
+            } else if (!cancelled && items != startingOrder) {
+                currentPersist.value { current ->
+                    setTargetOrder(reorderVisibleTargets(current.targetOrder, items.map { it.key() }))
+                }
             }
         },
     )
@@ -376,6 +398,7 @@ internal fun OrderPage(
 
     LaunchedEffect(context, settings.hiddenTargetKeys) {
         loading = true
+        orderBeforeDrag = null
         val loadedSettings = settings
         val (queried, loadedIcons) = withContext(Dispatchers.IO) {
             val targets = querySettingsTargets(context)
@@ -411,7 +434,7 @@ internal fun OrderPage(
                 contentPadding = paddingValues,
             ) {
                 item(key = "order-title") {
-                    SmallTitle(text = "分享应用顺序")
+                    if (items.isNotEmpty()) SmallTitle(text = "长按应用拖动排序")
                 }
                 if (items.isEmpty()) {
                     item(key = "order-empty") {
@@ -447,8 +470,11 @@ internal fun OrderPage(
                                         )
                                     },
                                     endActions = {
-                                        DropdownArrowEndAction(
-                                            actionColor = MiuixTheme.colorScheme.onSurfaceVariantActions,
+                                        Icon(
+                                            imageVector = MiuixIcons.Sort,
+                                            contentDescription = null,
+                                            modifier = Modifier.size(22.dp),
+                                            tint = MiuixTheme.colorScheme.onSurfaceVariantActions,
                                         )
                                     },
                                 )

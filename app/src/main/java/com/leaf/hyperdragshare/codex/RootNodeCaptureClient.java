@@ -151,6 +151,9 @@ final class RootNodeCaptureClient {
         private final Process process;
         private final String connectionAttemptId;
         private final LinkedBlockingQueue<Reply> responses = new LinkedBlockingQueue<>();
+        private final RootRecordingActivity.Timeline recordings = new RootRecordingActivity.Timeline();
+        private float lastTouchX, lastTouchY;
+        private int lastUserId;
         private volatile boolean closed;
 
         private Session(Context context, Process process, String connectionAttemptId) {
@@ -186,6 +189,9 @@ final class RootNodeCaptureClient {
                                         CandidateHandler handler)
                 throws IOException, InterruptedException {
             if (closed) throw new IOException("Root node process has stopped; reload the Portal scope");
+            lastTouchX = x;
+            lastTouchY = y;
+            lastUserId = android.os.Process.myUid() / 100000;
             KeyguardManager keyguard = context.getSystemService(KeyguardManager.class);
             if (keyguard.isKeyguardLocked()) return null;
             DisplayMetrics metrics = context.getResources().getDisplayMetrics();
@@ -202,6 +208,7 @@ final class RootNodeCaptureClient {
                         .put("height", expectedHeight).put("blocked", new JSONArray(blockedPackages))
                         .put("early_candidate", !pressLookup).put("press_lookup", pressLookup)
                         .put("press_early", earlyCapture)
+                        .put("user_id", android.os.Process.myUid() / 100000)
                         .put("allow_text", allowText)
                         .put("allow_images", allowImages);
                 process.getOutputStream().write((request + "\n").getBytes(StandardCharsets.UTF_8));
@@ -361,22 +368,51 @@ final class RootNodeCaptureClient {
             try {
                 JSONObject request = new JSONObject().put("operation", "capture_image")
                         .put("package", source).put("window_id", windowId)
+                        .put("x", lastTouchX).put("y", lastTouchY).put("user_id", lastUserId)
                         .put("left", requestedBounds.left).put("top", requestedBounds.top)
-                        .put("right", requestedBounds.right).put("bottom", requestedBounds.bottom);
-                process.getOutputStream().write((request + "\n").getBytes(StandardCharsets.UTF_8));
-                process.getOutputStream().flush();
-                JSONObject result = awaitResponse();
-                if (!result.getBoolean("same_window")) return null;
-                byte[] encoded = Base64.decode(result.getString("image_base64"), Base64.DEFAULT);
-                Bitmap bitmap = BitmapFactory.decodeByteArray(encoded, 0, encoded.length);
+                        .put("right", requestedBounds.right).put("bottom", requestedBounds.bottom)
+                        .put("prefer_original", true);
+                Reply reply = requestImage(request);
+                JSONObject result = new JSONObject(reply.json);
+                if (imageWindowRejected(result)) return null;
+                Bitmap bitmap = null;
+                android.net.Uri mediaUri = null;
+                String mimeType = null;
+                if (result.optBoolean("media_encoded") && reply.media != null) {
+                    try {
+                        EncodedMedia media = EncodedMedia.decode(reply.media);
+                        bitmap = media.preview;
+                        mediaUri = ImageStagingClient.stageEncoded(context, media.bytes);
+                        mimeType = media.mimeType;
+                    } catch (Throwable error) {
+                        if (bitmap != null) bitmap.recycle();
+                        bitmap = null;
+                        DragShareLog.w(TAG, "original media unavailable error="
+                                + error.getClass().getSimpleName());
+                    }
+                }
                 if (bitmap == null) {
-                    DragShareLog.w(TAG, "image capture returned an undecodable image");
-                    return null;
+                    if (!result.has("image_base64") && result.optBoolean("media_encoded")) {
+                        result = new JSONObject(requestImage(request.put("prefer_original", false)).json);
+                        if (imageWindowRejected(result)) return null;
+                    }
+                    byte[] encoded = Base64.decode(result.getString("image_base64"), Base64.DEFAULT);
+                    bitmap = BitmapFactory.decodeByteArray(encoded, 0, encoded.length);
+                    if (bitmap == null) {
+                        DragShareLog.w(TAG, "image capture returned an undecodable image");
+                        return null;
+                    }
                 }
                 Bundle image = new Bundle();
                 image.putParcelable("bitmap", bitmap);
                 image.putParcelable("bounds", new Rect(result.getInt("left"), result.getInt("top"),
                         result.getInt("right"), result.getInt("bottom")));
+                if (mediaUri != null) {
+                    image.putParcelable("media_uri", mediaUri);
+                    image.putString("media_mime_type", mimeType);
+                }
+                image.putLong("screenshot_ms", result.optLong("screenshot_ms"));
+                image.putLong("verify_ms", result.optLong("verify_ms"));
                 return image;
             } catch (JSONException error) {
                 close();
@@ -385,6 +421,20 @@ final class RootNodeCaptureClient {
                 close();
                 throw error;
             }
+        }
+
+        private Reply requestImage(JSONObject request) throws IOException, InterruptedException {
+            process.getOutputStream().write((request + "\n").getBytes(StandardCharsets.UTF_8));
+            process.getOutputStream().flush();
+            return awaitReply();
+        }
+
+        private static boolean imageWindowRejected(JSONObject result) throws JSONException {
+            if (result.getBoolean("same_window")) return false;
+            DragShareLog.i(TAG, "image helper rejected reason=" + result.optString("reason")
+                    + " screenshot_ms=" + result.optLong("screenshot_ms")
+                    + " verify_ms=" + result.optLong("verify_ms"));
+            return true;
         }
 
         synchronized boolean isCurrentSource(String source) throws IOException, InterruptedException {
@@ -403,23 +453,54 @@ final class RootNodeCaptureClient {
             }
         }
 
+        boolean startedMicRecording(String source, long downTime, int userId) {
+            return !closed && recordings.startedSince(source, userId, downTime);
+        }
+
         private JSONObject awaitResponse() throws IOException, InterruptedException, JSONException {
+            return new JSONObject(awaitReply().json);
+        }
+
+        private Reply awaitReply() throws IOException, InterruptedException {
             Reply reply = responses.poll(RESPONSE_TIMEOUT_MILLIS, TimeUnit.MILLISECONDS);
             if (reply == null) throw new IOException("Root node response timed out");
             if (reply.error != null) throw reply.error;
-            return new JSONObject(reply.json);
+            return reply;
+        }
+
+        private void updateRecordings(JSONObject frame) throws JSONException {
+            JSONArray active = frame.getJSONArray("recordings");
+            java.util.Set<RootRecordingActivity.Recording> owners = new java.util.HashSet<>();
+            for (int i = 0; i < active.length(); i++) {
+                JSONArray item = active.getJSONArray(i);
+                owners.add(new RootRecordingActivity.Recording(
+                        item.getString(0), item.getInt(1), item.getInt(2)));
+            }
+            recordings.update(owners, frame.getLong("observed_at"));
         }
 
         private void readResponses(InputStream stream) {
             try (BufferedReader reader = new BufferedReader(new InputStreamReader(stream, StandardCharsets.UTF_8))) {
+                java.io.ByteArrayOutputStream media = new java.io.ByteArrayOutputStream();
                 String line;
                 while ((line = reader.readLine()) != null) {
                     if (line.length() > 4 * 1024 * 1024) throw new IOException("Root node response exceeds limit");
-                    responses.offer(new Reply(line, null));
+                    JSONObject frame = new JSONObject(line);
+                    if (frame.has("recordings")) {
+                        updateRecordings(frame);
+                    } else if (frame.has("media_chunk")) {
+                        RootMediaPipe.append(media, frame.getString("media_chunk"));
+                    } else {
+                        byte[] bytes = frame.optBoolean("media_encoded") ? media.toByteArray() : null;
+                        media.reset();
+                        responses.offer(new Reply(line, null, bytes));
+                    }
                 }
                 if (!closed) responses.offer(new Reply(null, new IOException("Root node process exited")));
-            } catch (IOException error) {
-                if (!closed) responses.offer(new Reply(null, error));
+            } catch (IOException | JSONException error) {
+                IOException failure = error instanceof IOException ? (IOException) error
+                        : new IOException("Invalid Root node media response", error);
+                if (!closed) responses.offer(new Reply(null, failure));
             }
         }
 
@@ -460,6 +541,8 @@ final class RootNodeCaptureClient {
         try {
             Rect verifiedBounds;
             boolean imageCropped = false;
+            android.net.Uri mediaUri = null;
+            String mediaMimeType = null;
             if (pressOcrRegion) {
                 Bundle captured = pressRegionCapture.capture(source, node.getInt("window_id"), bounds);
                 if (captured == null) return null;
@@ -475,6 +558,8 @@ final class RootNodeCaptureClient {
                 if (captured != null) {
                     screen = captured.getParcelable("bitmap", Bitmap.class);
                     verifiedBounds = captured.getParcelable("bounds", Rect.class);
+                    mediaUri = captured.getParcelable("media_uri", android.net.Uri.class);
+                    mediaMimeType = captured.getString("media_mime_type");
                     imageCropped = true;
                     DragShareLog.i(TAG, "image helper screenshot_ms="
                             + captured.getLong("screenshot_ms") + " verify_ms="
@@ -492,6 +577,11 @@ final class RootNodeCaptureClient {
             if (context.getSystemService(KeyguardManager.class).isKeyguardLocked()) {
                 DragShareLog.i(TAG, "image capture rejected source=" + source + " reason=screen_locked");
                 return null;
+            }
+            if (mediaUri != null) {
+                Bitmap image = screen;
+                screen = null;
+                return CapturedContent.stagedMediaImage(image, source, verifiedBounds, mediaUri, mediaMimeType);
             }
             if (imageCropped) {
                 Bitmap image = screen;
@@ -524,6 +614,10 @@ final class RootNodeCaptureClient {
     private static final class Reply {
         final String json;
         final IOException error;
-        Reply(String json, IOException error) { this.json = json; this.error = error; }
+        final byte[] media;
+        Reply(String json, IOException error) { this(json, error, null); }
+        Reply(String json, IOException error, byte[] media) {
+            this.json = json; this.error = error; this.media = media;
+        }
     }
 }

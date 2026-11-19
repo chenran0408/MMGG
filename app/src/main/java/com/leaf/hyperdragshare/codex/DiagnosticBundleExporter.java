@@ -6,6 +6,9 @@ import android.net.Uri;
 import com.leaf.hyperdragshare.gestures.config.ConfigStore;
 import com.leaf.hyperdragshare.gestures.diagnostics.CompatibilityReport;
 
+import io.github.libxposed.service.HookedTarget;
+import io.github.libxposed.service.XposedService;
+
 import java.io.BufferedReader;
 import java.io.File;
 import java.io.FileInputStream;
@@ -17,7 +20,10 @@ import java.text.SimpleDateFormat;
 import java.util.Date;
 import java.util.ArrayDeque;
 import java.util.Deque;
+import java.util.List;
 import java.util.Locale;
+import java.util.function.IntSupplier;
+import java.util.function.Supplier;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipOutputStream;
 
@@ -87,8 +93,43 @@ final class DiagnosticBundleExporter {
             }
         }
 
-        return writeBundle(directory, stateSummary, compatibility, compatibilityFailure,
+        XposedService service = HookFeatureService.INSTANCE.getService().getValue();
+        String targets = service == null ? "Xposed running targets unavailable (service not connected).\n"
+                : runningTargetSummary(service::getApiVersion, service::getRunningTargets);
+        String summary = nonEmpty(stateSummary, "State summary unavailable.") + "\n\n" + targets;
+        return writeBundle(directory, summary, compatibility, compatibilityFailure,
                 runtime, missingLogReason, fullDiagnostics);
+    }
+
+    static String runningTargetSummary(
+            IntSupplier readApiVersion, Supplier<List<HookedTarget>> readTargets) {
+        int apiVersion;
+        try {
+            apiVersion = readApiVersion.getAsInt();
+        } catch (RuntimeException error) {
+            return "Xposed running targets unavailable (API version query failed).\n";
+        }
+        StringBuilder out = new StringBuilder("Xposed API: ").append(apiVersion).append('\n');
+        if (apiVersion < XposedService.API_102) {
+            return out.append("Running targets unavailable (requires API 102).\n").toString();
+        }
+        List<HookedTarget> targets;
+        try {
+            targets = readTargets.get();
+        } catch (RuntimeException error) {
+            return out.append("Running targets unavailable (query failed).\n").toString();
+        }
+        if (targets.isEmpty()) {
+            return out.append("No running targets reported by the framework.\n").toString();
+        }
+        out.append("Running targets (framework code-version snapshot):\n");
+        for (HookedTarget target : targets) {
+            out.append("process=").append(target.getProcessName())
+                    .append(" pid=").append(target.getPid())
+                    .append(" loaded_version_code=").append(target.getLoadedVersionCode())
+                    .append(" state=").append(target.getState().name()).append('\n');
+        }
+        return out.toString();
     }
 
     /** Package-visible assembly seam keeps behavior tests independent of root and Android state. */

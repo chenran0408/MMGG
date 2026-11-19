@@ -131,6 +131,26 @@ public final class MiniFreeformMediaControllerTest {
         assertEquals(0.25f, volume.current, 0f);
     }
 
+    @Test public void unavailablePlayerOrFailedWriteKeepsTheOriginalUntilRestoreSucceeds() {
+        FakeVolume volume = new FakeVolume();
+        Object player = new Object();
+        volume.player = player;
+        volume.current = .65f;
+        var lease = new MiniFreeformMediaController.MuteLease();
+        lease.acquire("player.app", volume);
+        volume.player = null;
+        assertFalse(lease.release(volume));
+        assertTrue(lease.active());
+        volume.player = player;
+        volume.writeSuccess = false;
+        assertFalse(lease.release(volume));
+        assertTrue(lease.active());
+        volume.writeSuccess = true;
+        assertTrue(lease.release(volume));
+        assertFalse(lease.active());
+        assertEquals(.65f, volume.current, 0f);
+    }
+
     @Test public void muteLeaseDoesNotBecomeActiveWhenWriteFails() {
         FakeVolume volume = new FakeVolume();
         volume.player = new Object();
@@ -143,6 +163,34 @@ public final class MiniFreeformMediaControllerTest {
         assertFalse(lease.active());
         assertEquals(0.65f, volume.current, 0f);
         assertEquals(1, volume.writeCount);
+    }
+
+    @Test public void muteLeaseRestoresEveryMatchingPlayerAcrossPlaybackSnapshots() {
+        record Player(int id) {}
+        List<Player> active = new ArrayList<>(List.of(new Player(1), new Player(2)));
+        java.util.Map<Integer, Float> levels = new java.util.HashMap<>(
+                java.util.Map.of(1, .6f, 2, .6f, 3, .3f));
+        MiniFreeformMediaController.Volume volume = new MiniFreeformMediaController.Volume() {
+            @Override public float read(String pkg) { return levels.get(1); }
+            @Override public boolean write(String pkg, Object player, float level) {
+                levels.put(((Player) player).id(), level);
+                return true;
+            }
+            @Override public Object player(String pkg) { return active.get(0); }
+            @Override public List<Object> players(String pkg) { return new ArrayList<>(active); }
+            @Override public boolean samePlayer(Object first, Object second) {
+                return first.equals(second);
+            }
+        };
+        MiniFreeformMediaController.MuteLease lease = new MiniFreeformMediaController.MuteLease();
+        lease.acquire("player.app", volume);
+        assertEquals(0f, levels.get(2), 0f);
+        active.clear();
+        active.addAll(List.of(new Player(1), new Player(2), new Player(3)));
+        lease.release(volume);
+        assertEquals(.6f, levels.get(1), 0f);
+        assertEquals(.6f, levels.get(2), 0f);
+        assertEquals(.3f, levels.get(3), 0f);
     }
 
     @Test public void missingClientUidMethodDisablesPlayerOwnerLookup() {

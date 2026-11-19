@@ -31,6 +31,7 @@ public final class RootLeaseFailureTest {
             @Override public Bundle verifyWindow(String source, int windowId, Bundle bounds) { return null; }
             @Override public Bundle captureOcrRegion(String source, int windowId, Bundle bounds) { return null; }
             @Override public Bundle captureImage(String source, int windowId, Bundle bounds) { return null; }
+            @Override public boolean startedMicRecording(String source, long downTime) { return false; }
             @Override public boolean verifySource(String source) { return false; }
             @Override public Bundle insertTextAt(float x, float y, String text) { return null; }
             @Override public boolean isOpen() { return true; }
@@ -96,6 +97,7 @@ public final class RootLeaseFailureTest {
             @Override public Bundle captureImage(String source, int windowId, Bundle requestedBounds) {
                 throw new AssertionError("Excluded content must not be captured");
             }
+            @Override public boolean startedMicRecording(String source, long downTime) { return false; }
             @Override public boolean verifySource(String source) { return true; }
             @Override public Bundle insertTextAt(float x, float y, String text) { return null; }
             @Override public boolean isOpen() { return true; }
@@ -104,7 +106,8 @@ public final class RootLeaseFailureTest {
         SharedRootNodeCapture.Connection connection = new SharedRootNodeCapture.Connection(
                 RuntimeEnvironment.getApplication(), new Binder(), 10000, lease);
         SharedRootNodeCapture.Connection.PressResult result = connection.capturePress(
-                10, 10, Set.of("test.excluded"), true, false, true, source -> true);
+                10, 10, Set.of("test.excluded"), true, false, true, source -> true,
+                owner -> { throw new AssertionError("Excluded content cannot claim a press"); });
         assertTrue(result.policyExcluded);
         org.junit.Assert.assertNull(result.content);
     }
@@ -112,6 +115,48 @@ public final class RootLeaseFailureTest {
     @Test public void closedLeaseAndBusyRequestHaveDifferentLifecycles() throws InterruptedException {
         assertFailureKind(new IllegalStateException("process exited"), true);
         assertFailureKind(new IllegalStateException("another request is running"), false);
+    }
+
+    @Test public void semanticImageIsAnnouncedBeforeScreenshotButOcrRegionIsNot() throws Exception {
+        for (boolean ocr : new boolean[]{false, true}) {
+            java.util.concurrent.atomic.AtomicBoolean announced = new java.util.concurrent.atomic.AtomicBoolean();
+            android.graphics.Bitmap bitmap = android.graphics.Bitmap.createBitmap(2, 2,
+                    android.graphics.Bitmap.Config.ARGB_8888);
+            android.graphics.Rect bounds = new android.graphics.Rect(10, 10, 12, 12);
+            IRootNodeLease lease = new IRootNodeLease.Stub() {
+                @Override public Bundle capture(float x, float y, String[] blocked, boolean text, boolean images,
+                                                boolean press, boolean early, IRootNodeCandidate callback) {
+                    Bundle node = new Bundle();
+                    node.putString("package", "test.reader");
+                    node.putBoolean("image", true);
+                    node.putBoolean("press_ocr_region", ocr);
+                    node.putParcelable("bounds", bounds);
+                    return node;
+                }
+                private Bundle pixels() {
+                    org.junit.Assert.assertEquals(!ocr, announced.get());
+                    Bundle result = new Bundle();
+                    result.putParcelable("bounds", bounds);
+                    result.putParcelable("bitmap", bitmap);
+                    result.putBoolean("image_cropped", true);
+                    return result;
+                }
+                @Override public Bundle captureImage(String s, int id, Bundle b) { return pixels(); }
+                @Override public Bundle captureOcrRegion(String s, int id, Bundle b) { return pixels(); }
+                @Override public Bundle verifyWindow(String s, int id, Bundle b) { throw new AssertionError(); }
+                @Override public boolean startedMicRecording(String source, long downTime) { return false; }
+                @Override public boolean verifySource(String s) { return true; }
+                @Override public Bundle insertTextAt(float x, float y, String text) { return null; }
+                @Override public boolean isOpen() { return true; }
+                @Override public void close() {}
+            };
+            SharedRootNodeCapture.Connection connection = new SharedRootNodeCapture.Connection(
+                    RuntimeEnvironment.getApplication(), new Binder(), 10000, lease);
+            try {
+                assertTrue(connection.capturePress(10, 10, Set.of(), true, true, true,
+                        source -> true, owner -> announced.set(true)).content != null);
+            } finally { connection.close(); bitmap.recycle(); }
+        }
     }
 
     private void assertFailureKind(RuntimeException failure, boolean fatal) throws InterruptedException {
@@ -127,6 +172,7 @@ public final class RootLeaseFailureTest {
             @Override public Bundle captureImage(String source, int windowId, Bundle requestedBounds) {
                 return requestedBounds;
             }
+            @Override public boolean startedMicRecording(String source, long downTime) { return false; }
             @Override public boolean verifySource(String source) { return true; }
             @Override public Bundle insertTextAt(float x, float y, String text) { throw failure; }
             @Override public boolean isOpen() { return !fatal; }
@@ -135,7 +181,8 @@ public final class RootLeaseFailureTest {
         SharedRootNodeCapture.Connection connection = new SharedRootNodeCapture.Connection(
                 RuntimeEnvironment.getApplication(), new Binder(), 10000, lease);
         try {
-            connection.capturePress(10, 10, Set.of(), true, false, true, source -> true);
+            connection.capturePress(10, 10, Set.of(), true, false, true, source -> true,
+                    owner -> { throw new AssertionError("Failed content cannot claim a press"); });
             fail("Expected a failed request");
         } catch (IOException error) {
             if (fatal) assertTrue(error instanceof SharedRootNodeCapture.ConnectionFailedException);

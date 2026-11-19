@@ -1,5 +1,7 @@
 package com.leaf.hyperdragshare.gestures.xposed;
 
+import com.leaf.hyperdragshare.codex.HookFeatureFlags;
+
 import android.app.ActivityManager;
 import android.app.ActivityOptions;
 import android.content.ComponentName;
@@ -51,6 +53,7 @@ final class HyperOsFreeformBridge {
     private final Context context;
     private final ClassLoader classLoader;
     private final Handler mainHandler;
+    private final FullscreenLaunchAfterClose fullscreenLaunchAfterClose;
     private final Object taskLock = new Object();
     private final FreeformTaskRegistry tasks = new FreeformTaskRegistry();
     private final FreeformStormGuard stormGuard = FreeformStormGuard.processWide;
@@ -100,6 +103,7 @@ final class HyperOsFreeformBridge {
         this.context = context;
         this.classLoader = classLoader;
         this.mainHandler = mainHandler;
+        fullscreenLaunchAfterClose = new FullscreenLaunchAfterClose(mainHandler);
     }
 
     void setController(Object controller) {
@@ -118,7 +122,8 @@ final class HyperOsFreeformBridge {
     }
 
     boolean launch(RuntimeTarget target, GestureConfig config, Runnable onLaunchArmed) {
-        if (queueLaunchAfterSuspendingCurrent(target, config, onLaunchArmed)) return true;
+        if (HookFeatureFlags.startup().freeform()
+                && queueLaunchAfterSuspendingCurrent(target, config, onLaunchArmed)) return true;
         return launchNow(target, config, onLaunchArmed);
     }
 
@@ -265,7 +270,7 @@ final class HyperOsFreeformBridge {
                             isRotationLockedToPortrait(), requestedOrientation);
             Rect display = context.getSystemService(WindowManager.class)
                     .getCurrentWindowMetrics().getBounds();
-            boolean customBoundsEnabled = config.customWindowBoundsEnabledFor(
+            boolean customBoundsEnabled = HookFeatureFlags.startup().freeform() && config.customWindowBoundsEnabledFor(
                     display.width() > display.height());
             Rect launchBounds = customBoundsEnabled && !nativeLandscapeLaunch
                     ? customLaunchBounds(config, scale, nativeLaunchBounds) : null;
@@ -292,7 +297,7 @@ final class HyperOsFreeformBridge {
             ActivityManager.RunningTaskInfo existing = shortcutLaunch
                     && !HyperOsProfile.CURRENT.shortcutFreeformAlignment ? null
                     : findRunningTask(packageName, userId);
-            if (existing != null) {
+            if (existing != null && HookFeatureFlags.startup().freeform()) {
                 forceTaskResizable(existing.taskId);
                 if (HyperOsProfile.CURRENT.shortcutFreeformAlignment && shortcutLaunch
                         && launchBounds != null && !launchBounds.isEmpty()) {
@@ -640,6 +645,7 @@ final class HyperOsFreeformBridge {
             nativeLaunchBoundsByTaskId.remove(taskId);
             removeTaskLocked(taskId, "task vanished");
         }
+        fullscreenLaunchAfterClose.onTaskVanished(taskId);
     }
 
     Rect trackedBounds(boolean includeImeResizedContent) {
@@ -790,6 +796,81 @@ final class HyperOsFreeformBridge {
         if (!bounds.contains(copy)) bounds.add(copy);
     }
 
+    boolean isMiniEnlarged(Object info) {
+        try {
+            Rect base = rectCall(info, "getBounds");
+            float normal = normalMiniScale(info, base);
+            return normal > 0f && numberCall(info, "getFreeformScale", 0f) > normal * 1.05f;
+        } catch (RuntimeException | LinkageError | XposedHelpers.ClassNotFoundError
+                 | XposedHelpers.InvocationTargetError error) {
+            return false;
+        }
+    }
+
+    private float normalMiniScale(Object info, Rect base) {
+        if (base == null || base.isEmpty()) return 0f;
+        Class<?> utils = XposedHelpers.findClass("android.util.MiuiMultiWindowUtils", classLoader);
+        Object scale = XposedHelpers.callStaticMethod(utils, "getMiniFreeformScale", context,
+                booleanCall(info, "isLandscapeFreeform", false), base, packageName(info));
+        return scale instanceof Number ? ((Number) scale).floatValue() : 0f;
+    }
+
+    void toggleMiniScale(int taskId, Runnable unavailable) {
+        Object owner = controller;
+        if (owner == null) {
+            unavailable.run();
+            return;
+        }
+        try {
+            Executor shell = (Executor) XposedHelpers.getObjectField(owner, "mMainExecutor");
+            shell.execute(() -> {
+                Object info = taskInfo(taskId);
+                if (!MiniMediaControls.isTouchableMini(info)) return;
+                try {
+                    Rect base = rectCall(info, "getBounds");
+                    Rect visual = rectCall(info, "getScaledBounds");
+                    float normal = normalMiniScale(info, base);
+                    float current = numberCall(info, "getFreeformScale", 0f);
+                    if (base == null || visual == null || !(normal > 0f) || !(current > 0f)) {
+                        mainHandler.post(unavailable);
+                        return;
+                    }
+                    Rect display = context.getSystemService(WindowManager.class)
+                            .getCurrentWindowMetrics().getBounds();
+                    int margin = Math.round(8 * context.getResources().getDisplayMetrics().density);
+                    Rect frame = display.width() > 2 * margin && display.height() > 2 * margin
+                            ? new Rect(display.left + margin, display.top + margin,
+                            display.right - margin, display.bottom - margin) : display;
+                    float scale = Math.min(current > normal * 1.05f ? normal : normal * 1.5f,
+                            Math.min((float) frame.width() / base.width(),
+                                    (float) frame.height() / base.height()));
+                    int nextWidth = Math.round(base.width() * scale);
+                    int anchor = visual.centerX() > display.centerX() ? visual.right - nextWidth : visual.left;
+                    int left = Math.max(frame.left, Math.min(anchor, frame.right - nextWidth));
+                    int top = Math.max(frame.top, Math.min(visual.top,
+                            frame.bottom - Math.round(base.height() * scale)));
+                    Class<?> type = XposedHelpers.findClass(
+                            "com.android.wm.shell.multitasking.common.animation.MultiTaskingAnimTarget",
+                            classLoader);
+                    Object target = type.getDeclaredConstructor().newInstance();
+                    XposedHelpers.callMethod(target, "setAnimParam",
+                            new Rect(left, top, left + base.width(), top + base.height()),
+                            scale, scale, 0f);
+                    Object animation = XposedHelpers.getObjectField(owner, "mMiuiFreeformModeAnimation");
+                    // HyperOS mini transition used by MeiWindow v1.4.7.
+                    XposedHelpers.callMethod(animation, "startGestureAnimation", 11, info, target);
+                } catch (ReflectiveOperationException | RuntimeException | LinkageError
+                         | XposedHelpers.ClassNotFoundError | XposedHelpers.InvocationTargetError error) {
+                    Log.e("Cannot scale mini task=" + taskId, error);
+                    mainHandler.post(unavailable);
+                }
+            });
+        } catch (RuntimeException | LinkageError error) {
+            Log.e("Cannot dispatch mini task resize=" + taskId, error);
+            unavailable.run();
+        }
+    }
+
     private boolean isTaskAnimating(int taskId) {
         Object owner = controller;
         if (owner == null) return false;
@@ -809,8 +890,11 @@ final class HyperOsFreeformBridge {
         }
     }
 
-    boolean dismissTracked() {
-        int taskId = interactionTaskId();
+    void launchFullscreenAfterClose(Runnable launch) {
+        fullscreenLaunchAfterClose.launch(interactionTaskId(), this::dismissTask, launch);
+    }
+
+    boolean dismissTask(int taskId) {
         if (taskId < 0 || controller == null) return false;
         synchronized (taskLock) {
             clearInteractiveTaskLocked(taskId, "native close requested");
@@ -1243,7 +1327,10 @@ final class HyperOsFreeformBridge {
     }
 
     boolean fullscreenTracked() {
-        int taskId = interactionTaskId();
+        return fullscreenTask(interactionTaskId());
+    }
+
+    boolean fullscreenTask(int taskId) {
         if (taskId < 0 || controller == null) return false;
         try {
             synchronized (taskLock) {
@@ -1846,6 +1933,7 @@ final class HyperOsFreeformBridge {
     }
 
     private boolean customWindowBoundsEnabledForCurrentDisplay() {
+        if (!HookFeatureFlags.startup().freeform()) return false;
         Rect display = context.getSystemService(WindowManager.class)
                 .getCurrentWindowMetrics().getBounds();
         return latestConfig.customWindowBoundsEnabledFor(

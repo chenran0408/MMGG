@@ -59,7 +59,8 @@ final class DragShareActions {
             return;
         }
         if (target.isSaveToLocal()) {
-            saveImageLocally(payload.bitmap, stagedUri, operation);
+            boolean hasSourceMedia = payload.encodedImage != null || payload.mediaUri != null;
+            saveImageLocally(payload.bitmap, stagedUri, payload.mimeType(), hasSourceMedia, operation);
             return;
         }
         if (target.isCopyToClipboard()) {
@@ -106,7 +107,6 @@ final class DragShareActions {
                 StashClient.put(context, payload, stagedImage);
                 OperationTrace.event(operation, "stash", "completed", stagedImage);
                 log("stored content in stash kind=" + (payload.isImage() ? "image" : "text"));
-                mainHandler.post(() -> showToast("已存入中转站"));
             } catch (IOException | SecurityException | IllegalStateException error) {
                 failed(operation, "stash", error);
                 mainHandler.post(() -> showToast("存入中转站失败：" + error.getMessage(), Toast.LENGTH_LONG));
@@ -182,17 +182,24 @@ final class DragShareActions {
         }
     }
 
-    private void saveImageLocally(Bitmap bitmap, Uri stagedImage, String operation) {
-        if (bitmap == null || bitmap.isRecycled()) {
+    private void saveImageLocally(Bitmap bitmap, Uri stagedImage, String mimeType,
+            boolean hasSourceMedia, String operation) {
+        if ((!hasSourceMedia || stagedImage == null) && (bitmap == null || bitmap.isRecycled())) {
             OperationTrace.event(operation, "local_save", "rejected_bitmap_unavailable", stagedImage);
             showToast("保存图片失败");
             return;
         }
         Thread worker = new Thread(() -> {
             try {
-                LocalImageSaver.save(context, bitmap);
-                OperationTrace.event(operation, "local_save", "completed", stagedImage);
-                log("saved image as PNG");
+                if (hasSourceMedia && stagedImage != null) {
+                    LocalImageSaver.save(context, stagedImage, mimeType);
+                    OperationTrace.event(operation, "local_save", "completed_source", stagedImage);
+                    log("saved original image source");
+                } else {
+                    LocalImageSaver.save(context, bitmap);
+                    OperationTrace.event(operation, "local_save", "completed_preview_png");
+                    log("saved image preview as PNG");
+                }
                 traceAccessibility("local save succeeded");
                 mainHandler.post(() -> showToast("已保存到本地", Toast.LENGTH_LONG));
             } catch (Throwable error) {

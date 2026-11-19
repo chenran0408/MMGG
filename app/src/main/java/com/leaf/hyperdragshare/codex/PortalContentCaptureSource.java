@@ -1,7 +1,6 @@
 package com.leaf.hyperdragshare.codex;
 
 import android.graphics.Bitmap;
-import android.graphics.BitmapFactory;
 import android.net.Uri;
 import android.graphics.Point;
 import android.graphics.PointF;
@@ -10,26 +9,30 @@ import android.os.Bundle;
 import android.os.Parcelable;
 
 import java.net.URI;
-import java.net.HttpURLConnection;
-import java.net.URL;
-import java.io.InputStream;
 import java.io.IOException;
 import java.util.Map;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
-import java.util.concurrent.Future;
+import java.util.concurrent.FutureTask;
+import java.util.concurrent.LinkedBlockingQueue;
+import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
-import java.util.concurrent.TimeoutException;
 import java.util.function.Consumer;
 
 import com.leaf.hyperdragshare.compat.xposed.XposedHelpers;
 
 /** The only adapter allowed to read Taplus' private fields and methods. */
 final class PortalContentCaptureSource {
-    private static final long ORIGINAL_IMAGE_WAIT_MS = 250L;
-    private static final ExecutorService ORIGINAL_IMAGE_EXECUTOR =
-            Executors.newCachedThreadPool(runnable -> {
+    private static final ThreadPoolExecutor ORIGINAL_IMAGE_EXECUTOR =
+            new ThreadPoolExecutor(2, 2, 0L, TimeUnit.MILLISECONDS,
+                    new LinkedBlockingQueue<>(), runnable -> {
                 Thread thread = new Thread(runnable, "dragshare-portal-image");
+                thread.setDaemon(true);
+                return thread;
+            });
+    private static final ExecutorService ORIGINAL_IMAGE_ABORT_EXECUTOR =
+            Executors.newCachedThreadPool(runnable -> {
+                Thread thread = new Thread(runnable, "dragshare-portal-image-abort");
                 thread.setDaemon(true);
                 return thread;
             });
@@ -114,27 +117,16 @@ final class PortalContentCaptureSource {
         }
     }
 
-    /**
-     * Captures the result passed by Taplus 5.1.5's pick callback. The callback
-     * argument is authoritative for this gesture; static service fields are
-     * intentionally not consulted when it is present because they may still
-     * contain the previous pick.
-     */
-    static CapturedContent capture(
-            Object taplusService,
-            DragShareSettings settings,
-            Object catcherResult) {
-        if (catcherResult == null) {
-            return capture(taplusService, settings);
-        }
-        return captureFromCatcherResult(taplusService, settings, catcherResult);
-    }
+    record ImageReference(String url, String sourcePackage, Rect bounds) {}
+    record Pick(CapturedContent preview, ImageReference original) {}
 
-    private static CapturedContent captureFromCatcherResult(
-            Object taplusService,
-            DragShareSettings settings,
-            Object catcherResult) {
-        if (taplusService == null || catcherResult == null) {
+    /** The callback result takes precedence over service fields from a previous pick. */
+    static Pick capturePick(Object taplusService, DragShareSettings settings, Object catcherResult) {
+        if (catcherResult == null) {
+            CapturedContent legacy = capture(taplusService, settings);
+            return legacy == null ? null : new Pick(legacy, null);
+        }
+        if (taplusService == null) {
             return null;
         }
         Class<?> serviceClass = taplusService.getClass();
@@ -154,6 +146,11 @@ final class PortalContentCaptureSource {
                 return null;
             }
 
+            // Diagnostic only: record the shape of the current image result so
+            // we can tell whether Portal exposed a media reference or only a
+            // rendered preview. Never log payload text or URI query values.
+            traceImagePayloadShape(catcherResult);
+
             Object textParams = XposedHelpers.callMethod(catcherResult, "getParams", "text_pick");
             if (textParams instanceof Map) {
                 Map<?, ?> values = (Map<?, ?>) textParams;
@@ -163,12 +160,12 @@ final class PortalContentCaptureSource {
                     CapturedContent content = CapturedContent.text(
                             text, sourcePackage, textBounds == null ? sourceBounds : textBounds);
                     traceCaptureOutcome(sourcePackage, "accepted_text_callback");
-                    return content;
+                    return new Pick(content, null);
                 }
             }
 
             Bitmap bestBitmap = null;
-            Bitmap urlBitmap = null;
+            String imageUrl = null;
             Rect viewRect = null;
             Object imageParams = XposedHelpers.callMethod(catcherResult, "getParams", "image_pick");
             if (imageParams instanceof Map) {
@@ -178,12 +175,7 @@ final class PortalContentCaptureSource {
                 if (mode instanceof Bundle) {
                     Bundle imageMode = (Bundle) mode;
                     bestBitmap = largerBitmap(bestBitmap, imageMode.get("viewBitmap"), "viewBitmap");
-                    String imageUrl = imageMode.getString("imgUrl");
-                    if (isSupportedImageReference(imageUrl)) {
-                        Bitmap original = loadPortalImage(taplusService, imageUrl);
-                        urlBitmap = original;
-                        bestBitmap = largerBitmap(bestBitmap, original, "imgUrl");
-                    }
+                    imageUrl = imageMode.getString("imgUrl");
                     viewRect = rectFrom(imageMode);
                 }
             }
@@ -198,22 +190,17 @@ final class PortalContentCaptureSource {
             } catch (RuntimeException ignored) {
                 // The image_pick map remains sufficient on supported builds.
             }
-            // Prefer the media reference over a same-sized rendered preview,
-            // which may include rounded clipping or overlay chrome.
-            if (urlBitmap != null && !urlBitmap.isRecycled()
-                    && (bestBitmap == null || pixelCount(urlBitmap) >= pixelCount(bestBitmap))) {
-                bestBitmap = urlBitmap;
-            }
-            if (bestBitmap == null || bestBitmap.isRecycled()) {
-                traceCaptureOutcome(sourcePackage, "missing_callback_image");
-                return null;
-            }
-            Bitmap snapshot = bestBitmap.copy(Bitmap.Config.ARGB_8888, false);
-            CapturedContent content = CapturedContent.portalMediaImage(
-                    snapshot, sourcePackage, viewRect == null ? sourceBounds : viewRect);
-            traceCaptureOutcome(sourcePackage, content == null
-                    ? "missing_callback_image" : "accepted_image_callback");
-            return content;
+            Rect bounds = viewRect == null ? sourceBounds : viewRect;
+            ImageReference original = settings.isSharingEnabled(true) && isSupportedImageReference(imageUrl)
+                    ? new ImageReference(normalizeImageUrl(imageUrl), sourcePackage,
+                            bounds == null ? null : new Rect(bounds)) : null;
+            CapturedContent preview = bestBitmap == null || bestBitmap.isRecycled() ? null
+                    : CapturedContent.portalMediaImage(bestBitmap.copy(Bitmap.Config.ARGB_8888, false),
+                            sourcePackage, bounds);
+            traceCaptureOutcome(sourcePackage, preview == null
+                    ? (original == null ? "missing_callback_image" : "accepted_image_reference")
+                    : "accepted_image_callback");
+            return preview == null && original == null ? null : new Pick(preview, original);
         } catch (Throwable error) {
             traceCaptureOutcome(sourcePackage, "callback_read_error");
             DragShareLog.w("DragShare/PortalCapture",
@@ -258,56 +245,168 @@ final class PortalContentCaptureSource {
         return pixelCount(bitmap) > pixelCount(current) ? bitmap : current;
     }
 
+    private static void traceImagePayloadShape(Object catcherResult) {
+        try {
+            Object imageParams = XposedHelpers.callMethod(catcherResult, "getParams", "image_pick");
+            if (!(imageParams instanceof Map)) {
+                DragShareLog.i("DragShare/PortalCapture",
+                        "image payload shape params=" + describeType(imageParams));
+                return;
+            }
+            Map<?, ?> values = (Map<?, ?>) imageParams;
+            DragShareLog.i("DragShare/PortalCapture",
+                    "image payload keys=" + safeKeys(values) + " fields=" + describeFields(values));
+            Object mode = values.get("image_pick_mode");
+            if (mode instanceof Bundle) {
+                Bundle bundle = (Bundle) mode;
+                DragShareLog.i("DragShare/PortalCapture",
+                        "image mode keys=" + bundle.keySet() + " fields=" + describeBundle(bundle));
+            } else if (mode != null) {
+                DragShareLog.i("DragShare/PortalCapture",
+                        "image mode type=" + describeType(mode));
+            }
+            Object propertyMap = XposedHelpers.callMethod(catcherResult, "getPropertyMap");
+            if (propertyMap instanceof Map) {
+                Map<?, ?> properties = (Map<?, ?>) propertyMap;
+                DragShareLog.i("DragShare/PortalCapture",
+                        "image property keys=" + safeKeys(properties)
+                                + " fields=" + describeFields(properties));
+            } else if (propertyMap != null) {
+                DragShareLog.i("DragShare/PortalCapture",
+                        "image property type=" + describeType(propertyMap));
+            }
+        } catch (Throwable error) {
+            DragShareLog.i("DragShare/PortalCapture",
+                    "image payload shape unavailable error=" + error.getClass().getSimpleName());
+        }
+    }
+
+    private static String safeKeys(Map<?, ?> values) {
+        StringBuilder result = new StringBuilder("[");
+        boolean first = true;
+        int count = 0;
+        for (Object key : values.keySet()) {
+            if (count++ >= 32) {
+                result.append(",...");
+                break;
+            }
+            if (!first) result.append(',');
+            first = false;
+            result.append(String.valueOf(key));
+        }
+        return result.append(']').toString();
+    }
+
+    private static String describeFields(Map<?, ?> values) {
+        StringBuilder result = new StringBuilder("[");
+        boolean first = true;
+        int count = 0;
+        for (Map.Entry<?, ?> entry : values.entrySet()) {
+            if (count++ >= 32) {
+                result.append(",...");
+                break;
+            }
+            if (!first) result.append(',');
+            first = false;
+            result.append(String.valueOf(entry.getKey())).append('=').append(describeValue(
+                    String.valueOf(entry.getKey()), entry.getValue()));
+        }
+        return result.append(']').toString();
+    }
+
+    private static String describeBundle(Bundle bundle) {
+        StringBuilder result = new StringBuilder("[");
+        boolean first = true;
+        int count = 0;
+        for (String key : bundle.keySet()) {
+            if (count++ >= 32) {
+                result.append(",...");
+                break;
+            }
+            if (!first) result.append(',');
+            first = false;
+            result.append(key).append('=').append(describeValue(key, bundle.get(key)));
+        }
+        return result.append(']').toString();
+    }
+
+    private static String describeValue(String key, Object value) {
+        if (value == null) return "null";
+        if (value instanceof Bitmap) {
+            Bitmap bitmap = (Bitmap) value;
+            return "Bitmap(" + bitmap.getWidth() + 'x' + bitmap.getHeight()
+                    + (bitmap.isRecycled() ? ",recycled" : "") + ')';
+        }
+        if (value instanceof String || value instanceof CharSequence) {
+            String text = value.toString();
+            if (looksLikeReferenceKey(key)) return referenceShape(text);
+            return "String(len=" + text.length() + ')';
+        }
+        if (value instanceof Uri) return referenceShape(value.toString());
+        if (value instanceof Bundle) return "Bundle(keys=" + ((Bundle) value).keySet() + ')';
+        if (value instanceof Map) return "Map(size=" + ((Map<?, ?>) value).size() + ')';
+        if (value instanceof Parcelable) return "Parcelable(" + value.getClass().getSimpleName() + ')';
+        return describeType(value);
+    }
+
+    private static String describeType(Object value) {
+        return value == null ? "null" : value.getClass().getSimpleName();
+    }
+
+    private static boolean looksLikeReferenceKey(String key) {
+        String lower = key == null ? "" : key.toLowerCase(java.util.Locale.US);
+        return lower.contains("url") || lower.contains("uri") || lower.contains("path")
+                || lower.contains("file") || lower.contains("src") || lower.contains("ref")
+                || lower.contains("uuid");
+    }
+
+    private static String referenceShape(String raw) {
+        if (raw == null || raw.isEmpty()) return "ref(empty)";
+        try {
+            Uri uri = Uri.parse(raw.startsWith("//") ? "http:" + raw : raw);
+            String scheme = uri.getScheme();
+            String host = uri.getHost();
+            String path = uri.getPath();
+            String extension = "";
+            if (path != null) {
+                int dot = path.lastIndexOf('.');
+                if (dot >= 0 && dot + 1 < path.length() && dot >= path.lastIndexOf('/')) {
+                    extension = path.substring(dot + 1).toLowerCase(java.util.Locale.US);
+                    if (extension.length() > 8) extension = "long";
+                }
+            }
+            return "ref(scheme=" + (scheme == null ? "none" : scheme)
+                    + ",host=" + (host == null ? "none" : "present")
+                    + ",path=" + (path == null ? "none" : "present")
+                    + ",ext=" + (extension.isEmpty() ? "none" : extension)
+                    + ",query=" + (uri.getQuery() == null ? "none" : "present") + ')';
+        } catch (RuntimeException error) {
+            return "ref(invalid,len=" + raw.length() + ')';
+        }
+    }
+
     private static long pixelCount(Bitmap bitmap) {
         return (long) bitmap.getWidth() * bitmap.getHeight();
     }
 
-    private static Bitmap loadPortalImage(Object taplusService, String url) {
-        if (!(taplusService instanceof android.content.Context)) return null;
-        String normalized = url.startsWith("//") ? "http:" + url : url;
-        Future<Bitmap> request = ORIGINAL_IMAGE_EXECUTOR.submit(
-                () -> loadPortalImageUnbounded(taplusService, normalized));
+    private static PortalMediaLoader.Result loadPortalImageUnbounded(Object taplusService, String normalized,
+            PortalMediaLoader.Cancellation cancellation) {
         try {
-            return request.get(ORIGINAL_IMAGE_WAIT_MS, TimeUnit.MILLISECONDS);
-        } catch (TimeoutException timeout) {
-            request.cancel(true);
-            DragShareLog.i("DragShare/PortalCapture",
-                    "Portal original image timed out after " + ORIGINAL_IMAGE_WAIT_MS + "ms");
-            return null;
-        } catch (InterruptedException interrupted) {
-            request.cancel(true);
-            Thread.currentThread().interrupt();
-            return null;
-        } catch (java.util.concurrent.ExecutionException error) {
-            return null;
-        }
-    }
-
-    private static Bitmap loadPortalImageUnbounded(Object taplusService, String normalized) {
-        try {
+            cancellation.throwIfCancelled();
             android.content.Context context = (android.content.Context) taplusService;
             String scheme = Uri.parse(normalized).getScheme();
-            if ("http".equalsIgnoreCase(scheme) || "https".equalsIgnoreCase(scheme)) {
+            if ("http".equalsIgnoreCase(scheme) || "https".equalsIgnoreCase(scheme)
+                    || "content".equalsIgnoreCase(scheme) || "file".equalsIgnoreCase(scheme)
+                    || normalized.startsWith("/")) {
                 try {
-                    URL url = new URL(normalized);
-                    HttpURLConnection connection = (HttpURLConnection) url.openConnection();
-                    connection.setConnectTimeout(1200);
-                    connection.setReadTimeout(1800);
-                    connection.setInstanceFollowRedirects(true);
-                    connection.setRequestProperty("User-Agent", "MMGG-PortalCapture/1");
-                    connection.setRequestProperty("Accept", "image/avif,image/webp,image/apng,image/*,*/*;q=0.8");
-                    connection.setRequestProperty("Referer", url.getProtocol() + "://" + url.getHost() + "/");
-                    try (InputStream input = connection.getInputStream()) {
-                        Bitmap original = BitmapFactory.decodeStream(input);
-                        if (original != null && !original.isRecycled()) return original;
-                    } finally {
-                        connection.disconnect();
-                    }
+                    return PortalMediaLoader.load(context, normalized, cancellation);
                 } catch (IOException networkError) {
+                    if (cancellation.isCancelled()) return null;
                     DragShareLog.i("DragShare/PortalCapture",
                             "direct Portal image request failed; trying Taplus loader error="
                                     + networkError.getClass().getSimpleName());
                 }
+                cancellation.throwIfCancelled();
                 Class<?> iconManager = XposedHelpers.findClassIfExists(
                         "com.miui.contentextension.utils.IconManager",
                         taplusService.getClass().getClassLoader());
@@ -315,25 +414,17 @@ final class PortalContentCaptureSource {
                     android.content.Context appContext = context.getApplicationContext();
                     Object result = XposedHelpers.callStaticMethod(
                             iconManager, "loadImageSync", appContext == null ? context : appContext, normalized);
-                    if (result instanceof Bitmap && !((Bitmap) result).isRecycled()) {
-                        return (Bitmap) result;
+                    if (!cancellation.isCancelled() && result instanceof Bitmap
+                            && !((Bitmap) result).isRecycled()) {
+                        // Taplus uses Glide's original size, but its cached Bitmap is shared.
+                        return new PortalMediaLoader.Result(((Bitmap) result).copy(Bitmap.Config.ARGB_8888, false));
                     }
                 }
                 return null;
             }
-            if ("content".equalsIgnoreCase(scheme)) {
-                try (InputStream input = context.getContentResolver().openInputStream(Uri.parse(normalized))) {
-                    return input == null ? null : BitmapFactory.decodeStream(input);
-                }
-            }
-            if ("file".equalsIgnoreCase(scheme)) {
-                return BitmapFactory.decodeFile(Uri.parse(normalized).getPath());
-            }
-            if (normalized.startsWith("/")) {
-                return BitmapFactory.decodeFile(normalized);
-            }
             return null;
         } catch (Throwable error) {
+            if (cancellation.isCancelled()) return null;
             DragShareLog.w("DragShare/PortalCapture",
                     "Portal original image load failed error="
                             + error.getClass().getSimpleName());
@@ -341,30 +432,48 @@ final class PortalContentCaptureSource {
         }
     }
 
-    /** Loads a callback's original URL after the bounded capture path returned. */
-    static void loadOriginalImageAsync(Object taplusService, Object catcherResult,
-                                       Consumer<Bitmap> callback) {
-        if (!(taplusService instanceof android.content.Context)
-                || catcherResult == null || callback == null) return;
-        String imageUrl = imageUrlFromResult(catcherResult);
-        if (!isSupportedImageReference(imageUrl)) return;
-        String normalized = imageUrl.startsWith("//") ? "http:" + imageUrl : imageUrl;
-        ORIGINAL_IMAGE_EXECUTOR.execute(() -> {
-            Bitmap original = loadPortalImageUnbounded(taplusService, normalized);
-            if (original != null && !original.isRecycled()) {
-                callback.accept(original);
-            }
-        });
+    private static String normalizeImageUrl(String url) {
+        return url.startsWith("//") ? "http:" + url : url;
     }
 
-    private static String imageUrlFromResult(Object catcherResult) {
-        try {
-            Object params = XposedHelpers.callMethod(catcherResult, "getParams", "image_pick");
-            if (!(params instanceof Map)) return null;
-            Object mode = ((Map<?, ?>) params).get("image_pick_mode");
-            return mode instanceof Bundle ? ((Bundle) mode).getString("imgUrl") : null;
-        } catch (Throwable ignored) {
-            return null;
+    // One load per accepted source. Neither the host callback nor the UI waits on I/O.
+    static OriginalImageRequest loadOriginalImageAsync(Object service, ImageReference reference,
+                                                        Consumer<CapturedContent> callback) {
+        OriginalImageRequest request = new OriginalImageRequest(service, reference, callback);
+        ORIGINAL_IMAGE_EXECUTOR.execute(request.work);
+        return request;
+    }
+
+    static CapturedContent loadOriginalImage(Object service, ImageReference reference) {
+        return loadOriginalImage(service, reference, new PortalMediaLoader.Cancellation());
+    }
+
+    private static CapturedContent loadOriginalImage(Object service, ImageReference reference,
+                                                     PortalMediaLoader.Cancellation cancellation) {
+        PortalMediaLoader.Result result = loadPortalImageUnbounded(service, reference.url(), cancellation);
+        if (result == null || result.preview == null || result.preview.isRecycled()) return null;
+        return result.content(reference.sourcePackage(), reference.bounds());
+    }
+
+    static final class OriginalImageRequest {
+        private final PortalMediaLoader.Cancellation cancellation = new PortalMediaLoader.Cancellation();
+        private final FutureTask<Void> work;
+
+        private OriginalImageRequest(Object service, ImageReference reference,
+                                     Consumer<CapturedContent> callback) {
+            work = new FutureTask<>(() -> {
+                CapturedContent image = loadOriginalImage(service, reference, cancellation);
+                if (!cancellation.isCancelled()) callback.accept(image);
+                else if (image != null) image.bitmap.recycle();
+                return null;
+            });
+        }
+
+        void cancel() {
+            if (work.isDone()) return;
+            cancellation.cancel(ORIGINAL_IMAGE_ABORT_EXECUTOR);
+            work.cancel(true);
+            ORIGINAL_IMAGE_EXECUTOR.remove(work);
         }
     }
 

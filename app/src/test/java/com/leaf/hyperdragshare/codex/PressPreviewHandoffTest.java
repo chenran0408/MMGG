@@ -4,6 +4,7 @@ import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertNull;
+import static org.junit.Assert.assertSame;
 import static org.junit.Assert.assertTrue;
 
 import android.graphics.Bitmap;
@@ -204,6 +205,48 @@ public final class PressPreviewHandoffTest {
         }
     }
 
+    @Test public void portalCannotOverrideAnInFlightHoldControlExclusion() throws Exception {
+        Context context = RuntimeEnvironment.getApplication();
+        DragShareController controller = controller();
+        down(controller, 100L);
+        PressCaptureSource source = new PressCaptureSource(
+                context, null, controller, DragShareSettings.defaults());
+        field(source, "pointerDown").setBoolean(source, true);
+        field(source, "downTime").setLong(source, 100L);
+        ((PressTriggerDetector) field(source, "detector").get(source)).start(20f, 30f, 100L, 500L);
+        IRootNodeLease lease = (IRootNodeLease) java.lang.reflect.Proxy.newProxyInstance(
+                IRootNodeLease.class.getClassLoader(), new Class<?>[]{IRootNodeLease.class},
+                (proxy, method, args) -> switch (method.getName()) {
+                    case "capture" -> {
+                        android.os.Bundle reason = new android.os.Bundle();
+                        reason.putString(RootNodeCaptureClient.KEY_CAPTURE_REASON, "excluded_hold_control");
+                        yield reason;
+                    }
+                    case "asBinder" -> new android.os.Binder();
+                    case "close" -> null;
+                    default -> throw new AssertionError(method.getName());
+                });
+        field(source, "nodeSession").set(source, new SharedRootNodeCapture.Connection(
+                context, new android.os.Binder(), android.os.Process.myUid(), lease));
+        try {
+            var lookup = PressCaptureSource.class.getDeclaredMethod("lookup");
+            lookup.setAccessible(true);
+            lookup.invoke(source);
+            assertTrue(source.acceptPortalContent(CapturedContent.text(
+                    "按住说话", "com.ss.android.ugc.aweme", null)));
+            assertFalse(field(source, "captureCandidateReady").getBoolean(source));
+            ((java.util.concurrent.ExecutorService) field(source, "worker").get(source))
+                    .submit(() -> {}).get(5, java.util.concurrent.TimeUnit.SECONDS);
+            ShadowLooper.shadowMainLooper().idle();
+            assertFalse(field(source, "pointerDown").getBoolean(source));
+            assertNull(field(source, "portalAwaitingControlCheck").get(source));
+        } finally {
+            source.stop();
+            controller.destroy();
+            ShadowLooper.shadowMainLooper().idle();
+        }
+    }
+
     @Test public void actualPortalImageReplacesAnActiveThumbnailPreview() throws Exception {
         Context context = RuntimeEnvironment.getApplication();
         registerShareProvider(context);
@@ -354,6 +397,44 @@ public final class PressPreviewHandoffTest {
         } finally {
             controller.destroy();
             if (!bitmap.isRecycled()) bitmap.recycle();
+            ShadowLooper.shadowMainLooper().idle();
+        }
+    }
+
+    @Test public void smallerReferencedMediaReplacesLargerNodePreview() throws Exception {
+        DragShareController controller = controller();
+        down(controller, 100L);
+        CapturedContent crop = CapturedContent.nodeImage(
+                Bitmap.createBitmap(8, 8, Bitmap.Config.ARGB_8888), "test.app", new Rect(0, 0, 8, 8));
+        CapturedContent media = CapturedContent.referencedMediaImage(
+                Bitmap.createBitmap(2, 6, Bitmap.Config.ARGB_8888), "test.app", crop.sourceBounds);
+        CapturedContent largerCrop = CapturedContent.nodeImage(
+                Bitmap.createBitmap(16, 16, Bitmap.Config.ARGB_8888), "test.app", crop.sourceBounds);
+        try {
+            controller.showPendingImagePreview(crop, 20f, 30f,
+                    DragShareSettings.defaults(), 100L, true);
+            ShadowLooper.shadowMainLooper().idle();
+            Object window = field(controller, "modernPreviewWindow").get(controller);
+            Object view = field(controller, "previewView").get(controller);
+            Object params = field(controller, "previewParams").get(controller);
+            assertNotNull(window);
+            assertTrue(controller.replacePendingImagePreview(media, 100L));
+            ShadowLooper.shadowMainLooper().idle();
+            assertSame(window, field(controller, "modernPreviewWindow").get(controller));
+            assertSame(view, field(controller, "previewView").get(controller));
+            assertSame(params, field(controller, "previewParams").get(controller));
+            var image = (android.widget.ImageView) field(view, "previewImage").get(view);
+            assertSame(media.bitmap, ((android.graphics.drawable.BitmapDrawable) image.getDrawable()).getBitmap());
+            assertSame(media, field(controller, "pendingImagePreview").get(controller));
+            assertTrue(crop.bitmap.isRecycled());
+            assertFalse(media.bitmap.isRecycled());
+            assertFalse("larger screenshot cannot displace reference bytes",
+                    CapturedContent.shouldReplaceImage(media, largerCrop));
+        } finally {
+            controller.destroy();
+            if (!crop.bitmap.isRecycled()) crop.bitmap.recycle();
+            if (!media.bitmap.isRecycled()) media.bitmap.recycle();
+            largerCrop.bitmap.recycle();
             ShadowLooper.shadowMainLooper().idle();
         }
     }

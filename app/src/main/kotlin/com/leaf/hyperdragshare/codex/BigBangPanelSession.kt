@@ -480,7 +480,8 @@ internal class BigBangPanelSession(private val context: Context, private val act
             }
             BigBangMoreAction.UndoEdit -> {
                 val state = undoEditState ?: return
-                open(state.getString(SAVED_TEXT).orEmpty(), launchTouchX, launchTouchY, state)
+                open(state.getString(SAVED_TEXT).orEmpty(), launchTouchX, launchTouchY, state,
+                    dragPreview = dragPreviewEnabled)
             }
             BigBangMoreAction.TextSize -> {
                 textSizeSp = BigBangSettings.nextTextSizeSp(textSizeSp)

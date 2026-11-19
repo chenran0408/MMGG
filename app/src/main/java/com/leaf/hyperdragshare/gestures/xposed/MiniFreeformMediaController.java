@@ -53,6 +53,12 @@ final class MiniFreeformMediaController {
         /** Returns true only when the platform call completed successfully. */
         boolean write(String packageName, Object player, float volume);
         Object player(String packageName);
+        default boolean hasPackageVolume() { return false; }
+        default boolean samePlayer(Object first, Object second) { return first == second; }
+        default List<Object> players(String packageName) {
+            Object player = player(packageName);
+            return player == null ? java.util.List.of() : java.util.List.of(player);
+        }
     }
 
     static final class ControllerSessionSource implements SessionSource {
@@ -177,6 +183,7 @@ final class MiniFreeformMediaController {
         private final Method readMethod;
         private final Method writeMethod;
         private final Method clientUidMethod;
+        private final Method playerIdMethod;
 
         XiaomiPlayerVolume(Context context, String packageName) {
             audioManager = context.getSystemService(AudioManager.class);
@@ -200,15 +207,33 @@ final class MiniFreeformMediaController {
             readMethod = read;
             writeMethod = write;
             clientUidMethod = ownerMethod;
+            playerIdMethod = resolvePlaybackMethod(AudioPlaybackConfiguration.class, "getPlayerInterfaceId");
         }
 
         static Method resolveClientUidMethod(Class<?> type) {
+            return resolvePlaybackMethod(type, "getClientUid");
+        }
+
+        private static Method resolvePlaybackMethod(Class<?> type, String name) {
             try {
-                Method method = type.getDeclaredMethod("getClientUid");
+                Method method = type.getDeclaredMethod(name);
                 method.setAccessible(true);
                 return method;
             } catch (NoSuchMethodException | SecurityException error) {
                 return null;
+            }
+        }
+
+        @Override public boolean hasPackageVolume() { return true; }
+
+        @Override public boolean samePlayer(Object first, Object second) {
+            if (first == second) return true;
+            if (first == null || second == null || playerIdMethod == null) return false;
+            try {
+                return playerIdMethod.invoke(first).equals(playerIdMethod.invoke(second));
+            } catch (ReflectiveOperationException error) {
+                Log.e("Cannot compare audio players", error);
+                return false;
             }
         }
 
@@ -235,7 +260,13 @@ final class MiniFreeformMediaController {
         }
 
         @Override public Object player(String packageName) {
-            if (appUid < 0 || clientUidMethod == null) return null;
+            List<Object> players = players(packageName);
+            return players.isEmpty() ? null : players.get(0);
+        }
+
+        @Override public List<Object> players(String packageName) {
+            if (appUid < 0 || clientUidMethod == null) return java.util.List.of();
+            List<Object> players = new java.util.ArrayList<>();
             try {
                 List<AudioPlaybackConfiguration> active = audioManager.getActivePlaybackConfigurations();
                 if (active != null) {
@@ -243,50 +274,77 @@ final class MiniFreeformMediaController {
                         if (item == null) continue;
                         Object owner = clientUidMethod.invoke(item);
                         if (owner instanceof Number && ((Number) owner).intValue() == appUid) {
-                            return item;
+                            players.add(item);
                         }
                     }
                 }
             } catch (ReflectiveOperationException | RuntimeException error) {
                 Log.e("Cannot find player volume owner package=" + packageName, error);
             }
-            return null;
+            return players;
         }
     }
 
     static final class MuteLease {
         private String packageName;
-        private Object player;
+        private List<Object> players = java.util.List.of();
         private float original = Float.NaN;
 
         boolean active() { return packageName != null; }
 
         void acquire(String packageName, Volume volume) {
             if (active()) return;
-            Object candidate = volume.player(packageName);
+            List<Object> candidates = volume.players(packageName);
             float current = volume.read(packageName);
-            if (candidate == null || !Float.isFinite(current) || current <= 0f) return;
-            if (!volume.write(packageName, candidate, 0f)) return;
+            if (candidates.isEmpty() || !Float.isFinite(current) || current <= 0f) return;
+            List<Object> changed = new java.util.ArrayList<>();
+            for (Object candidate : candidates) {
+                if (!volume.write(packageName, candidate, 0f)) {
+                    for (Object player : changed) volume.write(packageName, player, current);
+                    return;
+                }
+                changed.add(candidate);
+            }
             float muted = volume.read(packageName);
             if (!Float.isFinite(muted) || muted != 0f) {
                 // Do not claim a lease when the write could not be observed.
-                volume.write(packageName, candidate, current);
+                for (Object player : changed) volume.write(packageName, player, current);
                 return;
             }
             this.packageName = packageName;
-            this.player = candidate;
+            players = changed;
             original = current;
         }
 
-        void release(Volume volume) {
-            if (!active()) return;
-            Object currentPlayer = volume.player(packageName);
-            if (player == currentPlayer && volume.read(packageName) == 0f)
-                volume.write(packageName, player, original);
+        boolean release(Volume volume) {
+            if (!active()) return true;
+            float currentLevel = volume.read(packageName);
+            if (!Float.isFinite(currentLevel)) return false;
+            if (currentLevel == 0f) {
+                List<Object> currentPlayers = volume.players(packageName);
+                List<Object> owners = new java.util.ArrayList<>();
+                for (Object current : currentPlayers) {
+                    if (volume.hasPackageVolume()
+                            || players.stream().anyMatch(previous -> volume.samePlayer(previous, current))) {
+                        owners.add(current);
+                    }
+                }
+                if (owners.isEmpty()) return false;
+                boolean written = true;
+                for (Object current : owners) written &= volume.write(packageName, current, original);
+                float restored = volume.read(packageName);
+                if (!written || !Float.isFinite(restored) || restored == 0f) return false;
+            }
+            // A nonzero level set while muted belongs to the user.
             packageName = null;
-            player = null;
+            players = java.util.List.of();
             original = Float.NaN;
+            return true;
         }
+    }
+
+    record PendingRestore(MuteLease lease, Volume volume) {
+        boolean restore() { return lease.release(volume); }
     }
 
     private final Context context;
@@ -365,15 +423,17 @@ final class MiniFreeformMediaController {
         refreshSession();
     }
 
-    void destroy() { clear(); }
+    PendingRestore destroy() {
+        clear();
+        return muteLease.active() ? new PendingRestore(muteLease, volume) : null;
+    }
+
+    boolean isMuted() { return muteLease.active(); }
 
     /** Toggles the current mini task's player volume when Xiaomi's per-player API is available. */
     boolean toggleMute() {
         if (!enabled || selected == null || packageName == null) return false;
-        if (muteLease.active()) {
-            muteLease.release(volume);
-            return true;
-        }
+        if (muteLease.active()) return muteLease.release(volume);
         muteLease.acquire(packageName, volume);
         return muteLease.active();
     }

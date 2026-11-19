@@ -42,9 +42,8 @@ class StashActivity : ComponentActivity() {
         super.onResume()
         lifecycleScope.launch {
             importPendingShare()
-            if (shareImported) StashOverlayPanel.contentAdded(this@StashActivity)
-            else if (!receiveOnly) StashOverlayPanel.show(this@StashActivity)
-            else Toast.makeText(this@StashActivity,
+            if (!receiveOnly) StashOverlayPanel.show(this@StashActivity)
+            else if (!shareImported) Toast.makeText(this@StashActivity,
                 message ?: "保存失败，请重新分享后重试", Toast.LENGTH_LONG).show()
             finish()
         }
@@ -80,7 +79,7 @@ class StashActivity : ComponentActivity() {
                 pendingImport = null
                 shareImported = true
             }
-            Toast.makeText(this, "已保存 $savedCount 项到中转站", Toast.LENGTH_SHORT).show()
+            StashOverlayPanel.contentAdded(this, savedCount)
         } catch (error: IOException) {
             DragShareLog.w("DragShare/Stash", "unable to import shared content", error)
             message = "保存失败：${error.message ?: "无法读取分享内容"}"

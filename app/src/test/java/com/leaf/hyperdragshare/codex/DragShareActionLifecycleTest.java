@@ -45,8 +45,41 @@ public final class DragShareActionLifecycleTest {
         ImageStagingShadow.callbacks.clear();
         ImageStagingShadow.revokedUris.clear();
         ClipboardWriterShadow.requests.clear();
+        DragShareToastShadow.messages.clear();
         controller = new DragShareController(
                 RuntimeEnvironment.getApplication(), OverlayWindowPolicy.portal());
+    }
+
+    @Test public void failedStageBeforeDropReportsFailureInsteadOfWaiting() throws Exception {
+        Object session = startImageGesture(CapturedContent.image(bitmap(), "test.app", null, true), 105L);
+        onlyStagingCallback().onFailure(new IOException("stage failed"));
+        idleMain();
+        set(controller, "selectedTarget", ShareTarget.copyImageToClipboard(null));
+        invoke(controller, "finishGestureOnMain", new Class<?>[]{boolean.class}, true);
+
+        assertNull(get(session, "pendingTarget"));
+        assertTrue((boolean) get(session, "cancelled"));
+        assertTrue(DragShareToastShadow.messages.contains("图片准备失败，请重新拖拽"));
+        assertFalse(DragShareToastShadow.messages.contains("正在准备图片"));
+        controller.destroy();
+        idleMain();
+    }
+
+    @Test public void failedStageAfterDropStillReportsWhileAnotherGestureIsActive() throws Exception {
+        Object old = startImageGesture(CapturedContent.image(bitmap(), "old.app", null, true), 106L);
+        ImageStagingClient.Callback callback = onlyStagingCallback();
+        set(controller, "selectedTarget", ShareTarget.copyImageToClipboard(null));
+        invoke(controller, "finishGestureOnMain", new Class<?>[]{boolean.class}, true);
+        Object current = startImageGesture(CapturedContent.image(bitmap(), "new.app", null, true), 107L);
+        callback.onFailure(new IOException("stage failed"));
+        idleMain();
+
+        assertNull(get(old, "pendingTarget"));
+        assertTrue(DragShareToastShadow.messages.contains("图片准备失败，请重新拖拽"));
+        assertSame(current, get(controller, "session"));
+        assertTrue(controller.isActive());
+        controller.destroy();
+        idleMain();
     }
 
     @Test public void finishWaitsForStageAndRepeatedCallbackExecutesOnce() throws Exception {
@@ -268,8 +301,9 @@ public final class DragShareActionLifecycleTest {
 
     @Implements(value = DragShareToast.class, isInAndroidSdk = false)
     public static final class DragShareToastShadow {
-        @Implementation protected void show(String message) { }
-        @Implementation protected void show(String message, int duration) { }
+        static final List<String> messages = new ArrayList<>();
+        @Implementation protected void show(String message) { messages.add(message); }
+        @Implementation protected void show(String message, int duration) { messages.add(message); }
     }
 
     private static final class CopyImageRequest {

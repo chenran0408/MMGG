@@ -14,13 +14,11 @@ internal typealias DragShareSettingsMutation =
 internal enum class SettingsEffectNotice(
     val message: String,
 ) {
-    THEME("已保存：应用主题立即更新，新建的浮窗也会使用该主题。无需重启。"),
-    LOGGING("已保存：日志等级和保存位置已即时应用。无需重启。"),
-    GESTURE_EXCLUSIONS(
-        "已保存：传送门下次读取避让名单；系统界面（SystemUI）在后续手势读取更新后的名单。无需重启。",
-    ),
-    ROOT_INPUT("已保存：根输入（Root）会在下一次按压时读取长按设置，无需重启。"),
-    PORTAL_SESSION("已保存：传送门在下一次取词或选图时读取；当前操作不变。无需重启作用域。"),
+    THEME("主题已更新，新打开的浮窗将使用此主题。"),
+    LOGGING("日志设置已生效。"),
+    GESTURE_EXCLUSIONS("应用避让名单在下次取词或手势时生效。"),
+    ROOT_INPUT("下次长按时生效。"),
+    PORTAL_SESSION("下次取词或选图时生效。"),
 }
 
 /** Classifies settings changes without saving, rendering, or consulting Android APIs. */
@@ -96,7 +94,7 @@ internal fun saveDragShareSettingsWithNotice(
 
     val notices = classifySettingsEffectNotices(previous, next)
     val messages = if (notices.isEmpty()) {
-        listOf("设置已保存。")
+        listOf("设置已保存")
     } else {
         notices.map(SettingsEffectNotice::message)
     }
@@ -131,7 +129,7 @@ internal fun saveGestureIntegerSetting(
 internal fun showGestureConfigSaved(context: Context) {
     Toast.makeText(
         context,
-        "已保存；系统界面（SystemUI）会在后续手势读取新设置，无需重启。",
+        "已保存，下次手势生效",
         Toast.LENGTH_SHORT,
     ).show()
 }

@@ -22,6 +22,8 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.saveable.listSaver
+import androidx.compose.runtime.snapshots.SnapshotStateList
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -32,6 +34,7 @@ import androidx.core.view.WindowCompat
 import androidx.navigation3.runtime.NavKey
 import androidx.navigation3.runtime.entryProvider
 import androidx.navigation3.runtime.rememberDecoratedNavEntries
+import androidx.navigation3.runtime.rememberSaveableStateHolderNavEntryDecorator
 import androidx.navigation3.ui.NavDisplay
 import top.yukonga.miuix.kmp.basic.BasicComponent
 import top.yukonga.miuix.kmp.basic.rememberTopAppBarState
@@ -54,7 +57,7 @@ import kotlinx.coroutines.withContext
 import kotlin.math.roundToInt
 
 
-private sealed interface SettingsRoute : NavKey {
+private sealed interface SettingsRoute : NavKey, java.io.Serializable {
     data object Main : SettingsRoute
     data object Visibility : SettingsRoute
     data object Order : SettingsRoute
@@ -71,12 +74,15 @@ private sealed interface SettingsRoute : NavKey {
     data object GestureTutorial : SettingsRoute
 }
 
-
+private val settingsBackStackSaver = listSaver<SnapshotStateList<NavKey>, SettingsRoute>(
+    save = { stack -> stack.filterIsInstance<SettingsRoute>() },
+    restore = { routes -> mutableStateListOf<NavKey>().apply { addAll(routes) } },
+)
 
 @Composable
 fun DragShareSettingsApp(context: Context, openGestures: Boolean = false) {
     var settings by remember { mutableStateOf(DragShareSettings.readLocal(context)) }
-    val backStack = remember { mutableStateListOf<NavKey>(SettingsRoute.Main).apply {
+    val backStack = rememberSaveable(saver = settingsBackStackSaver) { mutableStateListOf<NavKey>(SettingsRoute.Main).apply {
         if (openGestures) add(SettingsRoute.Module(SettingModule.GESTURES))
     } }
     var gestureCategoryId by remember { mutableStateOf<String?>(null) }
@@ -96,8 +102,9 @@ fun DragShareSettingsApp(context: Context, openGestures: Boolean = false) {
         next
     }
     MiuixTheme(controller = themeController) {
+        var runtimeAction by rememberSaveable { mutableStateOf<RuntimeAction?>(null) }
+        var pendingRestartModules by rememberSaveable { mutableStateOf(emptyList<String>()) }
         var searchQuery by rememberSaveable { mutableStateOf("") }
-        val activationMonitor = rememberActivationMonitor(context)
         val searchListState = rememberLazyListState()
         val searchScope = rememberCoroutineScope()
         val openTargets: (String) -> Unit = { group ->
@@ -107,7 +114,25 @@ fun DragShareSettingsApp(context: Context, openGestures: Boolean = false) {
                 else -> error("Unknown gesture target group: $group")
             })
         }
-        val directory = (portalSettingEntries(context, settings,
+        val legacyGesturePrefs = remember(context) {
+            com.leaf.hyperdragshare.gestures.config.ConfigStore(context).preferences()
+        }
+        val legacyGestureEnabled = legacyGesturePrefs.getBoolean(
+            com.leaf.hyperdragshare.gestures.config.ConfigContract.KEY_ENABLED,
+            com.leaf.hyperdragshare.gestures.config.ConfigContract.DEFAULT_ENABLED,
+        )
+        val (featureEntries, featureFlags) = hookFeatureSettingEntries(
+            context, legacyGestureEnabled, pendingRestartModules,
+            onSwitchSaved = { module ->
+                pendingRestartModules = if (module.name in pendingRestartModules)
+                    pendingRestartModules - module.name else pendingRestartModules + module.name
+            },
+            onApply = { runtimeAction = RuntimeAction.Android },
+        )
+        val activationMonitor = rememberActivationMonitor(context, featureFlags?.portal)
+        val directory = (featureEntries + portalSettingEntries(context, settings,
+            overlayGranted = activationMonitor.overlayGranted,
+            onRuntimeAction = { runtimeAction = it },
             onOpenVisibility = { backStack.add(SettingsRoute.Visibility) },
             onOpenOrder = { backStack.add(SettingsRoute.Order) },
             onOpenBlacklist = { backStack.add(SettingsRoute.Blacklist) },
@@ -117,6 +142,7 @@ fun DragShareSettingsApp(context: Context, openGestures: Boolean = false) {
             onOpenGestureTutorial = { backStack.add(SettingsRoute.GestureTutorial) },
         ) + gestureSettingEntries(
             context,
+            gesturesEnabled = featureFlags?.gestures(legacyGestureEnabled) ?: legacyGestureEnabled,
             onManageTargets = openTargets,
             previewPageActive = (backStack.lastOrNull() as? SettingsRoute.Module)?.module
                 == SettingModule.GESTURES
@@ -133,9 +159,10 @@ fun DragShareSettingsApp(context: Context, openGestures: Boolean = false) {
             entryProvider<NavKey> {
                 entry(SettingsRoute.Main) {
                     SettingsHomePage(
-                        context, currentSettings.value, currentDirectory.value,
+                        context, currentDirectory.value,
                         currentQuery.value, { searchQuery = it; searchScope.launch { searchListState.scrollToItem(0) } }, mainListState, searchListState,
                         mainTopAppBarState,
+                        isCurrent = backStack.lastOrNull() == SettingsRoute.Main,
                         activation = currentActivationMonitor.value,
                         onOpenDiagnostics = { backStack.add(SettingsRoute.Diagnostics) },
                         onOpenModule = { backStack.add(SettingsRoute.Module(it)) },
@@ -226,9 +253,7 @@ fun DragShareSettingsApp(context: Context, openGestures: Boolean = false) {
                         context = context,
                         monitor = currentActivationMonitor.value,
                         onBack = { if (backStack.size > 1) backStack.removeAt(backStack.lastIndex) },
-                        onOpenGeneralSettings = {
-                            backStack.add(SettingsRoute.Module(SettingModule.GENERAL, "runtime.reload"))
-                        },
+                        onReloadApps = { runtimeAction = RuntimeAction.ReloadApps },
                         onOpenProblemDiagnostics = { backStack.add(SettingsRoute.ProblemDiagnostics) },
                     )
                 }
@@ -249,6 +274,7 @@ fun DragShareSettingsApp(context: Context, openGestures: Boolean = false) {
         }
         val entries = rememberDecoratedNavEntries(
             backStack = backStack,
+            entryDecorators = listOf(rememberSaveableStateHolderNavEntryDecorator()),
             entryProvider = settingsEntryProvider,
         )
 
@@ -258,6 +284,8 @@ fun DragShareSettingsApp(context: Context, openGestures: Boolean = false) {
             modifier = Modifier.fillMaxSize(),
             onBack = { if (backStack.size > 1) backStack.removeAt(backStack.lastIndex) },
         )
+        RuntimeActionDialog(context, runtimeAction, onDismiss = { runtimeAction = null },
+            onAppReloaded = activationMonitor.refresh)
     }
 }
 
@@ -265,6 +293,8 @@ fun DragShareSettingsApp(context: Context, openGestures: Boolean = false) {
 private fun portalSettingEntries(
     context: Context,
     settings: DragShareSettings,
+    overlayGranted: Boolean,
+    onRuntimeAction: (RuntimeAction) -> Unit,
     onOpenVisibility: () -> Unit,
     onOpenOrder: () -> Unit,
     onOpenBlacklist: () -> Unit,
@@ -380,7 +410,7 @@ private fun portalSettingEntries(
             rowTitle, rowSummary, rowEnabled ->
             ArrowPreference(
                 title = rowTitle,
-                summary = rowSummary,
+                summary = rowSummary.ifBlank { null },
                 enabled = rowEnabled,
                 onClick = onClick,
             )
@@ -406,7 +436,7 @@ private fun portalSettingEntries(
         )
     }
     row("drag.twoFingerLongPressTimeout", "双指分词确认时间", SettingModule.PORTAL, "触发与识别",
-        summary = "第二指加入后开始计时，达到时长后打开分词与大爆炸；单指使用独立确认时间",
+        summary = "从第二指按下开始计时",
         keywords = "双指 长按 时间 毫秒 分词 大爆炸 触发 拖拽 单指 第二指",
     ) { title, summary, enabled ->
         SliderPreference(
@@ -431,11 +461,19 @@ private fun portalSettingEntries(
         summary = "临时收集图文，按住内容拖出",
         icon = MiuixIcons.Folder, onClick = openStash,
     )
-    row("runtime.reload", context.getString(R.string.scope_restart_title), SettingModule.GENERAL, "运行与权限",
-        summary = context.getString(R.string.scope_restart_summary), keywords = "热重载 重启 作用域 Root LSPosed",
-    ) { title, _, _ -> ScopeRestartPreference(context, title) }
+    RuntimeAction.entries.forEach { action ->
+        val common = action == RuntimeAction.ReloadApps
+        navigationRow(
+            if (common) "runtime.reload" else "runtime.restart.${action.name}",
+            action.title, SettingModule.GENERAL,
+            if (common) "运行与权限" else "高级重启",
+            summary = "",
+            keywords = if (common) "热重载 重载模块 应用进程 复制直达 作用域" else "重启 重载系统框架",
+            onClick = { onRuntimeAction(action) },
+        )
+    }
     row("trustservice.disableRisk", "禁用风险检测", SettingModule.GENERAL, "运行与权限",
-        summary = "解除“当前设备系统被篡改，存在安全隐患，无法进行连接”；需在 LSPosed 中勾选 MiTrustService",
+        summary = "用于 MiTrustService 连接受限。修改后仅重载 MiTrustService，可能中断连接。",
         keywords = "MiTrustService MRM 风险 root 系统服务 Hook",
     ) { title, summary, enabled ->
         SwitchPreference(
@@ -462,7 +500,7 @@ private fun portalSettingEntries(
                     Toast.makeText(
                         context,
                         if (failure == null) {
-                            "设置已保存，MiTrustService 已重启"
+                            "设置已保存，已请求重载 MiTrustService"
                         } else {
                             "设置已保存，但 MiTrustService 重启失败：$failure"
                         },
@@ -527,7 +565,7 @@ private fun portalSettingEntries(
                     } else {
                         Toast.makeText(
                             context,
-                            "已应用到系统背部轻敲设置；下次轻敲生效，无需重启框架。",
+                            "下次背部轻敲生效",
                             Toast.LENGTH_SHORT,
                         ).show()
                     }
@@ -571,7 +609,6 @@ private fun portalSettingEntries(
     )
 
     row("segmentation.haptic", "选词触感反馈", SettingModule.PORTAL, "分词与取用",
-        summary = "手指选中或取消词语时轻振一次",
         keywords = "选词 震动 触感",
     ) { title, summary, enabled ->
         SwitchPreference(
@@ -581,14 +618,13 @@ private fun portalSettingEntries(
             onCheckedChange = { enabled ->
                 BigBangSettings.setSelectionHapticEnabled(context, enabled)
                 selectionHapticEnabled = enabled
-                Toast.makeText(context, "已保存：下次分词选词时生效，无需重启。", Toast.LENGTH_SHORT).show()
+                Toast.makeText(context, "下次分词选词时生效", Toast.LENGTH_SHORT).show()
             },
             enabled = enabled,
         )
     }
 
     row("segmentation.exitCopy", "复制后退出", SettingModule.PORTAL, "分词与取用",
-        summary = "复制所选文字后关闭分词面板",
         keywords = "分词 复制 退出",
     ) { title, summary, enabled ->
         SwitchPreference(
@@ -598,14 +634,13 @@ private fun portalSettingEntries(
             onCheckedChange = { enabled ->
                 BigBangSettings.setExitAfterCopyEnabled(context, enabled)
                 exitAfterCopyEnabled = enabled
-                Toast.makeText(context, "已保存：下次分词复制时生效，无需重启。", Toast.LENGTH_SHORT).show()
+                Toast.makeText(context, "下次在分词面板复制时生效", Toast.LENGTH_SHORT).show()
             },
             enabled = enabled,
         )
     }
 
     row("drag.text", "启用文字分享", SettingModule.PORTAL, "拖拽分享",
-        summary = "长按文字时显示分享菜单",
         keywords = "文字 分享 拖拽",
     ) { title, summary, enabled ->
         SwitchPreference(
@@ -622,7 +657,6 @@ private fun portalSettingEntries(
     }
 
     row("drag.image", "启用图片分享", SettingModule.PORTAL, "拖拽分享",
-        summary = "长按图片时显示分享菜单",
         keywords = "图片 分享 拖拽",
     ) { title, summary, enabled ->
         SwitchPreference(
@@ -783,7 +817,6 @@ private fun portalSettingEntries(
     }
 
     row("drag.modern.blur", "模糊半径", SettingModule.PORTAL, "拖拽菜单外观",
-        summary = "现代样式柔光玻璃的背景模糊强度",
         keywords = "现代 柔光 玻璃 背景 模糊",
         enabled = dragSharingEnabled && settings.uiStyle == DragShareSettings.STYLE_MODERN,
         prerequisite = dragSharingPrerequisite ?: "选择现代拖拽样式后可调整",
@@ -809,7 +842,6 @@ private fun portalSettingEntries(
     }
 
     row("drag.modern.opacity", "底板不透明度", SettingModule.PORTAL, "拖拽菜单外观",
-        summary = "现代样式柔光玻璃底板的不透明度",
         keywords = "现代 柔光 玻璃 底板 透明 不透明度",
         enabled = dragSharingEnabled && settings.uiStyle == DragShareSettings.STYLE_MODERN,
         prerequisite = dragSharingPrerequisite ?: "选择现代拖拽样式后可调整",
@@ -920,7 +952,6 @@ private fun portalSettingEntries(
     }
 
     row("drag.scrollSpeed", "滚动速度", SettingModule.PORTAL, "拖拽触摸与滚动",
-        summary = "设置分享菜单横向滚动速度",
         keywords = "分享菜单 滚动 速度",
         enabled = dragSharingEnabled, prerequisite = dragSharingPrerequisite,
     ) { title, summary, enabled ->
@@ -962,7 +993,7 @@ private fun portalSettingEntries(
                     Toast.makeText(
                         context,
                         if (ready) {
-                            "已保存：传送门卡片和 AICR 在下次识别/点击时读取；无需重启。"
+                            "下次复制识别时生效"
                         } else {
                             "设置已保存，但系统复制直达卡片准备失败，请查看诊断日志。"
                         },
@@ -971,7 +1002,7 @@ private fun portalSettingEntries(
                 } else {
                     Toast.makeText(
                         context,
-                        "已保存：传送门卡片和 AICR 在下次识别/点击时读取；无需重启。",
+                        "下次复制识别时生效",
                         Toast.LENGTH_SHORT,
                     ).show()
                 }
@@ -1004,8 +1035,8 @@ private fun portalSettingEntries(
                     copyDirectBrowserPackage = choice.packageName
                     Toast.makeText(
                         context,
-                        if (choice.packageName.isEmpty()) "已跟随系统默认浏览器，无需重启。"
-                        else "已保存：下次复制直达使用所选浏览器，无需重启。",
+                        if (choice.packageName.isEmpty()) "已跟随系统默认浏览器"
+                        else "下次打开链接时使用所选浏览器",
                         Toast.LENGTH_SHORT,
                     ).show()
                 }
@@ -1064,16 +1095,10 @@ private fun portalSettingEntries(
         )
     }
 
-    val openOverlaySettings = {
-        context.startActivity(Intent(
-            android.provider.Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
-            android.net.Uri.parse("package:${context.packageName}"),
-        ).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
-    }
     navigationRow("permission.overlay", "悬浮窗权限", SettingModule.GENERAL, "运行与权限",
-        summary = if (android.provider.Settings.canDrawOverlays(context)) "已授权" else "未授权，点此开启",
+        summary = if (overlayGranted) "已授权" else "未授权",
         keywords = "悬浮窗 权限 浮窗",
-        onClick = openOverlaySettings,
+        onClick = { openOverlayPermissionSettings(context) },
     )
 
     row("log.level", "日志输出等级", SettingModule.GENERAL, "工具与诊断",
@@ -1165,11 +1190,11 @@ private fun portalSettingEntries(
 
 @Suppress("DEPRECATION")
 @Composable
-private fun SyncSystemBars(dark: Boolean) {
+internal fun SyncSystemBars(dark: Boolean) {
     val view = LocalView.current
     SideEffect {
-        val activity = view.context as? Activity ?: return@SideEffect
-        val window = activity.window
+        val window = (view.parent as? androidx.compose.ui.window.DialogWindowProvider)?.window
+            ?: (view.context as? Activity)?.window ?: return@SideEffect
         window.statusBarColor = android.graphics.Color.TRANSPARENT
         window.navigationBarColor = android.graphics.Color.TRANSPARENT
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {

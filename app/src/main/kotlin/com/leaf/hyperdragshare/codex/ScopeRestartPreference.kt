@@ -1,7 +1,7 @@
 package com.leaf.hyperdragshare.codex
 
 import android.content.Context
-import androidx.compose.foundation.layout.Column
+import android.widget.Toast
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -14,102 +14,89 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
-import java.io.IOException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import top.yukonga.miuix.kmp.basic.ButtonDefaults
 import top.yukonga.miuix.kmp.basic.CircularProgressIndicator
 import top.yukonga.miuix.kmp.basic.TextButton
-import android.widget.Toast
-import top.yukonga.miuix.kmp.overlay.OverlayDialog
-import top.yukonga.miuix.kmp.preference.ArrowPreference
-import top.yukonga.miuix.kmp.preference.RadioButtonPreference
+import top.yukonga.miuix.kmp.window.WindowDialog
+import java.io.IOException
 
-private enum class ReloadMode(val label: String, val detail: String) {
-    Apps("热重载", "重新加载系统界面、侧栏、传送门和 AICR，屏幕会短暂闪动。适用于这些作用域的模块代码更新；普通设置会按页面提示热更新或在下次操作读取。Android、桌面或系统框架代码更新不由此入口加载。"),
-    Android("软重启", "重新启动 Android 运行环境以加载 Android、桌面和系统框架代码更新。当前应用会关闭并回到锁屏；请先保存正在编辑的内容。"),
-    Device("整机重启", "手机将重新启动，全部作用域重新加载；请先保存正在编辑的内容。"),
+internal enum class RuntimeAction(val title: String, val detail: String) {
+    ReloadApps("重载传送门与 AI 引擎", "按已启用的功能重载相关进程，可能中断识别或分享。"),
+    SystemUi("重启系统界面", "重启状态栏、导航和侧栏，当前手势或小窗操作会中断。"),
+    Android("软重启 Android", "重启 Android 运行环境，当前打开的应用会中断。"),
+    Device("整机重启", "重新启动手机，当前应用会关闭，请先保存内容。"),
 }
 
 @Composable
-internal fun ScopeRestartPreference(context: Context, title: String) {
-    var showConfirmation by remember { mutableStateOf(false) }
-    var running by remember { mutableStateOf(false) }
-    var mode by remember { mutableStateOf(ReloadMode.Apps) }
-    var failure by remember { mutableStateOf<String?>(null) }
+internal fun RuntimeActionDialog(
+    context: Context,
+    action: RuntimeAction?,
+    onDismiss: () -> Unit,
+    onAppReloaded: () -> Unit,
+) {
+    val selected = action ?: return
+    var running by remember(selected) { mutableStateOf(false) }
+    var failure by remember(selected) { mutableStateOf<String?>(null) }
     val scope = rememberCoroutineScope()
-
-    ArrowPreference(
-        title = title,
-        summary = stringResource(R.string.scope_restart_summary),
-        onClick = {
-            failure = null
-            showConfirmation = true
-        },
-    )
-    OverlayDialog(
-        show = showConfirmation,
-        title = stringResource(R.string.scope_restart_confirmation_title),
-        summary = when {
-            running -> stringResource(R.string.scope_restart_running)
-            failure != null -> context.getString(R.string.scope_restart_failed, failure)
-            else -> mode.detail
-        },
-        onDismissRequest = { if (!running) showConfirmation = false },
+    WindowDialog(
+        show = true,
+        title = selected.title,
+        summary = if (running) "正在执行…" else failure ?: selected.detail,
+        onDismissRequest = { if (!running) onDismiss() },
     ) {
         if (running) {
             CircularProgressIndicator()
         } else {
-            Column(Modifier.fillMaxWidth()) {
-                ReloadMode.entries.forEach { choice ->
-                    RadioButtonPreference(
-                        title = choice.label,
-                        selected = mode == choice,
-                        onClick = { mode = choice; failure = null },
-                    )
-                }
-            }
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(12.dp),
-            ) {
-                TextButton(
-                    text = stringResource(android.R.string.cancel),
-                    modifier = Modifier.weight(1f),
-                    onClick = { showConfirmation = false },
-                )
-                TextButton(
-                    text = mode.label,
-                    modifier = Modifier.weight(1f),
-                    colors = ButtonDefaults.textButtonColorsPrimary(),
-                    onClick = {
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                TextButton(stringResource(android.R.string.cancel), onClick = onDismiss,
+                    modifier = Modifier.weight(1f))
+                TextButton(selected.title, modifier = Modifier.weight(1f),
+                    colors = ButtonDefaults.textButtonColorsPrimary(), onClick = run@{
+                        if (running) return@run
                         running = true
                         failure = null
                         scope.launch {
+                            var result: String? = null
                             val error = withContext(Dispatchers.IO) {
                                 try {
-                                    when (mode) {
-                                        ReloadMode.Apps -> ScopeRestart.reloadAppScopes(context)
-                                        ReloadMode.Android -> ScopeRestart.restartAndroidRuntime()
-                                        ReloadMode.Device -> ScopeRestart.restartDevice()
+                                    when (selected) {
+                                        RuntimeAction.ReloadApps -> {
+                                            val service = HookFeatureService.service.value
+                                                ?: throw IOException("请先连接 LSPosed")
+                                            val flags = try {
+                                                HookFeatureFlags.read(service.getRemotePreferences(HookFeatureFlags.PREFS))
+                                            } catch (error: RuntimeException) {
+                                                throw IOException("无法读取 LSPosed 功能开关", error)
+                                            }
+                                            result = if (ScopeRestart.reloadAppScopes(context, flags))
+                                                "重载操作已执行" else "传送门和复制直达均未启用"
+                                        }
+                                        RuntimeAction.SystemUi -> {
+                                            ScopeRestart.restartSystemUi()
+                                            result = "已请求重启系统界面"
+                                        }
+                                        RuntimeAction.Android -> ScopeRestart.restartAndroidRuntime()
+                                        RuntimeAction.Device -> ScopeRestart.restartDevice()
                                     }
                                     null
                                 } catch (error: IOException) {
-                                    DragShareLog.w("DragShare/ScopeRestart", "scope reload failed", error)
+                                    DragShareLog.w("DragShare/ScopeRestart", "Runtime action failed", error)
                                     error.message ?: error.javaClass.simpleName
                                 }
                             }
                             running = false
-                            failure = error
-                            if (error == null) {
-                                showConfirmation = false
-                                if (mode == ReloadMode.Apps) Toast.makeText(context,
-                                    "已请求重载系统界面和侧边栏，传送门已重载；AICR将在下次识别时加载新代码", Toast.LENGTH_LONG).show()
+                            if (error != null) {
+                                failure = "操作未完成：$error"
+                            } else {
+                                onDismiss()
+                                if (selected == RuntimeAction.ReloadApps) onAppReloaded()
+                                result?.let { Toast.makeText(context, it, Toast.LENGTH_SHORT).show() }
                             }
                         }
-                    },
-                )
+                    })
             }
         }
     }

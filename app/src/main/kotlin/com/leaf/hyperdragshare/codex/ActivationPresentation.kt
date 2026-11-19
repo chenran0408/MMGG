@@ -4,7 +4,7 @@ package com.leaf.hyperdragshare.codex
 internal data class ActivationPresentation(
     val overallState: ActivationState,
     val homeTitle: String,
-    val homeSummary: String,
+    val homeSummary: String?,
     val rootNeeds: List<String>,
     val missingPermissions: List<String>,
     val missingSoftware: List<Pair<String, String>>,
@@ -19,28 +19,22 @@ internal fun activationPresentation(
     portalInstalled: Boolean?,
     aicrInstalled: Boolean?,
 ): ActivationPresentation {
-    val state = snapshot?.overallState ?: ActivationState.CHECKING
+    val state = if (checking) ActivationState.CHECKING else snapshot?.overallState ?: ActivationState.CHECKING
     val homeTitle = when (state) {
-        ActivationState.CHECKING -> "运行状态检查中"
+        ActivationState.CHECKING -> "正在检查运行状态"
         ActivationState.NORMAL -> "运行状态正常"
         ActivationState.NEEDS_ACTION -> "有功能需要处理"
         ActivationState.UNKNOWN -> "部分状态待确认"
         ActivationState.NOT_APPLICABLE -> "运行状态"
     }
     val homeSummary = when (state) {
-        ActivationState.CHECKING -> "正在确认运行状态${if (checking) " · 检查中" else ""}"
-        ActivationState.NORMAL -> "已检查的功能运行正常，点击查看各组件状态"
         ActivationState.NEEDS_ACTION -> buildList {
             if (snapshot?.root == ActivationEvidence.UNAVAILABLE) add("Root 输入功能")
             if (snapshot?.portalFeature == ActivationState.NEEDS_ACTION) add("传送门取词与拖拽")
             if (snapshot?.overlayPermission == ActivationEvidence.UNAVAILABLE) add("部分悬浮工具")
             if (snapshot?.pressFeature == ActivationState.NEEDS_ACTION) add("按压取词")
-        }.distinct().joinToString("、").let { affected ->
-            if (affected.isBlank()) "有运行环节需要处理，查看具体影响和处理方法"
-            else "可能影响：$affected。点击查看处理方法"
-        }
-        ActivationState.UNKNOWN -> "部分状态暂时无法确认；这不代表权限已被拒绝"
-        ActivationState.NOT_APPLICABLE -> "当前没有需要检查的运行组件"
+        }.distinct().joinToString("、").takeIf { it.isNotBlank() }?.let { "可能影响 $it" }
+        else -> null
     }
 
     val rootNeeds = buildList {

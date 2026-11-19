@@ -12,6 +12,7 @@ import android.os.SystemClock;
 import android.view.MotionEvent;
 
 import com.leaf.hyperdragshare.codex.NativeSidebarState;
+import com.leaf.hyperdragshare.codex.HookFeatureFlags;
 import com.leaf.hyperdragshare.gestures.config.OverlayTouchRegions;
 
 import dalvik.system.DexFile;
@@ -75,6 +76,7 @@ public final class FanFreeformHook implements IXposedHookLoadPackage {
                     + " process=" + loadPackageParam.processName);
         }
         if (MIUI_HOME.equals(loadPackageParam.packageName)) {
+            if (!HookFeatureFlags.startup().gestures(true)) return;
             hookShortcutHost(loadPackageParam.classLoader);
             hookRecentsClearButton(loadPackageParam.classLoader);
             return;
@@ -83,17 +85,26 @@ public final class FanFreeformHook implements IXposedHookLoadPackage {
         Log.i("Loading in SystemUI process=" + loadPackageParam.processName);
         hookApplicationAttach(loadPackageParam.classLoader);
         hookFreeformController(loadPackageParam.classLoader);
-        hookFreeformPinHandler(loadPackageParam.classLoader);
-        hookMiniAnimationTarget(loadPackageParam.classLoader);
-        hookEdgePinRestoreTarget(loadPackageParam.classLoader);
-        hookShortcutEnterAnimation(loadPackageParam.classLoader);
-        hookLandscapeWindowShape(loadPackageParam.classLoader);
+        if (HookFeatureFlags.startup().freeform()) {
+            hookFreeformPinHandler(loadPackageParam.classLoader);
+            hookMiniAnimationTarget(loadPackageParam.classLoader);
+            hookEdgePinRestoreTarget(loadPackageParam.classLoader);
+            hookShortcutEnterAnimation(loadPackageParam.classLoader);
+            hookLandscapeWindowShape(loadPackageParam.classLoader);
+            try {
+                hookMiniMenuTouch(loadPackageParam.classLoader);
+            } catch (RuntimeException | LinkageError error) {
+                Log.e("Cannot install optional mini menu touch hooks", error);
+            }
+        }
         hookInputController(loadPackageParam.classLoader);
         hookStatusBarTouchEntry(loadPackageParam.classLoader);
         hookShadeExpansion(loadPackageParam.classLoader);
         hookControlCenterExpansion(loadPackageParam.classLoader);
         hookAuthoritativePanelState(loadPackageParam.classLoader);
-        hookSysUiStateFlags(loadPackageParam.classLoader);
+        if (HookFeatureFlags.startup().gestures(true)) {
+            hookSysUiStateFlags(loadPackageParam.classLoader);
+        }
     }
 
     private static synchronized void hookApplicationAttach(ClassLoader classLoader) {
@@ -113,7 +124,7 @@ public final class FanFreeformHook implements IXposedHookLoadPackage {
                     ensureRuntime(systemUiContext, classLoader);
                     // Only rewrites Xiaomi's existing notification "小窗" action;
                     // ordinary notifications and missing ROM contracts are unchanged.
-                    NotificationFreeformHook.install(classLoader, () -> {
+                    if (HookFeatureFlags.startup().freeform()) NotificationFreeformHook.install(classLoader, () -> {
                         FanRuntime active = runtime;
                         return active != null && active.notificationFreeformEnabled();
                     });
@@ -586,7 +597,7 @@ public final class FanFreeformHook implements IXposedHookLoadPackage {
         }
         runtime = created;
         if (freeformController != null) created.setFreeformController(freeformController);
-        installExternalLaunchReceiver(appContext);
+        if (HookFeatureFlags.startup().freeform()) installExternalLaunchReceiver(appContext);
         Log.i("SystemUI runtime initialized with corner input fallback");
         return created;
     }
@@ -604,7 +615,8 @@ public final class FanFreeformHook implements IXposedHookLoadPackage {
                     new Class<?>[]{handlerClass},
                     (instance, method, args) -> dispatchProxy(instance, method, args));
             XposedHelpers.callMethod(inputController, registerMethod, proxy);
-            if (HyperOsProfile.CURRENT.nativeInputPriority) {
+            if (HyperOsProfile.CURRENT.nativeInputPriority
+                    && HookFeatureFlags.startup().gestures(true)) {
                 try {
                     Object handlers = XposedHelpers.getObjectField(inputController, "mEventHandlers");
                     if (handlers instanceof List<?>) {
@@ -755,7 +767,7 @@ public final class FanFreeformHook implements IXposedHookLoadPackage {
                 @Override
                 protected void beforeHookedMethod(MethodHookParam param) {
                     FanRuntime active = runtime;
-                    if (active == null) return;
+                    if (active == null || !HookFeatureFlags.startup().freeform()) return;
                     active.onNativeFreeformLeavingInteractiveState(param.method.getName());
                 }
             };
@@ -779,7 +791,8 @@ public final class FanFreeformHook implements IXposedHookLoadPackage {
                         @Override
                         protected void afterHookedMethod(MethodHookParam param) {
                             FanRuntime active = runtime;
-                            if (active == null || param.args.length == 0
+                            if (active == null || !HookFeatureFlags.startup().freeform()
+                                    || param.args.length == 0
                                     || !(param.args[0] instanceof MotionEvent)) return;
                             MotionEvent event = (MotionEvent) param.args[0];
                             if (event.getActionMasked() == MotionEvent.ACTION_DOWN
@@ -795,6 +808,98 @@ public final class FanFreeformHook implements IXposedHookLoadPackage {
             Log.i("Freeform controller hooks installed controller=" + controllerName);
         } catch (Throwable error) {
             Log.e("Freeform controller hooks failed safely controller=" + controllerName, error);
+        }
+    }
+
+    private static void hookMiniMenuTouch(ClassLoader loader) {
+        Class<?> touchState = XposedHelpers.findClassIfExists(
+                "com.android.wm.shell.multitasking.miuifreeform.MiuiFreeformModeTouchState", loader);
+        if (touchState == null) {
+            Log.i("Mini menu touch hook unavailable on this ROM");
+            return;
+        }
+        // MeiWindow v1.4.7 uses the ROM-resolved task supplied in the third argument.
+        for (Method method : touchState.getDeclaredMethods()) {
+            if ("handleMotionEvents".equals(method.getName()) && method.getParameterCount() == 3
+                    && method.getParameterTypes()[0] == MotionEvent.class) {
+                XposedBridge.hookMethod(method, new XC_MethodHook() {
+                    @Override protected void beforeHookedMethod(MethodHookParam param) {
+                        FanRuntime active = runtime;
+                        if (active != null && param.args[0] instanceof MotionEvent) {
+                            boolean menuOwnsMove = active.onMiniTaskMotion((MotionEvent) param.args[0],
+                                    param.args[2]);
+                            if (menuOwnsMove && method.getReturnType() == void.class) param.setResult(null);
+                        }
+                    }
+                });
+            } else if ("singleTap".equals(method.getName()) && method.getParameterCount() > 0
+                    && method.getReturnType() == void.class) {
+                XposedBridge.hookMethod(method, new XC_MethodHook() {
+                    @Override protected void beforeHookedMethod(MethodHookParam param) {
+                        FanRuntime active = runtime;
+                        if (active != null && active.consumeMiniSingleTap(param.args[0])) param.setResult(null);
+                    }
+                });
+            }
+        }
+        Class<?> handler = XposedHelpers.findClassIfExists(
+                "com.android.wm.shell.multitasking.miuimultiwinswitch.miuiwindowdecor.MulWinSwitchEventHandler",
+                loader);
+        if (handler == null) return;
+        for (Method method : handler.getDeclaredMethods()) {
+            if (!"isInterceptDownEvent".equals(method.getName())
+                    || method.getParameterCount() != 1
+                    || method.getParameterTypes()[0] != MotionEvent.class
+                    || method.getReturnType() != boolean.class) continue;
+            XposedBridge.hookMethod(method, new XC_MethodHook() {
+                @Override protected void beforeHookedMethod(MethodHookParam param) {
+                    FanRuntime active = runtime;
+                    if (active == null || !(param.args[0] instanceof MotionEvent event)) return;
+                    if (active.miniMenuOwnsTouch(event)) {
+                        param.setResult(true);
+                    } else if (event.getActionMasked() == MotionEvent.ACTION_DOWN) {
+                        active.onMiniMenuOutsideDown(event.getRawX(), event.getRawY());
+                    }
+                }
+            });
+        }
+        hookMiniMenuGestureHandler(loader);
+    }
+
+    private static void hookMiniMenuGestureHandler(ClassLoader loader) {
+        Class<?> handler = XposedHelpers.findClassIfExists(
+                "com.android.wm.shell.multitasking.miuifreeform.MiuiFreeformModeGestureHandler", loader);
+        if (handler == null) return;
+        for (Method method : handler.getDeclaredMethods()) {
+            if (!"handleMotionEvents".equals(method.getName())
+                    || method.getParameterCount() != 2 || method.getParameterTypes()[0] != MotionEvent.class) continue;
+            for (java.lang.reflect.Constructor<?> ctor : method.getReturnType().getConstructors()) {
+                Class<?>[] types = ctor.getParameterTypes();
+                if (types.length != 3 || types[0] != int.class || types[1] != int.class
+                        || types[2].isPrimitive()) continue;
+                XposedBridge.hookMethod(method, new XC_MethodHook() {
+                    private long menuDownTime = -1L;
+
+                    @Override protected void beforeHookedMethod(MethodHookParam param) {
+                        FanRuntime active = runtime;
+                        if (active == null || !(param.args[0] instanceof MotionEvent event)) return;
+                        int action = event.getActionMasked();
+                        if (action == MotionEvent.ACTION_DOWN) {
+                            menuDownTime = active.miniMenuOwnsTouch(event) ? event.getDownTime() : -1L;
+                        }
+                        if (menuDownTime < 0L || event.getDownTime() != menuDownTime) return;
+                        if (action == MotionEvent.ACTION_UP || action == MotionEvent.ACTION_CANCEL) {
+                            menuDownTime = -1L;
+                        }
+                        try {
+                            param.setResult(ctor.newInstance(-1, -1, null));
+                        } catch (ReflectiveOperationException error) {
+                            Log.e("Cannot create mini menu touch result", error);
+                        }
+                    }
+                });
+                break;
+            }
         }
     }
 

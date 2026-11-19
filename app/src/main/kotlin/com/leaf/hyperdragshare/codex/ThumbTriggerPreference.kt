@@ -50,7 +50,7 @@ internal fun thumbTriggerEntries(context: Context,
     val tileTitle = "添加“点取内容”磁贴"
     val keywords = "按压 长按 evdev 点取 识字 分词 双指 单指 拖拽"
     val triggerSummary = when {
-        portalInjection == ModuleActivation.ReportedStatus.UNAVAILABLE -> "传送门需要重载；可先保存开关"
+        portalInjection == ModuleActivation.ReportedStatus.UNAVAILABLE -> "传送门未就绪，请查看运行诊断"
         portalInjection == ModuleActivation.ReportedStatus.UNKNOWN -> "传送门状态待确认；可先保存开关，再查看运行诊断"
         portalRoot == ModuleActivation.ReportedStatus.UNAVAILABLE -> "传送门 Root 检查未通过；已授权时请查看运行诊断"
         portalRoot == ModuleActivation.ReportedStatus.UNKNOWN -> "传送门 Root 暂时无法确认；可先保存开关，再查看运行诊断"
@@ -83,9 +83,9 @@ internal fun thumbTriggerEntries(context: Context,
                             context,
                             if (checked && (portalInjection != ModuleActivation.ReportedStatus.READY
                                     || portalRoot != ModuleActivation.ReportedStatus.READY)) {
-                                "开关已保存；运行状态待确认，请查看运行诊断。"
+                                "已保存，运行状态待确认。请查看运行诊断"
                             } else {
-                                "已保存；传送门会在下一次按住取词/识字时读取，无需重启。"
+                                "下次长按时生效"
                             },
                             Toast.LENGTH_SHORT,
                         ).show()

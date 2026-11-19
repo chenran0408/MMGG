@@ -18,6 +18,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.input.nestedscroll.nestedScroll
@@ -44,10 +45,10 @@ import java.io.IOException
 /** One export operation owns generation, document selection, copying, and optional sharing. */
 internal enum class DiagnosticExportOutcome { SAVED_CHOOSER_OPENED, SHARE_FAILED, SAVE_FAILED, STALE }
 
-internal class DiagnosticExportSession {
-    private var nextToken = 0L
+internal class DiagnosticExportSession(awaitingPickerToken: Long? = null) {
+    private var nextToken = awaitingPickerToken ?: 0L
     private var savePickerConsumed = false
-    var activeToken: Long? = null
+    var activeToken: Long? = awaitingPickerToken
         private set
 
     fun begin(): Long? {
@@ -129,14 +130,14 @@ internal fun ProblemDiagnosticsPage(
     onBack: () -> Unit,
     onOpenTouchDiagnostics: () -> Unit,
 ) {
-    val session = remember { DiagnosticExportSession() }
+    var pendingPickerToken by rememberSaveable { mutableStateOf<Long?>(null) }
+    var generatedFile by rememberSaveable { mutableStateOf<File?>(null) }
+    var missingLogReason by rememberSaveable { mutableStateOf<String?>(null) }
+    val session = remember { DiagnosticExportSession(pendingPickerToken) }
     val appContext = context.applicationContext
     val scope = rememberCoroutineScope()
-    var busy by remember { mutableStateOf(false) }
-    var status by remember { mutableStateOf<String?>(null) }
-    var generatedFile by remember { mutableStateOf<File?>(null) }
-    var pendingPickerToken by remember { mutableStateOf<Long?>(null) }
-    var missingLogReason by remember { mutableStateOf<String?>(null) }
+    var phase by remember { mutableStateOf(if (pendingPickerToken == null) null else "选择保存位置") }
+    var status by rememberSaveable { mutableStateOf<String?>(null) }
 
     DisposableEffect(session) {
         onDispose { session.cancelActive() }
@@ -152,14 +153,12 @@ internal fun ProblemDiagnosticsPage(
         if (destination == null) {
             session.cancelBeforeSavePicker(token)
             generatedFile = null
-            busy = false
-            status = buildString {
-                append("已取消保存，未分享诊断包")
-                missingLogReason?.let { append("；诊断说明：").append(it) }
-            }
+            phase = null
+            status = "已取消保存"
             return@rememberLauncherForActivityResult
         }
 
+        phase = "正在保存诊断包…"
         scope.launch {
             val outcome = session.saveAndShare(
                 token = token,
@@ -192,21 +191,22 @@ internal fun ProblemDiagnosticsPage(
             when (outcome) {
                 DiagnosticExportOutcome.STALE -> return@launch
                 DiagnosticExportOutcome.SAVE_FAILED -> {
-                    busy = false
+                    phase = null
                     status = "保存诊断 ZIP 失败，请重试"
                     Toast.makeText(context, status, Toast.LENGTH_LONG).show()
                 }
                 DiagnosticExportOutcome.SAVED_CHOOSER_OPENED,
                 DiagnosticExportOutcome.SHARE_FAILED -> {
-                    busy = false
+                    phase = null
                     status = buildString {
                         append(if (outcome == DiagnosticExportOutcome.SAVED_CHOOSER_OPENED) "诊断包已保存" else "诊断包已保存，无法打开分享面板")
-                        diagnosticMissingLogMessage(missingLogReason)?.let {
+                        missingLogReason?.let {
                             append("；诊断说明：").append(it)
                         }
                     }
                 }
             }
+            generatedFile = null
             if (outcome == DiagnosticExportOutcome.SHARE_FAILED) {
                 Toast.makeText(context, "诊断包已保存，但无法打开分享面板", Toast.LENGTH_LONG).show()
             }
@@ -235,14 +235,13 @@ internal fun ProblemDiagnosticsPage(
                 SmallTitle("诊断包")
                 Card(Modifier.padding(horizontal = 12.dp, vertical = 3.dp)) {
                     ArrowPreference(
-                        title = if (busy) "正在处理诊断包" else "导出诊断 ZIP",
-                        summary = if (busy) "请完成保存位置选择；随后可分享同一份文件"
-                        else "自动收集可用的运行摘要、兼容性报告、环境状态和操作阶段；无需调整日志设置",
-                        enabled = !busy,
+                        title = phase ?: "导出诊断 ZIP",
+                        enabled = phase == null,
                         onClick = {
                             val token = session.begin() ?: return@ArrowPreference
-                            busy = true
-                            status = "正在生成诊断包…"
+                            phase = "正在生成诊断包…"
+                            status = null
+                            missingLogReason = null
                             val safeSummary = diagnosticStateSummary(monitor.snapshot)
                             scope.launch {
                                 try {
@@ -251,32 +250,26 @@ internal fun ProblemDiagnosticsPage(
                                     }
                                     if (!session.isActive(token)) return@launch
                                     generatedFile = result.file
-                                    missingLogReason = result.missingLogReason
                                     missingLogReason = diagnosticMissingLogMessage(result.missingLogReason)
-                            status = missingLogReason?.let { "诊断包已生成；$it" }
-                                        ?: "诊断包已生成，请选择保存位置"
+                                    phase = "选择保存位置"
                                     pendingPickerToken = token
                                     saveLauncher.launch(result.file.name)
                                 } catch (cancelled: CancellationException) {
                                     throw cancelled
                                 } catch (error: Exception) {
                                     if (!session.finish(token)) return@launch
-                                    busy = false
+                                    pendingPickerToken = null
+                                    generatedFile = null
+                                    phase = null
                                     status = "生成诊断 ZIP 失败，请重试"
                                     Toast.makeText(context, status, Toast.LENGTH_LONG).show()
                                 }
                             }
                         },
                     )
-                    BasicComponent(
-                        title = "自动收集",
-                        summary = "点击导出即可自动收集可用的诊断信息，不需要调整日志等级；系统限制读取的部分会在报告中说明。",
-                        insideMargin = PaddingValues(horizontal = 16.dp, vertical = 10.dp),
-                    )
                     status?.let {
                         BasicComponent(
-                            title = "导出状态",
-                            summary = it,
+                            title = it,
                             insideMargin = PaddingValues(horizontal = 16.dp, vertical = 10.dp),
                         )
                     }
@@ -287,14 +280,13 @@ internal fun ProblemDiagnosticsPage(
                 Card(Modifier.padding(horizontal = 12.dp, vertical = 3.dp)) {
                     SettingsNavigationPreference(
                         title = "触控诊断",
-                        summary = "打开触控专项采集；按页面说明选择是否附带算法库",
                         icon = MiuixIcons.Report,
                         onClick = onOpenTouchDiagnostics,
                     )
                 }
             }
             item("problem-diagnostics-full-mode") {
-                SmallTitle("完整诊断模式")
+                SmallTitle("导出选项")
                 Card(Modifier.padding(horizontal = 12.dp, vertical = 3.dp)) {
                     var fullDiagnostics by remember {
                         mutableStateOf(DragShareSettings.readFullDiagnostics(appContext))

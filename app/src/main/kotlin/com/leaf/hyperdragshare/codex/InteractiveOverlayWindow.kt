@@ -169,6 +169,8 @@ internal class InteractiveOverlayWindow(
         onDropped: () -> Unit,
         onStarted: (() -> Unit)? = null,
         onFinished: ((Boolean) -> Unit)? = null,
+        stashSession: String? = null,
+        onDragPosition: ((Float) -> Unit)? = null,
     ) {
         check(!disposed && dragWindowAttributes == null)
         val original = if (embeddedHost == null) WindowManager.LayoutParams().also {
@@ -176,11 +178,16 @@ internal class InteractiveOverlayWindow(
         } else null
         dragWindowAttributes = original ?: WindowManager.LayoutParams()
         onDragFinished = onFinished
+        var observingOwnDrag = false
+        val location = IntArray(2)
         // Observe on the source root without consuming the child drag target.
-        dragView.setOnDragListener { _, event ->
+        dragView.setOnDragListener { view, event ->
             when (event.action) {
                 DragEvent.ACTION_DRAG_STARTED -> {
-                    if (original != null) {
+                    if (stashSession != null
+                        && !StashDragContract.matches(stashSession, event.clipDescription)) return@setOnDragListener false
+                    observingOwnDrag = true
+                    if (original != null && onDragPosition == null) {
                         window.attributes = WindowManager.LayoutParams().also {
                             it.copyFrom(original)
                             if (onStarted == null) it.alpha = 0f
@@ -192,7 +199,15 @@ internal class InteractiveOverlayWindow(
                     onStarted?.invoke()
                     true
                 }
+                DragEvent.ACTION_DRAG_ENTERED, DragEvent.ACTION_DRAG_LOCATION -> {
+                    if (observingOwnDrag && onDragPosition != null && (event.x != 0f || event.y != 0f)) {
+                        view.getLocationOnScreen(location)
+                        onDragPosition(location[0] + event.x)
+                    }
+                    observingOwnDrag
+                }
                 DragEvent.ACTION_DRAG_ENDED -> {
+                    if (!observingOwnDrag) return@setOnDragListener false
                     DragShareLog.i("DragShare/InteractiveWindow", "content drag ended accepted=${event.result}")
                     dragView.setOnDragListener(null)
                     dragWindowAttributes = null
@@ -210,7 +225,7 @@ internal class InteractiveOverlayWindow(
                 }
                 // Observing the source must never count as accepting its own dropped content.
                 DragEvent.ACTION_DROP -> false
-                else -> true
+                else -> observingOwnDrag
             }
         }
     }

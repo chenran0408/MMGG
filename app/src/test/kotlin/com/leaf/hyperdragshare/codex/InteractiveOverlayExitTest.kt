@@ -2,26 +2,23 @@ package com.leaf.hyperdragshare.codex
 
 import android.app.Dialog
 import android.content.Context
-import android.view.View
-import android.view.ViewGroup
+import android.view.HapticFeedbackConstants
 import android.view.ViewTreeObserver
 import androidx.lifecycle.ViewModel
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
+import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.RuntimeEnvironment
+import org.robolectric.Shadows.shadowOf
 import org.robolectric.annotation.Config
-import org.robolectric.annotation.Implementation
-import org.robolectric.annotation.Implements
 import org.robolectric.annotation.LooperMode
-import org.robolectric.annotation.RealObject
-import org.robolectric.shadow.api.Shadow
 import org.robolectric.shadows.ShadowLooper
-import org.robolectric.shadows.ShadowViewGroup
 import java.lang.reflect.Array
 
 @RunWith(RobolectricTestRunner::class)
@@ -29,22 +26,17 @@ import java.lang.reflect.Array
 @Config(
     manifest = Config.NONE,
     sdk = [35],
-    shadows = [InteractiveOverlayExitTest.PostTrackingViewShadow::class],
 )
 class InteractiveOverlayExitTest {
     private val createdWindows = mutableListOf<InteractiveOverlayWindow>()
 
     @After
-    fun cleanUpWindowsAndShadow() {
-        try {
-            createdWindows.forEach { dialog(it).dismiss() }
-            ShadowLooper.shadowMainLooper().idle()
-            createdWindows.forEach { it.dismiss() }
-            ShadowLooper.shadowMainLooper().idle()
-        } finally {
-            createdWindows.clear()
-            PostTrackingViewShadow.reset()
-        }
+    fun cleanUpWindows() {
+        createdWindows.forEach { dialog(it).dismiss() }
+        ShadowLooper.shadowMainLooper().idle()
+        createdWindows.forEach { it.dismiss() }
+        ShadowLooper.shadowMainLooper().idle()
+        createdWindows.clear()
     }
 
     @Test
@@ -52,7 +44,7 @@ class InteractiveOverlayExitTest {
         var dismissed = 0
         val overlay = window { dismissed++ }
         val decor = overlay.window.decorView
-        PostTrackingViewShadow.track(decor)
+        val initialFeedback = shadowOf(decor).lastHapticFeedbackPerformed()
         val storeModel = ClearableModel()
         overlay.viewModelStore.put("selection", storeModel)
 
@@ -60,7 +52,6 @@ class InteractiveOverlayExitTest {
         val observer = decor.viewTreeObserver
         val ownedListener = requireNotNull(drawListeners(observer).singleOrNull())
         assertTrue(dialog(overlay).isShowing)
-        val postsBeforeDismiss = PostTrackingViewShadow.postsForTrackedView
 
         overlay.dismiss()
 
@@ -74,8 +65,8 @@ class InteractiveOverlayExitTest {
         ownedListener.onDraw()
         ShadowLooper.shadowMainLooper().idle()
 
-        assertEquals(postsBeforeDismiss, PostTrackingViewShadow.postsForTrackedView)
-        assertEquals(0, PostTrackingViewShadow.hapticCallsForTrackedView)
+        assertNull(field(overlay, "pressConfirmedPostedCallback"))
+        assertEquals(initialFeedback, shadowOf(decor).lastHapticFeedbackPerformed())
         assertFalse(dialog(overlay).isShowing)
         assertFalse(decor.isAttachedToWindow)
 
@@ -88,19 +79,18 @@ class InteractiveOverlayExitTest {
     fun firstDrawConfirmsOnceAndRemovesListenerAfterPostedCallback() {
         val overlay = window()
         val decor = overlay.window.decorView
-        PostTrackingViewShadow.track(decor)
 
         assertTrue(overlay.show(PRESS_CONFIRMED_AT))
         val observer = decor.viewTreeObserver
         val ownedListener = requireNotNull(drawListeners(observer).singleOrNull())
-        val postsBeforeDraw = PostTrackingViewShadow.postsForTrackedView
-
         observer.dispatchOnDraw()
+        val callback = postedCallback(overlay)
         observer.dispatchOnDraw()
+        assertSame(callback, postedCallback(overlay))
         ShadowLooper.shadowMainLooper().idle()
 
-        assertEquals(postsBeforeDraw + 1, PostTrackingViewShadow.postsForTrackedView)
-        assertEquals(1, PostTrackingViewShadow.hapticCallsForTrackedView)
+        assertNull(field(overlay, "pressConfirmedPostedCallback"))
+        assertEquals(HapticFeedbackConstants.CONFIRM, shadowOf(decor).lastHapticFeedbackPerformed())
         assertFalse(drawListeners(decor.viewTreeObserver).any { it === ownedListener })
         assertTrue(dialog(overlay).isShowing)
 
@@ -111,16 +101,14 @@ class InteractiveOverlayExitTest {
     fun dismissAfterDrawPostCancelsCallbackAndCapturedRunnableCannotConfirmLater() {
         val overlay = window()
         val decor = overlay.window.decorView
-        PostTrackingViewShadow.track(decor)
+        val initialFeedback = shadowOf(decor).lastHapticFeedbackPerformed()
 
         assertTrue(overlay.show(PRESS_CONFIRMED_AT))
         val observer = decor.viewTreeObserver
         val ownedListener = requireNotNull(drawListeners(observer).singleOrNull())
-        val postsBeforeDraw = PostTrackingViewShadow.postsForTrackedView
 
         observer.dispatchOnDraw()
         val capturedCallback = postedCallback(overlay)
-        assertEquals(postsBeforeDraw + 1, PostTrackingViewShadow.postsForTrackedView)
 
         overlay.dismiss()
         assertFalse(dialog(overlay).isShowing)
@@ -129,8 +117,8 @@ class InteractiveOverlayExitTest {
         capturedCallback.run()
         ShadowLooper.shadowMainLooper().idle()
 
-        assertEquals(postsBeforeDraw + 1, PostTrackingViewShadow.postsForTrackedView)
-        assertEquals(0, PostTrackingViewShadow.hapticCallsForTrackedView)
+        assertNull(field(overlay, "pressConfirmedPostedCallback"))
+        assertEquals(initialFeedback, shadowOf(decor).lastHapticFeedbackPerformed())
         assertFalse(dialog(overlay).isShowing)
         assertFalse(decor.isAttachedToWindow)
     }
@@ -274,44 +262,6 @@ class InteractiveOverlayExitTest {
         override fun onCleared() {
             cleared = true
             clearCount++
-        }
-    }
-
-    @Implements(ViewGroup::class)
-    class PostTrackingViewShadow : ShadowViewGroup() {
-        @RealObject
-        private lateinit var trackedRealView: ViewGroup
-
-        @Implementation
-        override fun post(action: Runnable): Boolean {
-            if (trackedRealView === trackedView) postsForTrackedView++
-            return Shadow.directlyOn(trackedRealView, View::class.java).post(action)
-        }
-
-        @Implementation
-        override fun performHapticFeedback(feedbackConstant: Int): Boolean {
-            if (trackedRealView === trackedView) hapticCallsForTrackedView++
-            return true
-        }
-
-        companion object {
-            private var trackedView: View? = null
-            var postsForTrackedView = 0
-                private set
-            var hapticCallsForTrackedView = 0
-                private set
-
-            fun track(view: View) {
-                trackedView = view
-                postsForTrackedView = 0
-                hapticCallsForTrackedView = 0
-            }
-
-            fun reset() {
-                trackedView = null
-                postsForTrackedView = 0
-                hapticCallsForTrackedView = 0
-            }
         }
     }
 

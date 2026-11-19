@@ -7,6 +7,11 @@ final class AccessibilityCandidateSelector {
     private AccessibilityCandidateSelector() {}
 
     static Selection select(AccessibilityNodeClassifier.Buckets buckets, float x, float y) {
+        return select(buckets, x, y, false);
+    }
+
+    static Selection select(AccessibilityNodeClassifier.Buckets buckets, float x, float y,
+                            boolean preferStrongImage) {
         if (buckets == null) {
             return null;
         }
@@ -14,10 +19,17 @@ final class AccessibilityCandidateSelector {
         if (hit != null) return withAdjacent(hit, buckets);
         hit = firstContaining(buckets.nativeEditable, x, y);
         if (hit != null) return withAdjacent(hit, buckets);
-        hit = firstContaining(buckets.nativeText, x, y);
-        if (hit != null) return withAdjacent(hit, buckets);
-
+        AccessibilityCandidate nativeText = firstContaining(buckets.nativeText, x, y);
         AccessibilityCandidate webText = firstContaining(buckets.webText, x, y);
+        if (preferStrongImage) {
+            hit = firstContainingStrongImage(buckets.webNonText, x, y);
+            if (hit == null) hit = firstContainingStrongImage(buckets.nativeNonText, x, y);
+            AccessibilityCandidate text = nativeText != null ? nativeText : webText;
+            // Prefer actual media within its label, never a larger background behind prose.
+            if (hit != null && (text == null || hit.isInside(text))) return withAdjacent(hit, buckets);
+        }
+        if (nativeText != null) return withAdjacent(nativeText, buckets);
+
         AccessibilityCandidate webImage = firstContaining(buckets.webNonText, x, y);
         if (webText != null && webImage != null) {
             return withAdjacent(webImage.isInside(webText) ? webImage : webText, buckets);
@@ -69,6 +81,15 @@ final class AccessibilityCandidateSelector {
             if (candidate.contains(x, y)) {
                 return candidate;
             }
+        }
+        return null;
+    }
+
+    private static AccessibilityCandidate firstContainingStrongImage(
+            List<AccessibilityCandidate> candidates, float x, float y) {
+        if (candidates == null) return null;
+        for (AccessibilityCandidate candidate : candidates) {
+            if (candidate.strongImage && candidate.contains(x, y)) return candidate;
         }
         return null;
     }

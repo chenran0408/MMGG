@@ -1169,7 +1169,7 @@ PressCaptureSource只在reader建立后接受自动按压；Binder断开或共�
 
 RootTouchSource每Run持解析器/坐标/process，生命周期与回调在主Looper串行；stop后台EOF清理、自有child监督，旧Run不能清理新Run。真实开设备并收到就绪头才ready；正常stop/输入异常补CANCEL。无障碍旧三次重启轮询已删除，首页和应用重载按实际输入/reader判断。
 
-NativePressSystemUiHooks精确Hook目标WM Shell EventReceiver.onInputEvent(InputEvent) before，位于任何handler/边缘/小窗分支前。不钩原生handler入口，因为HyperGesture前置代理消费会让循环break而漏事件。只记录最多32个至少200ms手势的size/major/minor和时长；不读坐标/文本，不改参数/结果/finish/handler顺序，不pilfer。scope尚未在设备启用，未完成原生面积触发。
+历史调查曾在 WM Shell EventReceiver.onInputEvent(InputEvent) 前采样，该旁路未接入产品且已删除。不钩原生handler入口，因为HyperGesture前置代理消费会让循环break而漏事件。只记录最多32个至少200ms手势的size/major/minor和时长；不读坐标/文本，不改参数/结果/finish/handler顺序，不pilfer。scope尚未在设备启用，未完成原生面积触发。
 
 build317完整212 tests/0 failures/0 errors，Lint0 errors/157 warnings/2 hints，assembleDebug通过。316因被删除API的TextInsertionProbe停止，删除旧Probe及manifest入口后317通过。153集中安装一次。下一批新要求：分词去中转站、查词图标、删返回/关闭中间层；这些不是153已完成项。
 

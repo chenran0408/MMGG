@@ -540,21 +540,12 @@ final class DragShareController {
                 recycleOwnedImage(replacement);
                 return;
             }
-            long currentPixels = (long) current.bitmap.getWidth() * current.bitmap.getHeight();
-            long replacementPixels = (long) replacement.bitmap.getWidth()
-                    * replacement.bitmap.getHeight();
-            if (replacementPixels < currentPixels) {
+            if (!CapturedContent.shouldReplaceImage(current, replacement)) {
                 recycleOwnedImage(replacement);
                 return;
             }
-            boolean whileHolding = pendingImagePreviewWhileHolding;
-            DragShareSettings loadedSettings = pendingImageSettings;
-            float x = lastObservedX;
-            float y = lastObservedY;
-            if (modernPreviewWindow != null) {
-                dismissPendingImagePreview(true);
-                showPendingImagePreview(replacement, x, y, loadedSettings,
-                        pressDownTime, whileHolding);
+            if (modernPreviewView != null) {
+                modernPreviewView.setPreviewImage(replacement.bitmap);
             } else {
                 ImageView image = findPreviewImage(previewView);
                 if (image == null) {
@@ -562,9 +553,9 @@ final class DragShareController {
                     return;
                 }
                 image.setImageBitmap(replacement.bitmap);
-                pendingImagePreview = replacement;
-                recycleOwnedImage(current);
             }
+            pendingImagePreview = replacement;
+            recycleOwnedImage(current);
             OperationTrace.event(OperationTrace.id("press", pressDownTime),
                     "preview", "original_image_promoted");
         });
@@ -963,7 +954,7 @@ final class DragShareController {
         if (payload.isImage()) {
             final Session stagedSession = session;
             OperationTrace.event(stagedSession.operationId, "stage", "requested");
-            ImageStagingClient.stage(context, payload.bitmap, new ImageStagingClient.Callback() {
+            ImageStagingClient.stage(context, payload, new ImageStagingClient.Callback() {
                 @Override
                 public void onStaged(Uri uri) {
                     mainHandler.post(() -> {
@@ -985,12 +976,16 @@ final class DragShareController {
                 public void onFailure(Throwable error) {
                     mainHandler.post(() -> {
                         if (!destroyed && !stagedSession.cancelled
-                                && lifecycle.isCurrent(stagedSession.lifecycleToken)) {
+                                && (stagedSession.pendingTarget != null
+                                || lifecycle.isCurrent(stagedSession.lifecycleToken))) {
+                            stagedSession.stagingFailed = true;
                             OperationTrace.event(stagedSession.operationId, "stage",
                                     "failed_" + error.getClass().getSimpleName());
                             log("image staging failed error=" + error.getClass().getSimpleName());
                             if (stagedSession.pendingTarget != null) {
-                                showToast("图片准备失败");
+                                stagedSession.pendingTarget = null;
+                                stagedSession.cancelled = true;
+                                showToast("图片准备失败，请重新拖拽");
                             }
                         } else OperationTrace.event(stagedSession.operationId, "stage", "late_ignored");
                     });
@@ -2092,6 +2087,9 @@ final class DragShareController {
                     || target.isSaveToLocal()
                     || finished.stagedUri != null) {
                 launchShare(finished, target);
+            } else if (finished.stagingFailed) {
+                finished.cancelled = true;
+                showToast("图片准备失败，请重新拖拽");
             } else {
                 finished.pendingTarget = target;
                 showToast("正在准备图片");
@@ -2782,6 +2780,7 @@ final class DragShareController {
         final String operationId;
         final DragShareLifecycle.SessionToken lifecycleToken;
         Uri stagedUri;
+        boolean stagingFailed;
         ShareTarget pendingTarget;
         boolean cancelled;
 

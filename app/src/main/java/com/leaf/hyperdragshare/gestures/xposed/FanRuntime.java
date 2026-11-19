@@ -1,5 +1,7 @@
 package com.leaf.hyperdragshare.gestures.xposed;
 
+import com.leaf.hyperdragshare.codex.HookFeatureFlags;
+
 import android.app.KeyguardManager;
 import android.app.ActivityManager;
 import android.content.BroadcastReceiver;
@@ -15,6 +17,7 @@ import android.graphics.Rect;
 import android.net.Uri;
 import android.os.Bundle;
 import android.os.Handler;
+import android.widget.Toast;
 import android.os.HandlerThread;
 import android.os.Looper;
 import android.os.PowerManager;
@@ -22,7 +25,6 @@ import android.os.VibrationEffect;
 import android.os.Vibrator;
 import android.os.VibratorManager;
 import android.media.session.MediaSessionManager;
-import android.media.AudioManager;
 import android.view.MotionEvent;
 import android.view.ViewConfiguration;
 import android.view.WindowInsets;
@@ -106,6 +108,7 @@ final class FanRuntime {
     private final RecentsCleanCoverController recentsCleanCover;
 
     private final MiniMediaControls miniMediaControls;
+    private final MiniMenuPress miniMenuPress;
 
     private final float cornerTapSlop;
 
@@ -124,7 +127,7 @@ final class FanRuntime {
     private volatile GestureConfig config = GestureConfig.defaults();
 
     boolean notificationFreeformEnabled() {
-        return config.notificationFreeformEnabled;
+        return HookFeatureFlags.startup().freeform() && config.notificationFreeformEnabled;
     }
 
     private volatile List<RuntimeTarget> targets = Collections.emptyList();
@@ -256,7 +259,7 @@ final class FanRuntime {
         overlay = new FanOverlayController(context, mainHandler);
         honeycombOverlay = new HoneycombOverlayController(context, mainHandler);
         fullscreenLauncher = new FullscreenAppLauncher(context);
-        moreAppsOverlay = new MoreAppsOverlayController(context, mainHandler);
+        moreAppsOverlay = new MoreAppsOverlayController(context, mainHandler, this::onMoreAppsVisibilityChanged);
         triggerCapture = new FanTriggerCapture(context, mainHandler, new FanTriggerCapture.Listener() {
 
             @Override
@@ -275,29 +278,11 @@ final class FanRuntime {
         NativeSidebarState.observe(context, configHandler,
                 () -> mainHandler.post(this::refreshOutsideCapture));
         freeform = new HyperOsFreeformBridge(context, classLoader, mainHandler);
-        miniMediaControls.setQuickMenu(new MiniFreeformQuickMenuController(context, windowManager,
-                new MiniFreeformQuickMenuController.Actions() {
-                    @Override public void onMute() {
-                        if (miniMediaControls.toggleMute()) return;
-                        AudioManager audio = context.getSystemService(AudioManager.class);
-                        if (audio == null) return;
-                        try {
-                            boolean muted = audio.isStreamMute(AudioManager.STREAM_MUSIC);
-                            audio.adjustStreamVolume(AudioManager.STREAM_MUSIC,
-                                    muted ? AudioManager.ADJUST_UNMUTE : AudioManager.ADJUST_MUTE, 0);
-                        } catch (Throwable error) {
-                            Log.e("Cannot toggle mini-window mute", error);
-                        }
-                    }
-
-                    @Override public void onFullscreen() {
-                        freeform.fullscreenTrackedOrPendingLaunch();
-                    }
-
-                    @Override public void onClose() {
-                        freeform.dismissTrackedOrPendingLaunch();
-                    }
-                }));
+        miniMenuPress = new MiniMenuPress(mainHandler, viewConfiguration.getScaledTouchSlop());
+        miniMediaControls.setQuickMenu(new MiniFreeformQuickMenuController(context,
+                taskId -> freeform.toggleMiniScale(taskId, () ->
+                        Toast.makeText(context, "当前系统无法调整迷你窗尺寸",
+                                Toast.LENGTH_SHORT).show())));
         outsideGestures = new OutsideGestureRecognizer(mainHandler, viewConfiguration, density,
                 new OutsideGestureRecognizer.Listener() {
                     @Override public void onOutsideAction(boolean doubleTap) {
@@ -336,6 +321,7 @@ final class FanRuntime {
                             BlurredWallpaperCache.clear();
                             overlay.removeNow();
                             honeycombOverlay.removeNow();
+                            miniMediaControls.hideQuickMenu();
                             resetFan(false);
                             refreshGeometryAndCaptures("configuration immediate");
                             updateRecentsCleanCover(config);
@@ -487,8 +473,13 @@ final class FanRuntime {
 
     void onTaskInfo(Object info) {
         freeform.onTaskInfo(info);
-        freeform.updateMiniSurfaceDecoration(info);
-        miniMediaControls.updateMiniMedia(info, config);
+        if (HookFeatureFlags.startup().freeform()) {
+            freeform.updateMiniSurfaceDecoration(info);
+            if (!MiniMediaControls.isTouchableMini(info)) {
+                miniMenuPress.cancelForTask(MiniMediaControls.miniMediaTaskId(info));
+            }
+            mainHandler.post(() -> miniMediaControls.updateMiniMedia(info, config));
+        }
         releaseOutsideCaptureTransitionIfSettled();
         refreshForegroundGestureExclusion();
         refreshTriggerCapture();
@@ -505,7 +496,8 @@ final class FanRuntime {
 
     void onTaskVanished(int taskId) {
         freeform.onTaskVanished(taskId);
-        miniMediaControls.clearMiniMediaForTask(taskId);
+        miniMenuPress.cancelForTask(taskId);
+        mainHandler.post(() -> miniMediaControls.clearMiniMediaForTask(taskId));
         releaseOutsideCaptureTransitionIfSettled();
         refreshForegroundGestureExclusion();
         refreshTriggerCapture();
@@ -518,6 +510,35 @@ final class FanRuntime {
             imeDismissTap = false;
             capturedImeDismissTap = false;
         }
+    }
+
+    boolean onMiniTaskMotion(MotionEvent event, Object taskInfo) {
+        int taskId = MiniMediaControls.isTouchableMini(taskInfo)
+                ? MiniMediaControls.miniMediaTaskId(taskInfo) : -1;
+        if (event.getActionMasked() == MotionEvent.ACTION_DOWN
+                && (miniMediaControls.isQuickMenuShowingFor(taskId) || systemPanelInputBlocked()
+                || OverlayTouchRegions.contains(event.getRawX(), event.getRawY())
+                || NativeSidebarState.owns(event.getRawX(), event.getRawY()))) {
+            taskId = -1;
+        }
+        int heldTaskId = taskId;
+        miniMenuPress.accept(event, heldTaskId, () -> displayInteractiveUnlocked()
+                && !systemPanelInputBlocked()
+                && miniMediaControls.showQuickMenu(taskInfo, config, freeform.isMiniEnlarged(taskInfo)));
+        return miniMenuPress.ownsOpeningMove(event, heldTaskId);
+    }
+
+    boolean consumeMiniSingleTap(Object taskInfo) {
+        int taskId = MiniMediaControls.miniMediaTaskId(taskInfo);
+        return miniMenuPress.consumeSingleTap(taskId) || miniMediaControls.isQuickMenuShowingFor(taskId);
+    }
+
+    boolean miniMenuOwnsTouch(MotionEvent event) {
+        return miniMediaControls.quickMenuContains(event.getRawX(), event.getRawY());
+    }
+
+    void onMiniMenuOutsideDown(float x, float y) {
+        miniMediaControls.dismissMenuOutside(x, y);
     }
 
     void onNativeFreeformMotion(MotionEvent event) {
@@ -557,7 +578,8 @@ final class FanRuntime {
                 visible ? "ime_visible_observed" : "ime_hidden_observed");
         imeVisible = visible;
         imeHeight = visible ? Math.max(0, height) : 0;
-        syncImeGestureProtection(freeform.hasInteractiveFreeform() && visible);
+        syncImeGestureProtection(HookFeatureFlags.startup().freeform()
+                && freeform.hasInteractiveFreeform() && visible);
         if (visible && (state == State.ARMED || state == State.CLAIMED
                 || state == State.ACTIVE || state == State.HONEYCOMB)) {
             resetFan();
@@ -650,6 +672,7 @@ final class FanRuntime {
     }
 
     void onSystemPanelTouchStarted(String source) {
+        mainHandler.post(miniMediaControls::hideQuickMenu);
         long until = android.os.SystemClock.uptimeMillis() + 1800L;
         systemPanelTouchBlockUntil = until;
         outsideCapture.remove();
@@ -760,6 +783,7 @@ final class FanRuntime {
     }
 
     private void handleMotion(MotionEvent event, Object inputMonitor) {
+        if (moreAppsOverlay.isVisible()) return;
         int action = event.getActionMasked();
         if (gestureExcludedDownTime == event.getDownTime()) {
             if (action == MotionEvent.ACTION_UP || action == MotionEvent.ACTION_CANCEL) {
@@ -893,7 +917,7 @@ final class FanRuntime {
             requestOnDemandConfigReload();
             resetFan();
             boolean landscape = width > height;
-            boolean outsideEnabled = config.outsideEnabledFor(landscape);
+            boolean outsideEnabled = outsideEnabledForCurrentDisplay();
             Insets systemSides = systemSideGestureInsets();
             GestureGeometry.HotZoneBounds leftHotZone = hotZoneBounds(width, height, false);
             GestureGeometry.HotZoneBounds rightHotZone = hotZoneBounds(width, height, true);
@@ -911,7 +935,8 @@ final class FanRuntime {
                         hotBottomGapPx());
             }
             Rect pendingLaunch = freeform.pendingLaunchBounds();
-            boolean imeActive = freeform.hasInteractiveFreeform() && inputMethodActive();
+            boolean imeActive = HookFeatureFlags.startup().freeform()
+                    && freeform.hasInteractiveFreeform() && inputMethodActive();
             syncImeGestureProtection(imeActive);
             Rect tracked = freeform.trackedBounds(imeActive);
             Rect ime = tracked == null || !imeActive ? null : visibleImeBounds();
@@ -1047,7 +1072,7 @@ final class FanRuntime {
                             if (fullscreenLaunch) {
                                 launchFullscreenTarget(moreTarget, false);
                             } else {
-                                freeform.launch(moreTarget, launchConfig, this::refreshOutsideCapture);
+                                launchFreeformTarget(moreTarget, launchConfig);
                                 refreshOutsideCaptureAfterLaunch();
                             }
                         }, launchConfig.moreAppsEnhanced);
@@ -1057,7 +1082,7 @@ final class FanRuntime {
                     if (fullscreen) {
                         launchFullscreenTarget(target, false);
                     } else {
-                        freeform.launch(target, config, this::refreshOutsideCapture);
+                        launchFreeformTarget(target, config);
                         refreshOutsideCaptureAfterLaunch();
                     }
                     outsideGestures.clearAll();
@@ -1117,14 +1142,13 @@ final class FanRuntime {
             @Override
             public void onLaunch(RuntimeTarget target) {
                 if (target.isMoreApps()) {
-                    honeycombOverlay.dismiss();
                     resetFan(false);
                     final GestureConfig launchConfig = config;
                     final boolean freeformLaunch = launchConfig.bottomHoneycombFreeformFor(isLandscape());
                     final boolean centeredFullscreen = launchConfig.honeycombCenteredSystemAnimation;
                     moreAppsOverlay.show(moreTarget -> {
                         if (freeformLaunch) {
-                            freeform.launch(moreTarget, launchConfig, FanRuntime.this::refreshOutsideCapture);
+                            launchFreeformTarget(moreTarget, launchConfig);
                             refreshOutsideCaptureAfterLaunch();
                         } else {
                             launchFullscreenTarget(moreTarget, centeredFullscreen);
@@ -1133,7 +1157,7 @@ final class FanRuntime {
                     return;
                 }
                 if (config.bottomHoneycombFreeformFor(isLandscape())) {
-                    freeform.launch(target, config, FanRuntime.this::refreshOutsideCapture);
+                    launchFreeformTarget(target, config);
                     refreshOutsideCaptureAfterLaunch();
                 } else {
                     launchHoneycombFullscreenTarget(target);
@@ -1165,19 +1189,20 @@ final class FanRuntime {
         return true;
     }
 
+    private void launchFreeformTarget(RuntimeTarget target, GestureConfig launchConfig) {
+        if (!freeform.launch(target, launchConfig, this::refreshOutsideCapture)) {
+            Toast.makeText(context, "无法以小窗打开 " + target.label, Toast.LENGTH_SHORT).show();
+        }
+    }
+
     private void launchFullscreenTarget(RuntimeTarget target, boolean centeredSystemAnimation) {
         outsideCapture.remove();
         outsideGestures.clearAll();
-        boolean closingFreeform = freeform.dismissTracked();
-        Runnable launch = () -> {
+        freeform.launchFullscreenAfterClose(() -> {
             boolean launched = fullscreenLauncher.launch(target, centeredSystemAnimation);
             if (!launched)
                 Log.i("Fullscreen target was unavailable");
-        };
-        if (closingFreeform)
-            mainHandler.postDelayed(launch, 220L);
-        else
-            launch.run();
+        });
     }
 
     private void launchHoneycombFullscreenTarget(RuntimeTarget target) {
@@ -1355,7 +1380,7 @@ final class FanRuntime {
 
 
     private boolean runtimeReady() {
-        return config.enabled && displayInteractiveUnlocked();
+        return HookFeatureFlags.startup().gestures(config.enabled) && displayInteractiveUnlocked();
     }
 
     private boolean displayInteractiveUnlocked() {
@@ -1368,7 +1393,7 @@ final class FanRuntime {
     }
 
     private boolean canStartBottom() {
-        return FanRuntimePolicy.canStartBottom(
+        return !moreAppsOverlay.isVisible() && FanRuntimePolicy.canStartBottom(
                 runtimeReady(),
                 imeVisible,
                 targets.size(),
@@ -1388,6 +1413,19 @@ final class FanRuntime {
         triggerCapture.update(captureCornerDown, config.bottomLeftEnabled,
                 config.bottomRightEnabled, config.hotWidthPercent,
                 config.hotHeightPercent, 0, 0, hotBottomGapPx());
+    }
+
+    private void onMoreAppsVisibilityChanged() {
+        if (moreAppsOverlay.isVisible()) {
+            refreshTriggerCapture();
+            outsideCapture.remove();
+            outsideGestures.clearAll();
+        } else {
+            mainHandler.post(() -> {
+                refreshTriggerCapture();
+                refreshOutsideCapture();
+            });
+        }
     }
 
     private void refreshGeometryAndCaptures(String reason) {
@@ -1428,9 +1466,14 @@ final class FanRuntime {
     }
 
     private void refreshOutsideCapture() {
-        boolean hasInteractiveWindow = freeform.hasInteractiveFreeform();
+        if (moreAppsOverlay.isVisible()) {
+            outsideCapture.remove();
+            return;
+        }
+        boolean hasInteractiveWindow = HookFeatureFlags.startup().freeform()
+                && freeform.hasInteractiveFreeform();
         syncImeGestureProtection(hasInteractiveWindow && inputMethodActive());
-        if (!runtimeReady() || !outsideEnabledForCurrentDisplay()) {
+        if (!displayInteractiveUnlocked() || !outsideEnabledForCurrentDisplay()) {
             outsideCapture.remove();
             outsideGestures.clearAll();
             return;
@@ -1575,7 +1618,8 @@ final class FanRuntime {
 
     private boolean outsideEnabledForCurrentDisplay() {
         Rect display = displayBounds();
-        return config.outsideEnabledFor(display.width() > display.height());
+        return HookFeatureFlags.startup().freeform()
+                && config.outsideEnabledFor(display.width() > display.height());
     }
 
     private Insets sideGestureReserves() {
@@ -1918,7 +1962,10 @@ final class FanRuntime {
             configRetryCount = 0;
             configRetryScheduled = false;
             mainHandler.post(() -> {
-                overlay.removeNow();
+                // The old selection geometry and target list belong to this touch stream.
+                // Reset before changing either so a hidden selection cannot launch on UP.
+                if (state != State.IDLE) resetFan();
+                if (honeycombOverlay.isVisible()) honeycombOverlay.removeNow();
                 config = next;
                 ShortcutHostRuntime.installCatalogSource(context);
                 updateRecentsCleanCover(next);
@@ -1926,17 +1973,19 @@ final class FanRuntime {
                 outsideGestures.setDoubleTapTimeout(next.outsideTapWindowMs);
                 targets = Collections.unmodifiableList(new ArrayList<>(nextTargets));
                 honeycombTargets = Collections.unmodifiableList(new ArrayList<>(nextHoneycombTargets));
-                if (activeTargets.isEmpty())
-                    activeTargets = targets;
-                freeform.updateConfig(next);
-                miniMediaControls.refreshMiniMediaConfig(config);
-                if (!next.honeycombEnabled && honeycombOverlay.isVisible()) {
-                    honeycombOverlay.dismiss();
+                activeTargets = targets;
+                boolean landscape = isLandscape();
+                if (FanRuntimePolicy.canStartBottom(HookFeatureFlags.startup().gestures(next.enabled),
+                        false, targets.size(), next.bottomEnabledFor(landscape),
+                        next.bottomLeftEnabled, next.bottomRightEnabled)
+                        && (targets.stream().anyMatch(RuntimeTarget::isMoreApps)
+                        || (next.bottomSecondStageEnabledFor(landscape)
+                        && next.honeycombEnabledFor(landscape)
+                        && honeycombTargets.stream().anyMatch(RuntimeTarget::isMoreApps)))) {
+                    moreAppsOverlay.prepare();
                 }
-                boolean bottomGestureActive = state == State.ARMED || state == State.CLAIMED
-                        || state == State.ACTIVE || state == State.HONEYCOMB;
-                if (next.shouldResetGestureForConfig(bottomGestureActive, nextTargets.size()))
-                    resetFan();
+                freeform.updateConfig(next);
+                if (HookFeatureFlags.startup().freeform()) miniMediaControls.refreshMiniMediaConfig(config);
                 refreshTriggerCapture();
                 refreshOutsideCapture();
             Log.i("Configuration loaded targets=" + nextTargets.size() + " trigger=" + next.triggerPercent + "% selection=" + next.selectionRadiusPercent + "% hot=" + next.hotWidthPercent + "x" + next.hotHeightPercent + "% icon=" + next.iconSizeDp + "dp animation=" + next.fanAnimationsEnabled + "@" + next.fanAnimationSpeed + "% reveal=" + next.fanRevealAmount + "% rotation=" + next.fanRotationDegrees + "deg ring=" + next.fanSelectionRing + " circularIcons=" + next.forceCircularIcons + " honeycomb=" + next.honeycombEnabled + "/" + nextHoneycombTargets.size() + " mode=" + next.honeycombMode + " bottomFullscreen=" + next.bottomPortraitFullscreen + "/" + next.bottomLandscapeFullscreen + " bottomFreeform=" + next.bottomPortraitHoneycombFreeform + "/" + next.bottomLandscapeHoneycombFreeform + " blankSettle=" + next.bottomHoneycombSettleMs + "ms returnToFan=" + next.triggerPercent + "% outsideTap=" + next.outsideTapWindowMs + "ms outsideEnabled=" + next.outsideEnabled + "/" + next.outsidePortraitEnabled + "/" + next.outsideLandscapeEnabled + " honeycombFollow=" + next.honeycombFollowFinger + " loadMs=" + (android.os.SystemClock.elapsedRealtime() - loadStartedAt));

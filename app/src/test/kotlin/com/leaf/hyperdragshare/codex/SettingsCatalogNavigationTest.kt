@@ -22,6 +22,15 @@ import java.util.concurrent.atomic.AtomicReference
 @Config(manifest = Config.NONE, sdk = [33])
 class SettingsCatalogNavigationTest {
     @Test
+    fun resultLocationOmitsRepeatedTitleWhileFullTitleRemainsSearchable() {
+        val entry = SettingEntry("runtime.restart.Android", "软重启 Android",
+            SettingModule.GENERAL, "高级重启") {}
+        assertEquals("通用设置 › 高级重启", entry.location)
+        assertEquals("通用设置 › 高级重启 › 软重启 Android", entry.path)
+        assertTrue(entry.matches("Android 高级重启"))
+    }
+
+    @Test
     fun actualGestureCatalogEntriesMapExactlyOnceAndKeepSearchFocusDestination() {
         val entries = productionGestureEntries()
         val assignedGroups = GESTURE_SETTING_CATEGORIES.flatMap { it.groups }
@@ -45,6 +54,9 @@ class SettingsCatalogNavigationTest {
         assertTrue(bottomEntry.matches("底角斜滑"))
         val visibleCategoryRows = entriesForGestureCategory(entries, GESTURE_SETTING_CATEGORIES.first { it.id == "bottom" })
             .filter { it.enabled || it.prerequisite == null || it.id == bottomEntry.id }
+        assertEquals("bottom_targets", visibleCategoryRows.first().id)
+        val honeycomb = GESTURE_SETTING_CATEGORIES.first { it.id == "honeycomb" }
+        assertEquals("honeycomb_targets", entriesForGestureCategory(entries, honeycomb).first().id)
         val bottomIndex = settingEntryListIndex(visibleCategoryRows, bottomEntry.id)
         assertNotNull(bottomIndex)
         assertEquals(bottomIndex, settingEntryListKeys(visibleCategoryRows).indexOf(bottomEntry.id))

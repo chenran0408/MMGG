@@ -629,14 +629,8 @@ final class GestureConfig {
                 : bottomPortraitHoneycombFreeform;
     }
 
-    boolean shouldResetGestureForConfig(boolean bottomGestureActive,
-                                        int bottomTargetCount) {
-        if (!enabled) return true;
-        return bottomGestureActive && bottomTargetCount < 3;
-    }
-
     boolean honeycombEnabledFor(boolean landscape) {
-        return honeycombEnabled;
+        return honeycombEnabled && (!landscape || honeycombLandscapeEnabled);
     }
 
     boolean customWindowBoundsEnabledFor(boolean landscape) {

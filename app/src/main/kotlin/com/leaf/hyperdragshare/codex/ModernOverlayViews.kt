@@ -11,6 +11,7 @@ import android.view.ViewGroup
 import android.view.ViewOutlineProvider
 import android.view.animation.PathInterpolator
 import android.widget.FrameLayout
+import android.widget.ImageView
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.FastOutLinearInEasing
 import androidx.compose.animation.core.FastOutSlowInEasing
@@ -64,6 +65,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.viewinterop.AndroidView
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleOwner
 import androidx.lifecycle.LifecycleRegistry
@@ -304,16 +306,24 @@ internal abstract class ModernOverlayComposeView(
 
 internal class ModernPreviewOverlayView @JvmOverloads constructor(
     context: Context,
-    private val payload: CapturedContent,
+    payload: CapturedContent,
     private val settings: DragShareSettings,
     nativeGlassBackdrop: NativeGlassBackdrop = NativeGlassBackdrop(context),
 ) : ModernOverlayComposeView(context, settings, nativeGlassBackdrop) {
+    private val previewText = payload.text.orEmpty()
+    private val previewImage = if (payload.isImage()) ImageView(context).apply {
+        scaleType = ImageView.ScaleType.FIT_CENTER
+        importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
+        setImageBitmap(payload.bitmap)
+    } else null
+
+    fun setPreviewImage(bitmap: Bitmap) {
+        previewImage?.setImageBitmap(bitmap)
+    }
+
     init {
         setOverlayContent {
             ModernOverlayTheme(settings) {
-                val image = remember(payload.bitmap) {
-                    payload.bitmap?.takeIf { !it.isRecycled }?.asImageBitmap()
-                }
                 ModernFrostedSurface(
                     settings = settings,
                     visible = contentVisible,
@@ -327,15 +337,14 @@ internal class ModernPreviewOverlayView @JvmOverloads constructor(
                             .padding(10.dp),
                         contentAlignment = Alignment.Center,
                     ) {
-                        if (payload.isImage() && image != null) {
-                            Image(
-                                bitmap = image,
-                                contentDescription = null,
+                        if (previewImage != null) {
+                            AndroidView(
+                                factory = { previewImage },
                                 modifier = Modifier.fillMaxSize(),
                             )
                         } else {
                             Text(
-                                text = payload.text.orEmpty(),
+                                text = previewText,
                                 color = MiuixTheme.colorScheme.onSurfaceContainer,
                                 fontSize = 14.sp,
                                 lineHeight = 19.sp,

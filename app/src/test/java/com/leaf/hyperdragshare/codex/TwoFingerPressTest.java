@@ -129,6 +129,7 @@ public final class TwoFingerPressTest {
             }
             ShadowSystemClock.advanceBy(java.time.Duration.ofMillis(600));
             ShadowLooper.shadowMainLooper().idle();
+            drainRecordingCheck(source);
             assertEquals(!twoFinger, controller.hasPendingImagePreview());
             assertEquals(twoFinger ? 1 : 0, provider.bigBangOpenCount);
             if (twoFinger) assertFalse(provider.bigBangRequest.getBoolean("drag_preview"));
@@ -227,6 +228,7 @@ public final class TwoFingerPressTest {
                 assertEquals(1, provider.bigBangOpenCount);
             } else {
                 assertEquals(!disableSingleFinger, detector.isFired());
+                drainRecordingCheck(source);
                 assertEquals(!disableSingleFinger, controller.hasPendingImagePreview());
                 assertNull(provider.bigBangRequest);
                 ui.post(() -> source.onPointerEvent(MotionEvent.ACTION_UP, 20f, 30f,
@@ -314,6 +316,7 @@ public final class TwoFingerPressTest {
                     screenshot, "com.tencent.mm", new Rect(10, 20, 100, 120)));
             ShadowSystemClock.advanceBy(java.time.Duration.ofMillis(601));
             ShadowLooper.shadowMainLooper().idle();
+            drainRecordingCheck(source);
 
             PressTriggerDetector detector = (PressTriggerDetector) field(source, "detector").get(source);
             assertFalse("single-finger confirmation must not start OCR",
@@ -784,6 +787,7 @@ public final class TwoFingerPressTest {
 
             ShadowSystemClock.advanceBy(java.time.Duration.ofMillis(700));
             ShadowLooper.shadowMainLooper().idle();
+            drainRecordingCheck(source);
             assertNull("single-finger duration must not open BigBang",
                     provider.bigBangRequest);
             assertTrue("single-finger text shows a cancellable drag preview",
@@ -985,6 +989,11 @@ public final class TwoFingerPressTest {
         throw new NoSuchFieldException(name);
     }
 
+    private static void drainRecordingCheck(PressCaptureSource source) throws Exception {
+        ((ExecutorService) field(source, "recordingWorker").get(source)).submit(() -> {}).get(5, TimeUnit.SECONDS);
+        ShadowLooper.shadowMainLooper().idle();
+    }
+
     private static void fieldUnchecked(Object target, String name, Object value) {
         try {
             field(target, name).set(target, value);
@@ -1036,6 +1045,7 @@ public final class TwoFingerPressTest {
                 return bounds;
             }
             @Override public Bundle captureImage(String source, int windowId, Bundle bounds) { return bounds; }
+            @Override public boolean startedMicRecording(String source, long downTime) { return false; }
             @Override public boolean verifySource(String source) { return true; }
             @Override public boolean isOpen() { return true; }
             @Override public void close() { }

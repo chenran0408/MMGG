@@ -36,48 +36,39 @@ import com.leaf.hyperdragshare.compat.xposed.XC_MethodHook;
 import com.leaf.hyperdragshare.compat.xposed.XposedHelpers;
 import com.leaf.hyperdragshare.compat.xposed.XposedBridge;
 
-/** Exact adapter for SecurityCenter 40001365. It never replaces the Home gesture/Binder handoff. */
+/** Extends SecurityCenter's sidebar only when its expected host interface is present. */
 final class NativeSidebarHooks {
     private static final String TAG = "DragShare/Sidebar";
-    private static final String WRAPPER = "com.miui.dock.sidebar.p";
-    private static final String TURBO = "com.miui.gamebooster.windowmanager.newbox.TurboLayout";
     private static final Map<Object, Panel> panels = new IdentityHashMap<>();
     private static final Map<Object, View[]> watched = new IdentityHashMap<>();
     private static final Map<View, android.view.ViewTreeObserver.OnGlobalLayoutListener> listeners = new IdentityHashMap<>();
+    private static final java.util.Set<Object> unavailable = java.util.Collections.newSetFromMap(new IdentityHashMap<>());
     private static final Binder reporter = new Binder();
     private static int[] lastRegions = new int[0];
     private static boolean extensionFailed;
     private static final ExecutorService ipc = Executors.newSingleThreadExecutor(r -> new Thread(r, "sidebar-stash"));
 
-    static void install(ClassLoader loader) {
+    static void install(ClassLoader loader, boolean stashEnabled, long hostVersion) {
+        var hooks = new java.util.ArrayList<XC_MethodHook.Unhook>();
         try {
-            Class<?> wrapper = XposedHelpers.findClass(WRAPPER, loader);
-            Class<?> turbo = XposedHelpers.findClass(TURBO, loader);
-            Class<?> dockSize = XposedHelpers.findClass(
-                    "com.miui.gamebooster.windowmanager.newbox.y2", loader);
+            SidebarHostContract host = SidebarHostContract.resolve(loader);
             // Native layout and animation must reserve the same space before either measures the dock.
-            for (String method : new String[]{"B", "C", "H", "o"}) wrapper.getDeclaredMethod(method);
-            for (String method : new String[]{"getDockLayout", "getAppsLayout", "getBoxView", "F", "D", "G", "e0"})
-                turbo.getDeclaredMethod(method);
-            dockSize.getDeclaredMethod("c");
-            XposedHelpers.findClass("com.miui.gamebooster.windowmanager.newbox.p0", loader).getDeclaredMethod("J");
-            turbo.getDeclaredField("j"); turbo.getDeclaredField("s");
-            XposedHelpers.findAndHookMethod(dockSize, "c", new XC_MethodHook() {
+            if (stashEnabled) hooks.add(XposedBridge.hookMethod(host.measure(), new XC_MethodHook() {
                 @Override protected void afterHookedMethod(MethodHookParam param) {
-                    if (param.hasThrowable() || extensionFailed || watched.isEmpty()) return;
+                    if (param.hasThrowable() || extensionFailed || !unavailable.isEmpty() || watched.isEmpty()) return;
                     Context context = watched.values().iterator().next()[0].getContext();
                     int header = Math.round(48 * context.getResources().getDisplayMetrics().density);
                     param.setResult((int) param.getResult() + header);
                 }
-            });
-            XposedBridge.hookAllConstructors(wrapper, new XC_MethodHook() {
+            }));
+            var observe = new XC_MethodHook() {
                 @Override protected void afterHookedMethod(MethodHookParam param) {
+                    if (param.hasThrowable()) return;
                     Object owner = param.thisObject;
-                    View cover = (View) XposedHelpers.callMethod(owner, "w");
-                    View body = (View) XposedHelpers.callMethod(owner, "B");
                     try {
-                        if (cover.getContext().getPackageManager().getPackageInfo("com.miui.securitycenter", 0)
-                                .getLongVersionCode() != 40001365L) return;
+                        View cover = (View) XposedHelpers.callMethod(owner, "w");
+                        View body = (View) XposedHelpers.callMethod(owner, "B");
+                        if (cover == null || body == null) return;
                         watched.put(owner, new View[]{cover, body});
                         for (View view : new View[]{cover, body}) {
                             android.view.ViewTreeObserver observer = view.getViewTreeObserver();
@@ -87,53 +78,64 @@ final class NativeSidebarHooks {
                             listeners.put(view, listener);
                             observer.addOnGlobalLayoutListener(listener);
                         }
-                    } catch (PackageManager.NameNotFoundException | RuntimeException error) {
+                    } catch (RuntimeException error) {
                         DragShareLog.w(TAG, "Cannot observe native sidebar handle", error);
                     }
                 }
-            });
-            XposedHelpers.findAndHookMethod("com.miui.gamebooster.service.DockWindowManagerService", loader,
-                    "onDestroy", new XC_MethodHook() {
+            };
+            for (var constructor : host.wrapper().getDeclaredConstructors()) {
+                hooks.add(XposedBridge.hookMethod(constructor, observe));
+            }
+            hooks.add(XposedBridge.hookMethod(host.destroy(), new XC_MethodHook() {
                 @Override protected void beforeHookedMethod(MethodHookParam param) {
                     for (Panel panel : panels.values()) panel.dispose();
                     panels.clear();
                     listeners.forEach((view, listener) -> {
                         if (view.getViewTreeObserver().isAlive()) view.getViewTreeObserver().removeOnGlobalLayoutListener(listener);
                     });
-                    listeners.clear(); watched.clear();
+                    listeners.clear(); watched.clear(); unavailable.clear();
                     reportRegions((Context) param.thisObject);
                 }
-            });
-            XposedHelpers.findAndHookMethod(wrapper, "W", boolean.class, new XC_MethodHook() {
+            }));
+            hooks.add(XposedBridge.hookMethod(host.open(), new XC_MethodHook() {
                 @Override protected void afterHookedMethod(MethodHookParam param) {
+                    if (param.hasThrowable()) return;
                     if (!(boolean) param.args[0]) {
                         Panel panel = panels.remove(param.thisObject);
                         if (panel != null) panel.dispose();
+                        unavailable.remove(param.thisObject);
                         View view = (View) XposedHelpers.callMethod(param.thisObject, "B");
-                        view.post(() -> reportRegions(view.getContext()));
+                        if (view != null) view.post(() -> reportRegions(view.getContext()));
                         return;
                     }
                     Object owner = param.thisObject;
                     View view = (View) XposedHelpers.callMethod(owner, "C");
+                    if (view == null) return;
+                    if (!stashEnabled) {
+                        view.post(() -> reportRegions(view.getContext()));
+                        return;
+                    }
                     // The open callback is already on the sidebar UI thread. Attach before its next
                     // frame when the native container is ready; only queue when it is not attached yet.
                     if (view.isAttachedToWindow()) attach(owner);
                     else view.post(() -> attach(owner));
                 }
-            });
-            XposedHelpers.findAndHookMethod(turbo, "e0", new XC_MethodHook() {
+            }));
+            if (stashEnabled) hooks.add(XposedBridge.hookMethod(host.search(), new XC_MethodHook() {
                 @Override protected void afterHookedMethod(MethodHookParam param) {
+                    if (param.hasThrowable()) return;
                     Object owner = XposedHelpers.callMethod(param.thisObject, "getSidebarWrapper");
                     Panel panel = panels.get(owner);
                     if (panel != null && !panel.switching) {
                         try { panel.nativeSearchChanged(); }
-                        catch (RuntimeException error) { panel.fail(error); }
+                        catch (RuntimeException error) { extensionFailed = true; panel.fail(error); }
                     }
                 }
-            });
-            DragShareLog.i(TAG, "exact sidebar hooks installed build=" + BuildConfig.VERSION_CODE);
-        } catch (ReflectiveOperationException | XposedHelpers.ClassNotFoundError | RuntimeException error) {
-            DragShareLog.w(TAG, "Sidebar interface unavailable; native behavior retained", error);
+            }));
+            DragShareLog.i(TAG, "sidebar interface matched version=" + hostVersion + " build=" + BuildConfig.VERSION_CODE);
+        } catch (ReflectiveOperationException | RuntimeException | LinkageError error) {
+            hooks.forEach(XC_MethodHook.Unhook::unhook);
+            DragShareLog.w(TAG, "Sidebar interface unavailable version=" + hostVersion, error);
         }
     }
 
@@ -171,22 +173,19 @@ final class NativeSidebarHooks {
     }
 
     private static void attach(Object owner) {
-        if (extensionFailed || panels.containsKey(owner) || !(boolean) XposedHelpers.callMethod(owner, "H")) return;
+        if (extensionFailed || panels.containsKey(owner) || unavailable.contains(owner)) return;
         long started = SystemClock.elapsedRealtime();
-        RelativeLayout turbo = (RelativeLayout) XposedHelpers.callMethod(owner, "C");
         try {
-            long version = turbo.getContext().getPackageManager().getPackageInfo("com.miui.securitycenter", 0).getLongVersionCode();
-            if (version != 40001365L || !(boolean) XposedHelpers.callMethod(turbo, "F")) {
-                DragShareLog.w(TAG, "Sidebar version/layout unsupported; native behavior retained version=" + version);
-                return;
-            }
+            if (!(boolean) XposedHelpers.callMethod(owner, "H")) return;
+            RelativeLayout turbo = (RelativeLayout) XposedHelpers.callMethod(owner, "C");
+            if (!(boolean) XposedHelpers.callMethod(turbo, "F")) return;
             Panel panel = new Panel(owner, turbo);
             panels.put(owner, panel);
             panel.attach();
             DragShareLog.i(TAG, "native sidebar attached scene=" + panel.scene
                     + " elapsed_ms=" + (SystemClock.elapsedRealtime() - started));
-        } catch (PackageManager.NameNotFoundException | RuntimeException error) {
-            extensionFailed = true;
+        } catch (RuntimeException error) {
+            unavailable.add(owner);
             Panel panel = panels.remove(owner);
             if (panel != null) panel.dispose();
             DragShareLog.w(TAG, "Unable to attach sidebar rail; native behavior restored", error);
@@ -382,7 +381,9 @@ final class NativeSidebarHooks {
                     ISidebarContent lease = content;
                     if (current == generation && lease != null && width > 0 && height > 0) ipc.execute(() -> {
                         try { lease.resize(width, height); }
-                        catch (RemoteException error) { turbo.post(() -> fail(error)); }
+                        catch (RemoteException error) {
+                            turbo.post(() -> { if (current == generation && content == lease) fail(error); });
+                        }
                     });
                 }
                 @Override public void surfaceDestroyed(SurfaceHolder holder) {
@@ -463,9 +464,10 @@ final class NativeSidebarHooks {
                 int scaledHotspotX, int scaledHotspotY, boolean shadowV1, ISidebarDragCallback callback) {
             SurfaceView source = surface;
             String operation = OperationTrace.read(clip);
+            String stashSession = clip == null ? null : StashDragContract.session(clip.getDescription());
             int allowedFlags = View.DRAG_FLAG_GLOBAL | View.DRAG_FLAG_GLOBAL_URI_READ;
             if (disposed || selected != Section.STASH || content == null || dragCallback != null
-                    || source == null || !source.isAttachedToWindow() || clip == null || clip.getItemCount() == 0
+                    || source == null || !source.isAttachedToWindow() || stashSession == null || clip.getItemCount() == 0
                     || (flags & View.DRAG_FLAG_GLOBAL) == 0 || (flags & ~allowedFlags) != 0) {
                 DragShareLog.w(TAG, "stash drag rejected disposed=" + disposed
                         + " mounted=" + (content != null) + " active=" + (dragCallback != null)
@@ -489,6 +491,8 @@ final class NativeSidebarHooks {
             final ISidebarDragCallback session = callback;
             source.setOnDragListener((view, event) -> {
                 if (event.getAction() == android.view.DragEvent.ACTION_DRAG_STARTED) {
+                    if (dragCallback != session || !StashDragContract.matches(stashSession, event.getClipDescription()))
+                        return false;
                     setDragWindowPassThrough(true);
                     return true;
                 }
@@ -604,10 +608,10 @@ final class NativeSidebarHooks {
 
         void fail(Exception error) {
             if (disposed) { DragShareLog.w(TAG, "Previous sidebar session failed after closing error=" + error.getClass().getSimpleName()); return; }
-            extensionFailed = true;
             DragShareLog.w(TAG, "Sidebar integration failed; restoring native UI error=" + error.getClass().getSimpleName());
+            unavailable.add(owner);
             panels.remove(owner); dispose();
-            Toast.makeText(context, "侧边栏扩展暂不可用，已保留原生功能", Toast.LENGTH_LONG).show();
+            Toast.makeText(context, "侧边栏中转站暂不可用，可从 MMGG 或中转站磁贴打开", Toast.LENGTH_LONG).show();
         }
 
         void dispose() {

@@ -10,6 +10,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -31,6 +32,9 @@ import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.layout.imePadding
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
@@ -72,6 +76,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.viewinterop.AndroidView
 import top.yukonga.miuix.kmp.theme.MiuixTheme
 import top.yukonga.miuix.kmp.basic.Text
@@ -104,6 +109,12 @@ internal fun selectionToolbarVisibleAfterGesture(
     hasSelection: Boolean,
     gestureActive: Boolean,
 ): Boolean = if (gestureActive) currentVisible else hasSelection
+
+// Each side of the inline header needs two 48 dp buttons plus their gap.
+internal fun bigBangHeaderNeedsStack(panelWidth: Dp, horizontalInsets: Dp, fontScale: Float): Boolean {
+    val columnWidth = (panelWidth - horizontalInsets - 28.dp) / 3
+    return columnWidth < maxOf(104.dp, (80f * fontScale).dp)
+}
 
 internal enum class BigBangMoreAction {
     Dictionary,
@@ -183,12 +194,10 @@ internal fun BigBangOverlayContent(
     }
     val actionReady = !isSegmenting && totalCharacterCount > 0
     val hasSelectionToolbar = actionReady && selectionToolbarVisible
+    val showDragHandle = dragPreviewEnabled || selectionToolbarVisible
     val naturalPanelHeight = (bodyHeightPx / density).dp + 187.dp +
         (if (isRecognizing) 88.dp else 0.dp) +
-        (if (dragPreviewEnabled || hasTextSelection) 48.dp else 0.dp)
-    val panelMetrics = if (maximumMetrics.fullScreen) maximumMetrics else maximumMetrics.copy(
-        height = minOf(maximumMetrics.height, naturalPanelHeight),
-    )
+        (if (showDragHandle) 48.dp else 0.dp)
     var dragOffsetXdp by remember(panelOffsetXdp) { mutableFloatStateOf(panelOffsetXdp) }
     var dragOffsetYdp by remember(panelOffsetYdp) { mutableFloatStateOf(panelOffsetYdp) }
     val panelBackground = MiuixTheme.colorScheme.background
@@ -206,7 +215,7 @@ internal fun BigBangOverlayContent(
     val legacyActionColor = MiuixTheme.colorScheme.onSurfaceVariantActions.toArgb()
     val scrimColor = Color.Black.copy(alpha = if (dark) 0.62f else 0.48f)
     val shadowColor = Color.Black.copy(alpha = 0.5f)
-    val panelShape = androidx.compose.foundation.shape.RoundedCornerShape(panelMetrics.cornerRadius)
+    val panelShape = RoundedCornerShape(maximumMetrics.cornerRadius)
     var panelVisible by remember { mutableStateOf(false) }
     var showMoreMenu by remember { mutableStateOf(false) }
     var textDragStarted by remember { mutableStateOf(false) }
@@ -214,6 +223,7 @@ internal fun BigBangOverlayContent(
     var showSelectionMore by remember { mutableStateOf(false) }
     var showEditor by remember { mutableStateOf(false) }
     var editorText by remember { mutableStateOf("") }
+    val editorFocus = remember { FocusRequester() }
     val focusManager = LocalFocusManager.current
     val keyboard = LocalSoftwareKeyboardController.current
     var dismissing by remember { mutableStateOf(false) }
@@ -288,19 +298,38 @@ internal fun BigBangOverlayContent(
 
     BackHandler(onBack = requestDismiss)
     ApplyOverlaySystemBars(
-        statusBarColor = if (panelMetrics.fullScreen) topBarColor else Color.Transparent,
-        navigationBarColor = if (panelMetrics.fullScreen) bottomBarColor else Color.Transparent,
+        statusBarColor = if (maximumMetrics.fullScreen) topBarColor else Color.Transparent,
+        navigationBarColor = if (maximumMetrics.fullScreen) bottomBarColor else Color.Transparent,
         darkIcons = !dark,
     )
     BoxWithConstraints(Modifier.fillMaxSize()) {
       val availableWidth = maxWidth
       val availableHeight = maxHeight
-      val sideMargin = if (panelMetrics.fullScreen) 0.dp else 12.dp
-      val placedMetrics = panelMetrics.copy(
-          width = minOf(panelMetrics.width, (availableWidth - sideMargin * 2).coerceAtLeast(0.dp)),
-          height = minOf(panelMetrics.height, availableHeight),
+      val sideMargin = if (maximumMetrics.fullScreen) 0.dp else 12.dp
+      val panelWidth = minOf(maximumMetrics.width, (availableWidth - sideMargin * 2).coerceAtLeast(0.dp))
+      val stackedTitle = bigBangHeaderNeedsStack(panelWidth,
+          maximumMetrics.leftSystemInset + maximumMetrics.rightSystemInset, configuration.fontScale)
+      val singleActionRow = availableHeight < 360.dp && panelWidth -
+          maximumMetrics.leftSystemInset - maximumMetrics.rightSystemInset >= 360.dp
+      val extraHeaderRoom = if (stackedTitle && !maximumMetrics.fullScreen) 48.dp else 0.dp
+      val preferredHeight = if (maximumMetrics.fullScreen) maximumMetrics.height
+          else naturalPanelHeight + extraHeaderRoom
+      val placedMetrics = maximumMetrics.copy(
+          width = panelWidth,
+          height = minOf(preferredHeight, maximumMetrics.height + extraHeaderRoom,
+              maximumMetrics.safeHeight, availableHeight),
           offsetY = 0.dp,
       )
+      DisposableEffect(scroller, singleActionRow, density) {
+          val top = scroller.paddingTop
+          val bottom = scroller.paddingBottom
+          if (singleActionRow) scroller.setPadding(scroller.paddingLeft,
+              (8 * density).toInt(), scroller.paddingRight, (8 * density).toInt())
+          onDispose {
+              if (singleActionRow) scroller.setPadding(scroller.paddingLeft, top,
+                  scroller.paddingRight, bottom)
+          }
+      }
       val maxOffsetX = ((availableWidth - placedMetrics.width) / 2 - sideMargin).coerceAtLeast(0.dp)
       val maxOffsetY = ((availableHeight - placedMetrics.height) / 2).coerceAtLeast(0.dp)
       val placedOffsetX = dragOffsetXdp.dp.coerceIn(-maxOffsetX, maxOffsetX)
@@ -325,7 +354,7 @@ internal fun BigBangOverlayContent(
             shape = panelShape,
             backgroundColor = panelBackground.copy(alpha = panelOpacity),
             borderColor = panelBorder.copy(alpha = panelOpacity),
-            shadowColor = if (panelMetrics.multiWindow) null else shadowColor,
+            shadowColor = if (maximumMetrics.multiWindow) null else shadowColor,
         ) {
             OverlayPanelScaffold(
                 topBar = {
@@ -346,6 +375,7 @@ internal fun BigBangOverlayContent(
                         topInset = placedMetrics.topSystemInset,
                         leftInset = placedMetrics.leftSystemInset,
                         rightInset = placedMetrics.rightSystemInset,
+                        stackedTitle = stackedTitle,
                         leading = {
                             Row(verticalAlignment = Alignment.CenterVertically) {
                                 BigBangIconAction(
@@ -413,7 +443,7 @@ internal fun BigBangOverlayContent(
                                 top = 6.dp, bottom = 6.dp + placedMetrics.bottomSystemInset),
                         verticalArrangement = Arrangement.spacedBy(2.dp),
                     ) {
-                        if (dragPreviewEnabled || hasTextSelection) {
+                        if (showDragHandle) {
                             Row(
                                 modifier = Modifier.fillMaxWidth().height(44.dp)
                                     .background(MiuixTheme.colorScheme.surfaceContainer,
@@ -457,22 +487,23 @@ internal fun BigBangOverlayContent(
                                     maxLines = 1,
                                     overflow = TextOverflow.Ellipsis,
                                 )
-                                Text(
-                                    text = "按住拖动",
-                                    color = MiuixTheme.colorScheme.primary,
-                                    fontSize = 12.sp,
-                                )
+                                if (hasTextSelection) {
+                                    Text(
+                                        text = "按住拖动",
+                                        color = MiuixTheme.colorScheme.primary,
+                                        fontSize = 12.sp,
+                                    )
+                                }
                             }
                         }
-                        if (dragPreviewEnabled || hasTextSelection) {
+                        if (showDragHandle) {
                             Box(
                                 Modifier.fillMaxWidth().height(1.dp)
                                     .background(panelBorder.copy(alpha = panelOpacity)),
                             )
                         }
                         if (hasSelectionToolbar) {
-                            Row(modifier = Modifier.fillMaxWidth().height(56.dp),
-                                verticalAlignment = Alignment.CenterVertically) {
+                            BigBangActionRows(singleActionRow, first = {
                                 Box(Modifier.weight(1f), contentAlignment = Alignment.Center) {
                                     BigBangReferenceSelectionAction(
                                         R.drawable.boom_chips_all_search_normal,
@@ -496,9 +527,7 @@ internal fun BigBangOverlayContent(
                                         { onMoreAction(BigBangMoreAction.Split) }, canSplit,
                                     )
                                 }
-                            }
-                            Row(modifier = Modifier.fillMaxWidth().height(56.dp),
-                                verticalAlignment = Alignment.CenterVertically) {
+                            }, second = {
                                 Box(Modifier.weight(1f), contentAlignment = Alignment.Center) {
                                     BigBangReferenceSelectionAction(
                                         R.drawable.boom_chips_all_share_normal,
@@ -521,9 +550,9 @@ internal fun BigBangOverlayContent(
                                         "更多选中操作", { showSelectionMore = true }, actionReady,
                                     )
                                 }
-                            }
+                            })
                         } else {
-                            Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                            BigBangActionRows(singleActionRow, first = {
                                 BigBangToolbarAction(Modifier.weight(1f), MiuixIcons.Copy, "复制",
                                     if (copying) "正在复制" else "复制选中内容或原文", onCopy,
                                     actionReady && !copying, primary = true)
@@ -533,8 +562,7 @@ internal fun BigBangOverlayContent(
                                     "用词典查询选中内容", { onMoreAction(BigBangMoreAction.Dictionary) }, actionReady)
                                 BigBangToolbarAction(Modifier.weight(1f), MiuixIcons.Translate, "翻译",
                                     "翻译选中内容或原文", { onMoreAction(BigBangMoreAction.Translate) }, actionReady)
-                            }
-                            Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                            }, second = {
                                 BigBangToolbarAction(Modifier.weight(1f), MiuixIcons.Link, "直达",
                                     "链接、邮箱与电话直达", {
                                         onMoreAction(BigBangMoreAction.Direct)
@@ -542,7 +570,7 @@ internal fun BigBangOverlayContent(
                                 BigBangToolbarAction(Modifier.weight(1f), MiuixIcons.Folder, "中转站",
                                     if (stashing) "正在加入中转站" else "加入中转站", onStash,
                                     actionReady && !stashing)
-                            }
+                            })
                         }
                     }
                 },
@@ -589,18 +617,26 @@ internal fun BigBangOverlayContent(
             showEditor = false
         },
     ) {
-        Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
+        Column(
+            modifier = Modifier.imePadding().verticalScroll(rememberScrollState()),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
             BasicTextField(
                 value = editorText,
                 onValueChange = { editorText = it },
                 modifier = Modifier
                     .fillMaxWidth()
+                    .focusRequester(editorFocus)
                     .heightIn(min = 100.dp, max = 240.dp)
                     .background(MiuixTheme.colorScheme.surfaceContainer, RoundedCornerShape(16.dp))
                     .padding(16.dp),
                 textStyle = TextStyle(color = MiuixTheme.colorScheme.onSurface, fontSize = 16.sp),
                 cursorBrush = SolidColor(MiuixTheme.colorScheme.primary),
             )
+            LaunchedEffect(Unit) {
+                editorFocus.requestFocus()
+                keyboard?.show()
+            }
             Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                 TextButton(
                     text = stringResource(android.R.string.cancel),
@@ -711,6 +747,23 @@ internal fun BigBangOverlayContent(
                 }
             }
         }
+    }
+}
+
+@Composable
+private fun BigBangActionRows(
+    singleRow: Boolean,
+    first: @Composable RowScope.() -> Unit,
+    second: @Composable RowScope.() -> Unit,
+) {
+    if (singleRow) {
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            first()
+            second()
+        }
+    } else {
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, content = first)
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, content = second)
     }
 }
 
@@ -867,15 +920,15 @@ private fun BigBangIconAction(
             onClick = onClick,
             enabled = enabled,
             modifier = modifier
-                .size(44.dp)
+                .size(48.dp)
                 .background(
                     color = if (enabled && (primary || toggled)) {
                         MiuixTheme.colorScheme.primary.copy(alpha = 0.13f)
                     } else Color.Transparent,
                     shape = RoundedCornerShape(12.dp),
                 ),
-            minWidth = 44.dp,
-            minHeight = 44.dp,
+            minWidth = 48.dp,
+            minHeight = 48.dp,
             cornerRadius = 12.dp,
         ) {
             Icon(

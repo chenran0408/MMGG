@@ -2,6 +2,7 @@ package com.leaf.hyperdragshare.codex;
 
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertArrayEquals;
 import static org.junit.Assert.assertNotSame;
 import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertTrue;
@@ -9,9 +10,15 @@ import static org.junit.Assert.assertTrue;
 
 import android.content.Context;
 import android.content.ContextWrapper;
+import android.content.ContentProvider;
+import android.content.ContentValues;
+import android.content.pm.ProviderInfo;
+import android.database.Cursor;
 import android.graphics.Bitmap;
 import android.graphics.Rect;
+import android.net.Uri;
 import android.os.Bundle;
+import android.os.ParcelFileDescriptor;
 
 import org.junit.After;
 import org.junit.Before;
@@ -25,10 +32,13 @@ import org.robolectric.annotation.Implements;
 import org.robolectric.shadows.ShadowLog;
 
 import java.io.File;
+import java.io.FileNotFoundException;
+import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.util.HashMap;
 import java.util.Map;
+import java.util.concurrent.atomic.AtomicInteger;
 
 @RunWith(RobolectricTestRunner.class)
 @Config(manifest = Config.NONE, shadows = PortalImagePayloadTest.XposedHelpersShadow.class)
@@ -169,6 +179,107 @@ public final class PortalImagePayloadTest {
         assertFalse(PortalContentCaptureSource.matchesCurrentImageBitmap(mode, hostBitmap));
 
         hostBitmap.recycle();
+    }
+
+    @Test public void referencedMediaWinsOverLargerRenderedPreview() throws Exception {
+        Bitmap rendered = Bitmap.createBitmap(8, 8, Bitmap.Config.ARGB_8888);
+        try {
+            // Robolectric legacy Bitmap.compress does not produce actual encoded pixels.
+            Uri media = registerMedia("original.png", java.util.Base64.getDecoder().decode(
+                    "iVBORw0KGgoAAAANSUhEUgAAAAIAAAAGCAYAAADpJ08yAAAADElEQVR4nGNgIAcAAAA2AAG2dLktAAAAAElFTkSuQmCC")).uri;
+            Bundle mode = modeWithBitmap(rendered);
+            mode.putString("imgUrl", media.toString());
+            var service = new FakePortalService(RuntimeEnvironment.getApplication());
+            var pick = PortalContentCaptureSource.capturePick(service,
+                    DragShareSettings.defaults(), resultWithImageMode(mode));
+            assertEquals(8, pick.preview().bitmap.getWidth());
+            pick.preview().bitmap.recycle();
+            CapturedContent captured = PortalContentCaptureSource.loadOriginalImage(service, pick.original());
+            assertTrue(captured != null);
+            try {
+                assertEquals("a larger rendered crop is not the full media; "
+                        + ShadowLog.getLogsForTag("DragShare/PortalCapture"), 2, captured.bitmap.getWidth());
+                assertEquals(6, captured.bitmap.getHeight());
+                assertEquals(CapturedContent.ImageOrigin.REFERENCED_MEDIA, captured.imageOrigin);
+            } finally { captured.bitmap.recycle(); }
+        } finally {
+            rendered.recycle();
+        }
+    }
+
+    @Test public void referencedGifKeepsItsMediaTypeInsteadOfBecomingPng() throws IOException {
+        byte[] original = java.util.Base64.getDecoder().decode(
+                "R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7");
+        Uri media = registerMedia("animation.gif", original).uri;
+        Bitmap rendered = bitmap();
+        Bundle mode = modeWithBitmap(rendered);
+        mode.putString("imgUrl", media.toString());
+        var service = new FakePortalService(RuntimeEnvironment.getApplication());
+        var pick = PortalContentCaptureSource.capturePick(service,
+                DragShareSettings.defaults(), resultWithImageMode(mode));
+        pick.preview().bitmap.recycle();
+        CapturedContent captured = PortalContentCaptureSource.loadOriginalImage(service, pick.original());
+        try {
+            assertTrue(captured != null);
+            assertEquals("image/gif", captured.mimeType());
+            assertArrayEquals(original, captured.encodedImage);
+        } finally {
+            if (captured != null) captured.bitmap.recycle();
+            rendered.recycle();
+        }
+    }
+
+    @Test public void uriOnlyResultDefersMediaReadAndInvalidBytesYieldNoImage() throws IOException {
+        MediaProvider provider = registerMedia("unreadable.png", new byte[]{1, 2, 3});
+        Uri media = provider.uri;
+        Bundle mode = new Bundle();
+        mode.putString("imgUrl", media.toString());
+        var service = new FakePortalService(RuntimeEnvironment.getApplication());
+
+        var pick = PortalContentCaptureSource.capturePick(service,
+                DragShareSettings.defaults(), resultWithImageMode(mode));
+
+        assertNull(pick.preview());
+        assertEquals(media.toString(), pick.original().url());
+        assertEquals(0, provider.opens.get());
+        assertNull(PortalContentCaptureSource.loadOriginalImage(service, pick.original()));
+        assertEquals(1, provider.opens.get());
+    }
+
+    private static MediaProvider registerMedia(String name, byte[] bytes) throws IOException {
+        File file = new File(RuntimeEnvironment.getApplication().getCacheDir(), name);
+        Files.write(file.toPath(), bytes);
+        MediaProvider provider = new MediaProvider(file);
+        ProviderInfo info = new ProviderInfo();
+        info.authority = "test.media";
+        provider.attachInfo(RuntimeEnvironment.getApplication(), info);
+        org.robolectric.shadows.ShadowContentResolver.registerProviderInternal("test.media", provider);
+        return provider;
+    }
+
+    private static final class MediaProvider extends ContentProvider {
+        final AtomicInteger opens = new AtomicInteger();
+        final Uri uri;
+        private final File file;
+
+        MediaProvider(File file) {
+            this.file = file;
+            uri = Uri.parse("content://test.media/" + file.getName());
+        }
+
+        @Override public ParcelFileDescriptor openFile(Uri uri, String mode) throws FileNotFoundException {
+            opens.incrementAndGet();
+            return ParcelFileDescriptor.open(file, ParcelFileDescriptor.MODE_READ_ONLY);
+        }
+        @Override public boolean onCreate() { return true; }
+        @Override public String getType(Uri uri) { return "image/*"; }
+        @Override public Cursor query(Uri uri, String[] projection, String selection,
+                String[] arguments, String order) { throw new UnsupportedOperationException(); }
+        @Override public Uri insert(Uri uri, ContentValues values) { throw new UnsupportedOperationException(); }
+        @Override public int delete(Uri uri, String selection,
+                String[] arguments) { throw new UnsupportedOperationException(); }
+        @Override public int update(Uri uri, ContentValues values, String selection,
+                String[] arguments) { throw new UnsupportedOperationException(); }
     }
 
     private static Bitmap bitmap() {

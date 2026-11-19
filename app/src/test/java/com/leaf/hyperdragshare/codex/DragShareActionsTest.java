@@ -1,5 +1,6 @@
 package com.leaf.hyperdragshare.codex;
 
+import static org.junit.Assert.assertArrayEquals;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNotNull;
@@ -16,6 +17,7 @@ import android.content.Intent;
 import android.content.pm.ApplicationInfo;
 import android.content.pm.PackageInfo;
 import android.content.pm.ProviderInfo;
+import android.database.Cursor;
 import android.graphics.Bitmap;
 import android.database.sqlite.SQLiteDatabase;
 import android.net.Uri;
@@ -25,6 +27,7 @@ import android.os.Looper;
 import android.os.Message;
 import android.os.ParcelFileDescriptor;
 import android.os.Process;
+import android.provider.OpenableColumns;
 import android.webkit.MimeTypeMap;
 
 import org.junit.Before;
@@ -33,6 +36,7 @@ import org.junit.runner.RunWith;
 import org.robolectric.RobolectricTestRunner;
 import org.robolectric.RuntimeEnvironment;
 import org.robolectric.annotation.Config;
+import org.robolectric.annotation.GraphicsMode;
 import org.robolectric.annotation.Implementation;
 import org.robolectric.annotation.Implements;
 import org.robolectric.annotation.LooperMode;
@@ -42,11 +46,14 @@ import org.robolectric.shadows.ShadowMimeTypeMap;
 import org.robolectric.shadows.ShadowApplication;
 import org.robolectric.shadows.ShadowLog;
 import org.robolectric.shadows.ShadowLooper;
+import org.robolectric.shadows.ShadowSettings;
+import org.robolectric.shadows.ShadowToast;
 
 import java.io.File;
 import java.io.FileOutputStream;
 import java.io.IOException;
 import java.util.ArrayList;
+import java.util.Base64;
 import java.util.List;
 import java.util.UUID;
 import java.util.concurrent.CountDownLatch;
@@ -81,11 +88,15 @@ public final class DragShareActionsTest {
         context = RuntimeEnvironment.getApplication();
         ShadowMimeTypeMap mapping = Shadow.extract(MimeTypeMap.getSingleton());
         mapping.addExtensionMimeTypeMapping("png", "image/png");
+        mapping.addExtensionMimeTypeMapping("gif", "image/gif");
+        mapping.addExtensionMimeTypeMapping("jpg", "image/jpeg");
         ClipboardManagerShadow.lastClip = null;
         ClipboardManagerShadow.failure = null;
         ClipboardManagerShadow.writer = null;
         LocalImageSaverShadow.failure = null;
         LocalImageSaverShadow.savedBitmap = null;
+        LocalImageSaverShadow.savedSource = null;
+        LocalImageSaverShadow.savedMimeType = null;
         LocalImageSaverShadow.threadName = null;
         LocalImageSaverShadow.saved = new CountDownLatch(1);
         BigBangLauncherShadow.lastRequest = null;
@@ -184,6 +195,34 @@ public final class DragShareActionsTest {
         assertFalse(events.contains("start rejected"));
     }
 
+    @Test public void gifShareKeepsItsOriginalExtensionMimeAndStream() throws Exception {
+        byte[] gif = Base64.getDecoder().decode("R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7");
+        Uri image = shareUri("gif");
+        try (FileOutputStream output = new FileOutputStream(stagedFile(image))) {
+            output.write(gif);
+        }
+        assertOriginalImageShare(image, "image/gif", "gif");
+        try (ParcelFileDescriptor.AutoCloseInputStream input = openSharedImage(image)) {
+            assertArrayEquals(gif, input.readAllBytes());
+        }
+    }
+
+    @GraphicsMode(GraphicsMode.Mode.NATIVE)
+    @Test public void jpegShareKeepsItsOriginalExtensionMimeAndStream() throws Exception {
+        Uri image = shareUri("jpg");
+        Bitmap source = bitmap();
+        try (FileOutputStream output = new FileOutputStream(stagedFile(image))) {
+            assertTrue(source.compress(Bitmap.CompressFormat.JPEG, 100, output));
+        } finally {
+            source.recycle();
+        }
+        assertOriginalImageShare(image, "image/jpeg", "jpg");
+        try (ParcelFileDescriptor.AutoCloseInputStream input = openSharedImage(image)) {
+            assertEquals(0xff, input.read());
+            assertEquals(0xd8, input.read());
+        }
+    }
+
     @Test public void shareLaunchReturnedIsRecordedWithoutClaimingDelivery() {
         actions.execute(CapturedContent.text("trace text", "source.app", null),
                 new ShareTarget(RECEIVER, "Receiver", null), null, 0f, 0f, "test-operation-1");
@@ -255,29 +294,28 @@ public final class DragShareActionsTest {
     }
 
     @Test public void stashStoresTextAndImageThroughStashClientAndProvider() throws Exception {
-        resetToastSignal();
+        ShadowSettings.setCanDrawOverlays(false);
         actions.execute(CapturedContent.text("stashed text", "source.app", null),
-                ShareTarget.stash(null), null, 0f, 0f);
-        awaitActionPostAndDrain();
-        awaitMainToast("已存入中转站");
+                ShareTarget.stash(null), null, 0f, 0f, "stash-text-operation");
+        awaitStashSaved("stash-text-operation");
+        assertEquals(1, ShadowToast.shownToastCount());
         try (StashStore store = new StashStore(context)) {
             assertEquals("stashed text", store.listEntries().get(0).text);
         }
 
         Uri image = stagedImage("stash-image");
-        actionHandler.resetSignal();
-        resetToastSignal();
         actions.execute(CapturedContent.image(bitmap(), "source.app", null, true),
-                ShareTarget.stash(null), image, 0f, 0f);
-        awaitActionPostAndDrain();
-        awaitMainToast("已存入中转站");
+                ShareTarget.stash(null), image, 0f, 0f, "stash-image-operation");
+        awaitStashSaved("stash-image-operation");
+        assertEquals(2, ShadowToast.shownToastCount());
         try (StashStore store = new StashStore(context)) {
             List<StashStore.Entry> entries = store.listEntries();
             assertEquals(2, entries.size());
             assertEquals(StashStore.KIND_IMAGE, entries.get(0).kind);
             assertEquals(StashStore.KIND_TEXT, entries.get(1).kind);
         }
-        assertTrue(operationEvents().contains("stage=stash outcome=completed"));
+        assertFalse("success feedback should come only from the module",
+                DragShareToastShadow.messages.contains("已存入中转站"));
     }
 
     @Test public void stashFailureReportsFailureWithoutCreatingAnEntry() throws Exception {
@@ -299,6 +337,7 @@ public final class DragShareActionsTest {
         try (StashStore store = new StashStore(context)) {
             assertTrue(store.listEntries().isEmpty());
         }
+        assertFalse(ShadowToast.showedToast("已存入中转站"));
     }
 
     @Test public void localSaveKeepsBitmapAliveOnOriginalWorkerAndReportsFailure() throws Exception {
@@ -313,7 +352,7 @@ public final class DragShareActionsTest {
         assertFalse(image.isRecycled());
         assertEquals("drag-share-local-save", LocalImageSaverShadow.threadName);
         awaitMainToast("已保存到本地");
-        assertTrue(operationEvents().contains("stage=local_save outcome=completed"));
+        assertTrue(operationEvents().contains("stage=local_save outcome=completed_preview_png"));
 
         LocalImageSaverShadow.failure = new IOException("disk full");
         LocalImageSaverShadow.saved = new CountDownLatch(1);
@@ -326,6 +365,23 @@ public final class DragShareActionsTest {
         awaitActionPostAndDrain();
         awaitMainToast("保存图片失败");
         assertFalse(image.isRecycled());
+    }
+
+    @Test public void localSaveUsesCapturedSourceUriWhenAvailable() throws Exception {
+        Bitmap preview = bitmap();
+        Uri source = Uri.parse("content://source.example/media/animated.gif");
+        CapturedContent content = CapturedContent.stagedMediaImage(
+                preview, "source.app", null, source, "image/gif");
+
+        actions.execute(content, ShareTarget.saveToLocal(null), source, 0f, 0f);
+
+        assertTrue("source save worker did not finish",
+                LocalImageSaverShadow.saved.await(2, TimeUnit.SECONDS));
+        awaitActionPostAndDrain();
+        assertEquals(source, LocalImageSaverShadow.savedSource);
+        assertEquals("image/gif", LocalImageSaverShadow.savedMimeType);
+        assertNull(LocalImageSaverShadow.savedBitmap);
+        assertTrue(operationEvents().contains("stage=local_save outcome=completed_source"));
     }
 
     @Test public void segmentationPassesTextContextCoordinatesAndChecksAcceptance() {
@@ -382,18 +438,57 @@ public final class DragShareActionsTest {
     }
 
     private Uri stagedImage(String label) throws Exception {
-        File directory = new File(context.getCacheDir(), "shared-images");
-        assertTrue(directory.isDirectory() || directory.mkdirs());
-        String token = UUID.randomUUID().toString();
-        File image = new File(directory, token + ".png");
+        Uri image = shareUri("png");
         Bitmap source = bitmap();
-        try (FileOutputStream output = new FileOutputStream(image)) {
+        try (FileOutputStream output = new FileOutputStream(stagedFile(image))) {
             assertTrue("could not encode staged PNG " + label,
                     source.compress(Bitmap.CompressFormat.PNG, 100, output));
         } finally {
             source.recycle();
         }
-        return Uri.parse("content://" + ImageStagingClient.AUTHORITY + "/shared/" + token + ".png");
+        return image;
+    }
+
+    private static Uri shareUri(String suffix) {
+        return ImageStagingClient.BASE_URI.buildUpon()
+                .appendPath("shared")
+                .appendPath(UUID.randomUUID() + "." + suffix)
+                .build();
+    }
+
+    private File stagedFile(Uri image) {
+        File directory = new File(context.getCacheDir(), "shared-images");
+        assertTrue(directory.isDirectory() || directory.mkdirs());
+        return new File(directory, image.getLastPathSegment());
+    }
+
+    private ParcelFileDescriptor.AutoCloseInputStream openSharedImage(Uri image) throws IOException {
+        return new ParcelFileDescriptor.AutoCloseInputStream(
+                context.getContentResolver().openFileDescriptor(image, "r"));
+    }
+
+    private void assertOriginalImageShare(Uri image, String mimeType, String suffix) {
+        actions.execute(CapturedContent.stagedMediaImage(bitmap(), "source.app", null, image, mimeType),
+                new ShareTarget(RECEIVER, "Receiver", null), image, 10f, 20f);
+
+        Intent intent = nextStartedActivity();
+        assertEquals(mimeType, intent.getType());
+        assertEquals("drag-share." + suffix, intent.getStringExtra(Intent.EXTRA_TITLE));
+        assertEquals(RECEIVER, intent.getComponent());
+        assertEquals(image, intent.getData());
+        assertEquals(image, intent.getParcelableExtra(Intent.EXTRA_STREAM));
+        assertEquals(image, intent.getClipData().getItemAt(0).getUri());
+        assertTrue((intent.getFlags() & Intent.FLAG_GRANT_READ_URI_PERMISSION) != 0);
+        assertEquals(image, grantContext.grantedUri);
+        assertEquals(RECEIVER_PACKAGE, grantContext.grantedPackage);
+        assertEquals(Intent.FLAG_GRANT_READ_URI_PERMISSION, grantContext.grantedFlags);
+        assertEquals(mimeType, context.getContentResolver().getType(image));
+        try (Cursor cursor = context.getContentResolver().query(
+                image, new String[]{OpenableColumns.DISPLAY_NAME}, null, null, null)) {
+            assertNotNull(cursor);
+            assertTrue(cursor.moveToFirst());
+            assertEquals(image.getLastPathSegment(), cursor.getString(0));
+        }
     }
 
     private void registerProvider() {
@@ -470,6 +565,17 @@ public final class DragShareActionsTest {
         ShadowLooper.shadowMainLooper().idle();
     }
 
+    private static void awaitStashSaved(String operation) throws InterruptedException {
+        String completed = "op=" + operation + " stage=stash outcome=completed";
+        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(2);
+        while (!operationEvents().contains(completed) && System.nanoTime() < deadline) {
+            Thread.sleep(5L);
+        }
+        assertTrue("stash action did not finish", operationEvents().contains(completed));
+        ShadowLooper.shadowMainLooper().idle();
+        assertEquals("已存入中转站", ShadowToast.getTextOfLatestToast());
+    }
+
     private static void awaitMainToast(String expected) throws Exception {
         awaitToastChanged(expected);
     }
@@ -531,6 +637,8 @@ public final class DragShareActionsTest {
     public static final class LocalImageSaverShadow {
         static volatile IOException failure;
         static volatile Bitmap savedBitmap;
+        static volatile Uri savedSource;
+        static volatile String savedMimeType;
         static volatile String threadName;
         static volatile CountDownLatch saved = new CountDownLatch(1);
 
@@ -540,6 +648,16 @@ public final class DragShareActionsTest {
             saved.countDown();
             if (failure != null) throw failure;
             return Uri.parse("content://saved/image.png");
+        }
+
+        @Implementation public static Uri save(Context context, Uri source, String mimeType)
+                throws IOException {
+            savedSource = source;
+            savedMimeType = mimeType;
+            threadName = Thread.currentThread().getName();
+            saved.countDown();
+            if (failure != null) throw failure;
+            return Uri.parse("content://saved/image.gif");
         }
     }
 

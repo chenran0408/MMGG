@@ -14,6 +14,7 @@ import android.view.accessibility.AccessibilityNodeInfo;
 import android.view.accessibility.AccessibilityWindowInfo;
 
 import org.json.JSONArray;
+import org.json.JSONException;
 import org.json.JSONObject;
 
 import java.io.BufferedReader;
@@ -35,6 +36,7 @@ public final class RootNodeCaptureMain {
     private static java.lang.reflect.Constructor<?> automationConstructor;
     private static java.lang.reflect.Method connect;
     private static java.lang.reflect.Method disconnect;
+    private static RootRecordingActivity recordingActivity;
 
     private static final Pattern HOLD_WHITESPACE = Pattern.compile("\\s+");
     private static final Set<String> HOLD_PROMPTS = Set.of(
@@ -121,6 +123,7 @@ public final class RootNodeCaptureMain {
                 System.out.flush();
             }
             if (connected) {
+                if (serve) recordingActivity = RootRecordingActivity.open(RootNodeCaptureMain::publishRecordings);
                 automation.setOnAccessibilityEventListener(event -> {
                     synchronized (eventLock) {
                         eventVersion[0]++;
@@ -152,6 +155,19 @@ public final class RootNodeCaptureMain {
         System.exit(0);
     }
 
+    private static void publishRecordings(Set<RootRecordingActivity.Recording> active, long observedAt) {
+        try {
+            JSONArray recordings = new JSONArray();
+            for (RootRecordingActivity.Recording item : active) {
+                recordings.put(new JSONArray().put(item.pkg()).put(item.user()).put(item.session()));
+            }
+            System.out.println(new JSONObject().put("recordings", recordings).put("observed_at", observedAt));
+            System.out.flush();
+        } catch (JSONException error) {
+            android.util.Log.w("DragShare/RecordingAvoidance", "Cannot serialize recording state", error);
+        }
+    }
+
     static JSONObject captureRequest(JSONObject request, UiAutomation automation,
                                             Object eventLock, int[] eventVersion, Handler watchdog)
             throws Exception {
@@ -168,6 +184,11 @@ public final class RootNodeCaptureMain {
                 return captureImageRegion(request, automation);
             }
             if ("verify_window".equals(request.optString("operation"))) {
+                if (request.getInt("window_id") == -1) {
+                    Rect bounds = new Rect(request.getInt("left"), request.getInt("top"),
+                            request.getInt("right"), request.getInt("bottom"));
+                    return windowResult(RootUiAgentCapture.currentBounds(request.getString("package"), bounds));
+                }
                 automation.clearCache();
                 AccessibilityNodeInfo current = automation.getRootInActiveWindow();
                 try {
@@ -183,6 +204,10 @@ public final class RootNodeCaptureMain {
                 }
             }
             if ("verify_source".equals(request.optString("operation"))) {
+                if (RootUiAgentCapture.hasSelection()) {
+                    return new JSONObject().put("same_source",
+                            RootUiAgentCapture.isCurrentSource(request.getString("package")));
+                }
                 if (pressWindow != null) {
                     return new JSONObject().put("same_source",
                             verifyPressRegion(request.getString("package")) != null);
@@ -213,11 +238,12 @@ public final class RootNodeCaptureMain {
             }
             pressWindow = null;
             pressRegion = null;
+            RootUiAgentCapture.reset();
             boolean press = request.optBoolean("press_lookup", false);
             automation.clearCache();
             AccessibilityNodeInfo root = press ? automation.getRootInActiveWindow()
                     : awaitRoot(automation, eventLock, eventVersion);
-            if (root == null) return new JSONObject().put("found", false).put("reason", "window_not_ready");
+            if (root == null) return RootUiAgentCapture.capture(request);
             long rootAt = SystemClock.uptimeMillis();
             try {
                 JSONObject result = capture(root, request);
@@ -232,8 +258,16 @@ public final class RootNodeCaptureMain {
                 } finally {
                     if (current != null) current.recycle();
                 }
-                String rejection = result.optString("reason");
-                return result.put("window_id", root.getWindowId()).put("root_ms", rootAt - started)
+                // WeChat and other custom-rendered hosts can replace the active
+                // accessibility root while a long press is being classified. The
+                // existing native-View path already verifies the WMS window and
+                // source package; use it for this explicit press-only failure too.
+                if (press && !result.optBoolean("found")
+                        && "window_changed".equals(result.optString("reason"))) {
+                    result = RootUiAgentCapture.capture(request);
+                }
+                return result.put("window_id", result.optInt("window_id", root.getWindowId()))
+                        .put("root_ms", rootAt - started)
                         .put("capture_ms", capturedAt - rootAt)
                         .put("verify_ms", SystemClock.uptimeMillis() - capturedAt);
             } finally {
@@ -244,7 +278,7 @@ public final class RootNodeCaptureMain {
         }
     }
 
-    private static PressWindowSnapshot.ParseResult readPressWindow() throws IOException, InterruptedException {
+    static PressWindowSnapshot.ParseResult readPressWindow() throws IOException, InterruptedException {
         Process dump = new ProcessBuilder("/system/bin/dumpsys", "-t", "1", "window")
                 .redirectErrorStream(true).start();
         try {
@@ -311,10 +345,62 @@ public final class RootNodeCaptureMain {
     /** Captures and crops an image node inside the helper to avoid a slow full-screen su screencap. */
     private static JSONObject captureImageRegion(JSONObject request, UiAutomation automation)
             throws Exception {
+        String source = request.getString("package");
+        Rect requested = new Rect(request.getInt("left"), request.getInt("top"),
+                request.getInt("right"), request.getInt("bottom"));
+        int windowId = request.getInt("window_id");
+        ImageWindowCheck checkWindow = () -> {
+            if (keyguardLocked()) return false;
+            if (windowId == -1) return RootUiAgentCapture.currentBounds(source, requested) != null;
+            automation.clearCache();
+            AccessibilityNodeInfo root = automation.getRootInActiveWindow();
+            try {
+                return root != null && root.getWindowId() == windowId
+                        && source.equals(string(root.getPackageName()));
+            } finally {
+                if (root != null) root.recycle();
+            }
+        };
+        PressWindowSnapshot mediaWindow = null;
+        if (request.optBoolean("prefer_original") && !keyguardLocked()) {
+            try {
+                mediaWindow = captureNativeMedia(source, request.getInt("user_id"),
+                        (float) request.getDouble("x"), (float) request.getDouble("y"), requested);
+            } catch (Exception error) {
+                System.err.println("Native media reference unavailable: " + error.getClass().getSimpleName());
+            }
+        }
+        if (mediaWindow != null) {
+            PressWindowSnapshot current = readPressWindow().snapshot;
+            boolean same = current != null && mediaWindow.sameWindow(current)
+                    && current.permits(requested) && (windowId == -1
+                    ? !keyguardLocked() && RootUiAgentCapture.matchesSelection(source, requested, current)
+                    : checkWindow.isCurrent());
+            return imageCaptureReply(requested, same ? OriginalImage.READY : OriginalImage.WINDOW_CHANGED,
+                    checkWindow, automation::takeScreenshot);
+        }
+        return imageCaptureReply(requested, OriginalImage.UNAVAILABLE, checkWindow, automation::takeScreenshot);
+    }
+
+    enum OriginalImage { UNAVAILABLE, READY, WINDOW_CHANGED }
+
+    interface ImageWindowCheck {
+        boolean isCurrent() throws Exception;
+    }
+
+    static JSONObject imageCaptureReply(Rect requested, OriginalImage original,
+            ImageWindowCheck checkWindow, java.util.function.Supplier<Bitmap> captureScreen)
+            throws Exception {
+        if (original == OriginalImage.READY) {
+            return windowResult(requested).put("media_encoded", true);
+        }
+        if (original == OriginalImage.WINDOW_CHANGED) {
+            return new JSONObject().put("same_window", false).put("reason", "按压窗口已变化");
+        }
         long screenshotStarted = SystemClock.uptimeMillis();
         Bitmap screenshot;
         try {
-            screenshot = automation.takeScreenshot();
+            screenshot = captureScreen.get();
         } catch (RuntimeException error) {
             System.err.println("Image screenshot failed: " + error.getClass().getSimpleName());
             return new JSONObject().put("same_window", false).put("reason", "系统无法截取当前页面");
@@ -326,24 +412,13 @@ public final class RootNodeCaptureMain {
         Bitmap cropped = null;
         try {
             long verifyStarted = SystemClock.uptimeMillis();
-            String source = request.getString("package");
-            int windowId = request.getInt("window_id");
-            automation.clearCache();
-            AccessibilityNodeInfo root = automation.getRootInActiveWindow();
-            boolean same;
-            try {
-                same = root != null && root.getWindowId() == windowId
-                        && source.equals(string(root.getPackageName()));
-            } finally {
-                if (root != null) root.recycle();
-            }
+            Rect crop = new Rect(requested);
+            boolean same = checkWindow.isCurrent();
             long verifyMs = SystemClock.uptimeMillis() - verifyStarted;
             if (!same) {
                 return new JSONObject().put("same_window", false).put("reason", "按压窗口已变化")
                         .put("screenshot_ms", screenshotMs).put("verify_ms", verifyMs);
             }
-            Rect crop = new Rect(request.getInt("left"), request.getInt("top"),
-                    request.getInt("right"), request.getInt("bottom"));
             if (!crop.intersect(0, 0, screenshot.getWidth(), screenshot.getHeight())) {
                 return new JSONObject().put("same_window", false).put("reason", "图片区域已移出屏幕");
             }
@@ -360,6 +435,26 @@ public final class RootNodeCaptureMain {
         } finally {
             if (cropped != null && cropped != screenshot) cropped.recycle();
             screenshot.recycle();
+        }
+    }
+
+    private static PressWindowSnapshot captureNativeMedia(String source, int userId, float x,
+            float y, Rect bounds)
+            throws Exception {
+        PressWindowSnapshot.ParseResult parsed = readPressWindow();
+        PressWindowSnapshot window = parsed.snapshot;
+        if (window == null || !source.equals(window.packageName) || !window.permits(bounds)
+                || !bounds.contains((int)x, (int)y)) return null;
+        int slash = window.windowName.indexOf('/');
+        if (slash < 0 || slash == window.windowName.length() - 1) return null;
+        try (SystemUiAgent.Media media = SystemUiAgent.readMedia(source,
+                window.windowName.substring(slash + 1), userId, x, y, bounds)) {
+            if (media == null) return null;
+            int count;
+            try (java.io.InputStream input = media.open()) {
+                count = RootMediaPipe.write(input, System.out);
+            }
+            return count > 0 ? window : null;
         }
     }
 
@@ -400,7 +495,7 @@ public final class RootNodeCaptureMain {
         }
     }
 
-    private static boolean keyguardLocked() throws ReflectiveOperationException {
+    static boolean keyguardLocked() throws ReflectiveOperationException {
         Class<?> manager = Class.forName("android.view.IWindowManager");
         android.os.IBinder binder = (android.os.IBinder) Class.forName("android.os.ServiceManager")
                 .getMethod("getService", String.class).invoke(null, "window");
@@ -762,7 +857,7 @@ public final class RootNodeCaptureMain {
                 || "android.view.MenuItem".equals(className);
     }
 
-    private static JSONObject contentResult(AccessibilityCandidateSelector.Selection selection,
+    static JSONObject contentResult(AccessibilityCandidateSelector.Selection selection,
                                             String source, int nodeCount) throws org.json.JSONException {
         AccessibilityCandidate candidate = selection.candidate;
         return new JSONObject().put("found", true).put("package", source)
@@ -807,7 +902,7 @@ public final class RootNodeCaptureMain {
             snapshots.removeIf(node -> Rect.intersects(node.bounds, password));
         }
         AccessibilityCandidateSelector.Selection selection = AccessibilityCandidateSelector.select(
-                classifier.classify(snapshots), x, y);
+                classifier.classify(snapshots), x, y, allowImages);
         if (selection == null || !source.equals(selection.candidate.sourcePackage)) return null;
         // Images wait for the complete password scan. A generic blank View is not an image request.
         if (selection.isImage()) return allowImages && selection.candidate.strongImage ? selection : null;

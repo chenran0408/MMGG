@@ -53,6 +53,7 @@ internal fun gestureSettingEntries(
     context: Context,
     onManageTargets: (String) -> Unit,
     previewPageActive: Boolean = false,
+    gesturesEnabled: Boolean = true,
 ): List<SettingEntry> {
     val store = remember(context) { ConfigStore(context) }
     val prefs = remember(store) { store.preferences() }
@@ -245,7 +246,8 @@ internal fun gestureSettingEntries(
         val required = dependencies(id)
         revision.intValue
         val registryEnabled = required.all {
-            (localValues[it] as? Boolean) ?: prefs.getBoolean(it, dependencyDefault(it))
+            if (it == C.KEY_ENABLED) gesturesEnabled
+            else (localValues[it] as? Boolean) ?: prefs.getBoolean(it, dependencyDefault(it))
         }
         entries += SettingEntry(
             id = id,
@@ -312,10 +314,9 @@ internal fun gestureSettingEntries(
 
     currentModule = SettingModule.GESTURES
     currentGroup = "总开关与通用"
-    bool("启用手势", "总开关", C.KEY_ENABLED, C.DEFAULT_ENABLED)
     bool("触发震动", "手势成功触发时反馈", C.KEY_HAPTIC, C.DEFAULT_HAPTIC)
     bool("显示当前应用名称", "手势选择过程中显示应用名称", C.KEY_SHOW_SELECTED_APP_NAME, C.DEFAULT_SHOW_SELECTED_APP_NAME)
-    bool("更多应用增强面板", "启用网格、字母索引、颜色筛选和异步应用目录；关闭后使用基础列表", C.KEY_MORE_APPS_ENHANCED, C.DEFAULT_MORE_APPS_ENHANCED)
+    bool("更多应用增强面板", "使用网格、字母索引和颜色筛选。关闭后使用搜索列表。", C.KEY_MORE_APPS_ENHANCED, C.DEFAULT_MORE_APPS_ENHANCED)
     bool("强制圆形图标", "将目标图标裁切为圆形", C.KEY_FORCE_CIRCULAR_ICONS, C.DEFAULT_FORCE_CIRCULAR_ICONS)
     chooser("图标旋转形变", listOf("关闭", "轻微", "标准", "明显"), C.KEY_SELECTION_TRANSFORM_LEVEL, C.DEFAULT_SELECTION_TRANSFORM_LEVEL)
     currentGroup = "底角触发"

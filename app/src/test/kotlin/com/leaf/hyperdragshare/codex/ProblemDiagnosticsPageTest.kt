@@ -11,6 +11,16 @@ import java.io.IOException
 
 class ProblemDiagnosticsPageTest {
     @Test
+    fun recreatedPageAcceptsOutstandingPickerResultOnce() {
+        val restored = DiagnosticExportSession(awaitingPickerToken = 3L)
+        assertNull(restored.begin())
+        assertTrue(restored.consumeSavePickerResult(3L))
+        assertFalse(restored.consumeSavePickerResult(3L))
+        assertTrue(restored.finish(3L))
+        assertEquals(4L, restored.begin())
+    }
+
+    @Test
     fun exportSessionRejectsRepeatGenerationUntilCurrentOperationFinishes() {
         val session = DiagnosticExportSession()
 

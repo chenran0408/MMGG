@@ -4,8 +4,15 @@ import android.app.ActivityManager;
 import android.content.ComponentName;
 import android.content.Context;
 import android.graphics.Rect;
+import android.content.res.Configuration;
+import android.hardware.display.DisplayManager;
+import android.media.AudioManager;
+import android.media.AudioPlaybackConfiguration;
 import android.media.session.MediaSessionManager;
 import android.os.Handler;
+import android.view.Display;
+import android.view.SurfaceControl;
+import android.widget.Toast;
 
 import com.leaf.hyperdragshare.compat.xposed.XposedHelpers;
 
@@ -17,8 +24,18 @@ final class MiniMediaControls {
     private final MiniFreeformMediaHost miniMediaHost;
 
     private MiniFreeformQuickMenuController quickMenu;
+    private final java.util.Map<Integer, MiniFreeformMediaController.PendingRestore> manualMutes = new java.util.HashMap<>();
 
     private MiniFreeformMediaController miniMediaController;
+    private final java.util.List<MiniFreeformMediaController.PendingRestore> pendingRestores =
+            new java.util.ArrayList<>();
+    private AudioManager restoreAudioManager;
+    private final AudioManager.AudioPlaybackCallback restoreOnPlayback =
+            new AudioManager.AudioPlaybackCallback() {
+                @Override public void onPlaybackConfigChanged(java.util.List<AudioPlaybackConfiguration> states) {
+                    restorePendingMutes();
+                }
+            };
 
     private String miniMediaPackage;
 
@@ -43,21 +60,18 @@ final class MiniMediaControls {
         if (info == null) return;
         int taskId = miniMediaTaskId(info);
         if (taskId < 0) return;
-        boolean mini = booleanCall(info, "isMiniState", false);
-        boolean pinned = booleanCall(info, "isInPinMode", false)
-                || booleanCall(info, "isMiniPinedState", false)
-                || booleanCall(info, "isNormalPinedState", false);
-        if (!mini || pinned || !isMiniMediaTaskVisible(info)) {
-            if (taskId == miniMediaTaskId) clearMiniMedia();
+        if (!isTouchableMini(info)) {
+            clearMiniMediaForTask(taskId);
             return;
         }
         String packageName = miniMediaPackage(info);
         Rect bounds = miniMediaBounds(info);
         if (packageName == null || packageName.isEmpty() || bounds == null || bounds.isEmpty()) {
-            if (taskId == miniMediaTaskId) clearMiniMedia();
+            clearMiniMediaForTask(taskId);
             return;
         }
-        if (miniMediaController != null && !packageName.equals(miniMediaPackage))
+        if (miniMediaController != null
+                && (taskId != miniMediaTaskId || !packageName.equals(miniMediaPackage)))
             destroyMiniMediaController();
         miniMediaTaskId = taskId;
         miniMediaPackage = packageName;
@@ -70,6 +84,14 @@ final class MiniMediaControls {
         startOrUpdateMiniMediaController(config);
     }
 
+    static boolean isTouchableMini(Object info) {
+        boolean mini = booleanCall(info, "isMiniState", false);
+        boolean pinned = booleanCall(info, "isInPinMode", false)
+                || booleanCall(info, "isMiniPinedState", false)
+                || booleanCall(info, "isNormalPinedState", false);
+        return mini && !pinned && isMiniMediaTaskVisible(info);
+    }
+
     void refreshMiniMediaConfig(GestureConfig config) {
         if (miniMediaPackage == null || miniMediaTaskId < 0 || miniMediaBounds == null) return;
         if (!config.miniMediaControlsEnabled) {
@@ -79,12 +101,109 @@ final class MiniMediaControls {
         startOrUpdateMiniMediaController(config);
     }
 
-    boolean toggleMute() {
-        return miniMediaController != null && miniMediaController.toggleMute();
+    boolean showQuickMenu(Object info, GestureConfig config, boolean enlarged) {
+        if (quickMenu == null || !isTouchableMini(info)) return false;
+        int id = miniMediaTaskId(info);
+        if (id < 0) return false;
+        updateMiniMedia(info, config);
+        if (miniMediaTaskId != id) return false;
+        MiniFreeformQuickMenuController.Target target;
+        try {
+            Object leash = XposedHelpers.callMethod(info, "getLeash");
+            Object bounds = XposedHelpers.callMethod(info, "getBounds");
+            if (!(leash instanceof SurfaceControl surface) || !surface.isValid()
+                    || !(bounds instanceof Rect local) || local.isEmpty()) return false;
+            Object running = XposedHelpers.callMethod(info, "getTaskInfo");
+            ActivityManager.RunningTaskInfo task = running instanceof ActivityManager.RunningTaskInfo
+                    ? (ActivityManager.RunningTaskInfo) running : null;
+            DisplayManager displays = context.getSystemService(DisplayManager.class);
+            int displayId = task == null ? Display.DEFAULT_DISPLAY
+                    : XposedHelpers.getIntField(task, "displayId");
+            Display display = displays.getDisplay(displayId);
+            if (display == null) return false;
+            Configuration configuration = task == null ? context.getResources().getConfiguration()
+                    : (Configuration) XposedHelpers.getObjectField(task, "configuration");
+            target = new MiniFreeformQuickMenuController.Target(id, new Rect(local),
+                    new Rect(miniMediaBounds), surface, display, new Configuration(configuration));
+        } catch (RuntimeException | LinkageError | XposedHelpers.InvocationTargetError error) {
+            Log.e("Cannot resolve mini menu task=" + id, error);
+            return false;
+        }
+        String pkg = miniMediaPackage;
+        var volume = new MiniFreeformMediaController.XiaomiPlayerVolume(context, pkg);
+        return quickMenu.show(target, () -> {
+            float level = volume.read(pkg);
+            return Float.isFinite(level) ? level == 0f
+                    : manualMutes.containsKey(id)
+                    || (miniMediaTaskId == id && miniMediaController != null && miniMediaController.isMuted());
+        }, () -> {
+            if (toggleMute(id, pkg, volume)) return true;
+            Toast.makeText(context, "无法切换小窗静音", Toast.LENGTH_SHORT).show();
+            return false;
+        }, enlarged);
+    }
+
+    boolean isQuickMenuShowingFor(int taskId) {
+        return quickMenu != null && quickMenu.isShowingFor(taskId);
+    }
+
+    boolean quickMenuContains(float x, float y) {
+        return quickMenu != null && quickMenu.contains(x, y);
+    }
+
+    void dismissMenuOutside(float x, float y) {
+        Runnable dismiss = quickMenu == null ? null : quickMenu.outsideDismissal(x, y);
+        if (dismiss != null) mainHandler.post(dismiss);
+    }
+
+    void hideQuickMenu() {
+        if (quickMenu != null) quickMenu.hide();
+    }
+
+    boolean toggleMute(int taskId, String packageName, MiniFreeformMediaController.Volume volume) {
+        var muted = manualMutes.get(taskId);
+        if (muted != null) {
+            if (!muted.restore()) return false;
+            manualMutes.remove(taskId);
+            return true;
+        }
+        if (miniMediaTaskId == taskId && packageName.equals(miniMediaPackage)
+                && miniMediaController != null && miniMediaController.isMuted()) {
+            return miniMediaController.toggleMute();
+        }
+        var lease = new MiniFreeformMediaController.MuteLease();
+        lease.acquire(packageName, volume);
+        if (!lease.active()) return false;
+        manualMutes.put(taskId, new MiniFreeformMediaController.PendingRestore(lease, volume));
+        return true;
     }
 
     void clearMiniMediaForTask(int taskId) {
+        var muted = manualMutes.remove(taskId);
+        if (muted != null && !muted.restore()) deferMuteRestore(muted);
+        if (quickMenu != null) quickMenu.hideForTask(taskId);
         if (taskId == miniMediaTaskId) clearMiniMedia();
+    }
+
+    private void deferMuteRestore(MiniFreeformMediaController.PendingRestore restore) {
+        pendingRestores.add(restore);
+        if (restoreAudioManager != null) return;
+        AudioManager audio = context.getSystemService(AudioManager.class);
+        try {
+            audio.registerAudioPlaybackCallback(restoreOnPlayback, mainHandler);
+            restoreAudioManager = audio;
+        } catch (RuntimeException error) {
+            Log.e("Cannot watch playback to restore mini window volume", error);
+        }
+        restorePendingMutes();
+    }
+
+    private void restorePendingMutes() {
+        pendingRestores.removeIf(MiniFreeformMediaController.PendingRestore::restore);
+        if (pendingRestores.isEmpty() && restoreAudioManager != null) {
+            restoreAudioManager.unregisterAudioPlaybackCallback(restoreOnPlayback);
+            restoreAudioManager = null;
+        }
     }
 
     private void startOrUpdateMiniMediaController(GestureConfig config) {
@@ -108,15 +227,16 @@ final class MiniMediaControls {
 
     private void clearMiniMedia() {
         destroyMiniMediaController();
-        if (quickMenu != null) quickMenu.hide();
         miniMediaPackage = null;
         miniMediaTaskId = -1;
         miniMediaBounds = null;
     }
 
     private void destroyMiniMediaController() {
-        if (miniMediaController != null) miniMediaController.destroy();
+        if (miniMediaController == null) return;
+        var restore = miniMediaController.destroy();
         miniMediaController = null;
+        if (restore != null) deferMuteRestore(restore);
     }
 
     static int miniMediaTaskId(Object info) {

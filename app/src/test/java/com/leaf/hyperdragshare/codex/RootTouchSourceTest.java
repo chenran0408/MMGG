@@ -6,13 +6,18 @@ import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertSame;
 import static org.junit.Assert.assertTrue;
 
+import android.content.Context;
+import android.hardware.display.DisplayManager;
+import android.view.Display;
 import android.view.MotionEvent;
+import android.view.Surface;
 
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.InputStream;
 import java.io.OutputStream;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
@@ -22,6 +27,9 @@ import org.junit.runner.RunWith;
 import org.robolectric.RobolectricTestRunner;
 import org.robolectric.RuntimeEnvironment;
 import org.robolectric.annotation.Config;
+import org.robolectric.shadow.api.Shadow;
+import org.robolectric.shadows.ShadowDisplay;
+import org.robolectric.util.ReflectionHelpers;
 
 @RunWith(RobolectricTestRunner.class)
 @Config(manifest = Config.NONE)
@@ -73,6 +81,84 @@ public final class RootTouchSourceTest {
         pointerDown(parser, 1, 43, 30, 40);
 
         assertEquals(Arrays.asList(MotionEvent.ACTION_DOWN, MotionEvent.ACTION_MOVE), actions);
+    }
+
+    @Test public void oneRootFrameDeliversContactBeforePointerAtTheSamePoint() {
+        List<String> events = new ArrayList<>();
+        RootTouchSource source = new RootTouchSource(RuntimeEnvironment.getApplication(),
+                (action, x, y, time, major, minor, width) -> events.add("pointer:" + x + ":" + y + ":" + time),
+                (ready, reason) -> { });
+        source.setContactListener((action, x, y, secondX, secondY, count, time) -> {
+            events.add("contact:" + x + ":" + y + ":" + time);
+            return true;
+        });
+        RootTouchSource.Run run = initFrameDispatch(source);
+
+        source.dispatchFrame(run, singlePointerFrame(MotionEvent.ACTION_DOWN, 200));
+
+        assertEquals(2, events.size());
+        assertTrue(events.get(0).startsWith("contact:"));
+        assertEquals(events.get(0).replace("contact:", "pointer:"), events.get(1));
+    }
+
+    @Test public void rootRecoveryCannotDeliverTheTailOfAFallbackGesture() {
+        List<Integer> actions = new ArrayList<>();
+        RootTouchSource source = new RootTouchSource(RuntimeEnvironment.getApplication(),
+                (action, x, y, time, major, minor, width) -> actions.add(action),
+                (ready, reason) -> { });
+        AtomicBoolean fallback = new AtomicBoolean(true);
+        source.setFallbackOwnsInput(fallback::get);
+        RootTouchSource.Run run = initFrameDispatch(source);
+
+        source.dispatchFrame(run, singlePointerFrame(MotionEvent.ACTION_DOWN, 100));
+        fallback.set(false);
+        source.dispatchFrame(run, singlePointerFrame(MotionEvent.ACTION_MOVE, 120));
+        source.dispatchFrame(run, singlePointerFrame(MotionEvent.ACTION_UP, 130));
+        source.dispatchFrame(run, singlePointerFrame(MotionEvent.ACTION_DOWN, 200));
+        source.dispatchFrame(run, singlePointerFrame(MotionEvent.ACTION_UP, 300));
+
+        assertEquals(List.of(MotionEvent.ACTION_DOWN, MotionEvent.ACTION_UP), actions);
+    }
+
+    @Test public void aDisplayChangeRefreshesCoordinatesForFollowingFrames() {
+        Context context = RuntimeEnvironment.getApplication();
+        Display display = context.getSystemService(DisplayManager.class).getDisplay(Display.DEFAULT_DISPLAY);
+        ShadowDisplay displayShadow = Shadow.extract(display);
+        displayShadow.setRotation(Surface.ROTATION_0);
+        List<Float> xPositions = new ArrayList<>();
+        RootTouchSource source = new RootTouchSource(context,
+                (action, x, y, time, major, minor, width) -> xPositions.add(x),
+                (ready, reason) -> { });
+        RootTouchSource.Run run = initFrameDispatch(source);
+        source.dispatchFrame(run, singlePointerFrame(MotionEvent.ACTION_DOWN, 100));
+
+        displayShadow.setRotation(Surface.ROTATION_180);
+        source.dispatchFrame(run, singlePointerFrame(MotionEvent.ACTION_MOVE, 120));
+        assertEquals(xPositions.get(0), xPositions.get(1));
+
+        DisplayManager.DisplayListener listener = ReflectionHelpers.getField(source, "displayListener");
+        listener.onDisplayChanged(Display.DEFAULT_DISPLAY);
+        source.dispatchFrame(run, singlePointerFrame(MotionEvent.ACTION_MOVE, 140));
+        assertTrue(xPositions.get(2) > xPositions.get(0));
+    }
+
+    private static RootTouchSource.Run initFrameDispatch(RootTouchSource source) {
+        RootTouchSource.Run run = new RootTouchSource.Run();
+        run.rawMaxX = 1000;
+        run.rawMaxY = 2000;
+        ReflectionHelpers.setField(source, "currentRun", run);
+        ReflectionHelpers.callInstanceMethod(source, "refreshDisplayGeometry");
+        return run;
+    }
+
+    private static RootTouchSource.InputFrame singlePointerFrame(int action, long time) {
+        RootTouchSource.InputFrame frame = new RootTouchSource.InputFrame(time);
+        frame.contactAction = frame.pointerAction = action;
+        frame.contactX = frame.pointerX = 20;
+        frame.contactY = frame.pointerY = 30;
+        frame.secondX = frame.secondY = Float.NaN;
+        frame.pointerCount = action == MotionEvent.ACTION_UP ? 0 : 1;
+        return frame;
     }
 
     @Test public void rejectedSecondFingerDispatchesRootCancelAndMarksTailIgnored() {

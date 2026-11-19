@@ -1,12 +1,13 @@
 package com.leaf.hyperdragshare.codex;
 
 import android.content.Context;
+import android.hardware.display.DisplayManager;
 import android.os.Handler;
 import android.os.Looper;
 import android.os.SystemClock;
 import android.util.DisplayMetrics;
+import android.view.Display;
 import android.view.MotionEvent;
-import android.view.WindowManager;
 
 import com.leaf.hyperdragshare.gestures.config.OverlayTouchRegions;
 
@@ -23,6 +24,7 @@ import java.util.concurrent.ExecutionException;
 import java.util.concurrent.FutureTask;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
+import java.util.function.BooleanSupplier;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -49,22 +51,53 @@ final class RootTouchSource {
     private static final Pattern BLUETOOTH_BUS = Pattern.compile("(?m)^I:.*\\bBus=0005\\b");
     private static final Pattern MAX_X = Pattern.compile("ABS_MT_POSITION_X\\s*:.*?max\\s+(\\d+)");
     private static final Pattern MAX_Y = Pattern.compile("ABS_MT_POSITION_Y\\s*:.*?max\\s+(\\d+)");
-    private final Context context;
     private final Listener listener;
     private final StateListener stateListener;
     private final Handler mainHandler = new Handler(Looper.getMainLooper());
+    private final DisplayManager displayManager;
+    private final DisplayManager.DisplayListener displayListener = new DisplayManager.DisplayListener() {
+        @Override public void onDisplayAdded(int displayId) { update(displayId); }
+        @Override public void onDisplayRemoved(int displayId) { update(displayId); }
+        @Override public void onDisplayChanged(int displayId) { update(displayId); }
+        private void update(int displayId) {
+            if (displayId == Display.DEFAULT_DISPLAY && currentRun != null) refreshDisplayGeometry();
+        }
+    };
+    private volatile DisplayGeometry displayGeometry;
+    private boolean observingDisplay;
     private Run currentRun;
     private volatile boolean ready;
     private volatile String failureReason = "";
     private volatile ContactListener contactListener;
+    private BooleanSupplier fallbackOwnsInput = () -> false;
     private boolean statePublished;
+
+    private record DisplayGeometry(int width, int height, int rotation) {
+        float[] map(Run run, float rawX, float rawY) {
+            return GestureMath.mapRawPoint(rawX, rawY, run.rawMaxX, run.rawMaxY, width, height, rotation);
+        }
+    }
+
+    /** One SYN_REPORT, populated on the reader and then delivered intact on the main queue. */
+    static final class InputFrame {
+        final long time;
+        int contactAction = -1;
+        float contactX, contactY, secondX, secondY;
+        int pointerCount;
+        int pointerAction = -1;
+        float pointerX, pointerY;
+        int major, minor, width, diagnosticCount;
+
+        InputFrame(long time) { this.time = time; }
+    }
 
     /** Resources are transferred under this lock; no I/O or listener runs with it held. */
     static final class Run {
         final GestureDiagnostics.Stream diagnostics = new GestureDiagnostics.Stream("root_evdev");
         volatile boolean cancelled;
         private Process process;
-        volatile EvdevTouchParser parser;
+        EvdevTouchParser parser;
+        InputFrame pendingFrame;
         int rawMaxX;
         int rawMaxY;
         // Main-queue state of the gesture actually delivered to the host.
@@ -72,7 +105,7 @@ final class RootTouchSource {
         boolean ignoredGesture;
         boolean rejectedTwoFingerCandidate;
         boolean rejectedContactStreamEnded;
-        volatile long frameEventTime;
+        boolean ignoreFallbackTail;
         float lastX;
         float lastY;
 
@@ -97,9 +130,9 @@ final class RootTouchSource {
     }
 
     RootTouchSource(Context context, Listener listener, StateListener stateListener) {
-        this.context = context;
         this.listener = listener;
         this.stateListener = stateListener;
+        displayManager = context.getSystemService(DisplayManager.class);
     }
 
     // Lifecycle and callbacks share the main queue. A listener can reenter stop/start safely.
@@ -108,6 +141,9 @@ final class RootTouchSource {
             if (currentRun != null) return;
             Run run = new Run();
             currentRun = run;
+            refreshDisplayGeometry();
+            displayManager.registerDisplayListener(displayListener, mainHandler);
+            observingDisplay = true;
             publishState(false, "");
             launch("drag-share-root-input", () -> runLoop(run));
         });
@@ -117,6 +153,7 @@ final class RootTouchSource {
         onMain(() -> {
             Run run = currentRun;
             currentRun = null;
+            stopObservingDisplay();
             if (run != null) {
                 Process owned = run.cancel();
                 if (owned != null) launch("drag-share-input-stop", () -> endProcess(owned));
@@ -147,6 +184,24 @@ final class RootTouchSource {
 
     void setContactListener(ContactListener listener) {
         contactListener = listener;
+    }
+
+    void setFallbackOwnsInput(BooleanSupplier ownsInput) {
+        fallbackOwnsInput = ownsInput;
+    }
+
+    private void refreshDisplayGeometry() {
+        Display display = displayManager.getDisplay(Display.DEFAULT_DISPLAY);
+        if (display == null) return;
+        DisplayMetrics metrics = new DisplayMetrics();
+        display.getRealMetrics(metrics);
+        displayGeometry = new DisplayGeometry(metrics.widthPixels, metrics.heightPixels, display.getRotation());
+    }
+
+    private void stopObservingDisplay() {
+        if (!observingDisplay) return;
+        displayManager.unregisterDisplayListener(displayListener);
+        observingDisplay = false;
     }
 
     void clearContactListener(ContactListener listener) {
@@ -191,12 +246,10 @@ final class RootTouchSource {
             checkRunning(run);
             String devices = sectionBetween(probe, INVENTORY_MARKER, RANGES_MARKER);
             String allRanges = substringAfter(probe, RANGES_MARKER);
-            WindowManager manager = (WindowManager) context.getSystemService(Context.WINDOW_SERVICE);
-            DisplayMetrics display = new DisplayMetrics();
-            manager.getDefaultDisplay().getRealMetrics(display);
-            int rotation = manager.getDefaultDisplay().getRotation();
+            DisplayGeometry display = displayGeometry;
+            if (display == null) throw new IOException("无法读取触摸屏幕尺寸。");
             String devicePath = findTouchDevicePath(devices, allRanges,
-                    display.widthPixels, display.heightPixels, rotation);
+                    display.width(), display.height(), display.rotation());
             if (devicePath == null) throw new IOException("无法确认当前屏幕的触摸设备，请查看诊断日志。");
             String ranges = deviceRanges(allRanges, devicePath);
             if (ranges == null) throw new IOException("无法读取触摸设备坐标范围。");
@@ -221,7 +274,7 @@ final class RootTouchSource {
             logConnectionStage("time_to_ready", connectionStarted);
             DragShareLog.i(TAG, "ready device=" + devicePath + " raw="
                     + run.rawMaxX + "x" + run.rawMaxY + " display="
-                    + display.widthPixels + "x" + display.heightPixels + " rotation=" + rotation);
+                    + display.width() + "x" + display.height() + " rotation=" + display.rotation());
             readEvents(run, stream);
             if (!run.cancelled) {
                 throw new IOException("Root 触摸事件流已结束（" + processStatus(process) + "）：" + errorText(errors));
@@ -261,6 +314,7 @@ final class RootTouchSource {
                     if (currentRun != run) return;
                 }
                 currentRun = null;
+                stopObservingDisplay();
                 publishState(false, reason);
             });
             if (owned != null) endProcess(owned);
@@ -453,6 +507,7 @@ final class RootTouchSource {
     private void readEvents(Run run, InputStream stream) throws IOException {
         int size = android.os.Process.is64Bit() ? 24 : 16;
         byte[] event = new byte[size];
+        ByteBuffer buffer = ByteBuffer.wrap(event).order(ByteOrder.LITTLE_ENDIAN);
         while (!run.cancelled) {
             int offset = 0;
             while (!run.cancelled && offset < size) {
@@ -461,104 +516,125 @@ final class RootTouchSource {
                 offset += count;
             }
             if (run.cancelled) return;
-            ByteBuffer buffer = ByteBuffer.wrap(event).order(ByteOrder.LITTLE_ENDIAN);
             buffer.position(size == 24 ? 16 : 8);
             run.parser.consume(buffer.getShort() & 0xffff, buffer.getShort() & 0xffff, buffer.getInt());
+            InputFrame frame = run.pendingFrame;
+            if (frame != null) {
+                run.pendingFrame = null;
+                mainHandler.post(() -> dispatchFrame(run, frame));
+            }
         }
     }
 
     private void onRawFrame(Run run, int action, float rawX, float rawY,
                             int major, int minor, int width) {
-        long eventTime = run.frameEventTime > 0L
-                ? run.frameEventTime : SystemClock.uptimeMillis();
-        int contacts = GestureDiagnostics.enabled() && run.parser != null
+        InputFrame frame = pendingFrame(run);
+        frame.pointerAction = action;
+        frame.pointerX = rawX;
+        frame.pointerY = rawY;
+        frame.major = major;
+        frame.minor = minor;
+        frame.width = width;
+        frame.diagnosticCount = GestureDiagnostics.enabled() && run.parser != null
                 ? run.parser.diagnosticPointerCount() : -1;
-        mainHandler.post(() -> {
-            if (currentRun != run || run.cancelled) return;
-            if (run.rejectedTwoFingerCandidate) {
-                if (action == MotionEvent.ACTION_UP || action == MotionEvent.ACTION_CANCEL) {
-                    run.pointerDown = false;
-                    if (run.rejectedContactStreamEnded) {
-                        run.rejectedTwoFingerCandidate = false;
-                        run.rejectedContactStreamEnded = false;
-                    }
-                }
-                return;
-            }
-            WindowManager manager = (WindowManager) context.getSystemService(Context.WINDOW_SERVICE);
-            DisplayMetrics metrics = new DisplayMetrics();
-            manager.getDefaultDisplay().getRealMetrics(metrics);
-            float[] point = GestureMath.mapRawPoint(rawX, rawY, run.rawMaxX, run.rawMaxY,
-                    metrics.widthPixels, metrics.heightPixels, manager.getDefaultDisplay().getRotation());
-            if (action == MotionEvent.ACTION_DOWN) {
-                run.pointerDown = true;
-                run.ignoredGesture = OverlayTouchRegions.contains(point[0], point[1]);
-                if (run.ignoredGesture) {
-                    DragShareLog.i(TAG, "ignoring gesture started inside module overlay bounds");
-                }
-            }
-            else if (action == MotionEvent.ACTION_UP || action == MotionEvent.ACTION_CANCEL) run.pointerDown = false;
-            run.diagnostics.root(action, point[0], point[1], rawX, rawY, -1, eventTime, contacts,
-                    null, run.ignoredGesture ? "IGNORED" : "PHYSICAL_INPUT", null, null, null,
-                    run.ignoredGesture ? "module_overlay_exclusion"
-                            : action == MotionEvent.ACTION_CANCEL ? "evdev_multiple_contacts" : "evdev_frame");
-            if (run.ignoredGesture) {
-                if (action == MotionEvent.ACTION_UP || action == MotionEvent.ACTION_CANCEL) {
-                    run.ignoredGesture = false;
-                }
-                return;
-            }
-            run.lastX = point[0];
-            run.lastY = point[1];
-            listener.onPointerEvent(action, point[0], point[1], eventTime, major, minor, width);
-        });
     }
 
     private void onRawContactFrame(Run run, int action, float rawX, float rawY,
                                    float secondRawX, float secondRawY, int pointerCount) {
-        long eventTime = SystemClock.uptimeMillis();
-        run.frameEventTime = eventTime;
-        mainHandler.post(() -> {
+        InputFrame frame = pendingFrame(run);
+        frame.contactAction = action;
+        frame.contactX = rawX;
+        frame.contactY = rawY;
+        frame.secondX = secondRawX;
+        frame.secondY = secondRawY;
+        frame.pointerCount = pointerCount;
+    }
+
+    private static InputFrame pendingFrame(Run run) {
+        if (run.pendingFrame == null) run.pendingFrame = new InputFrame(SystemClock.uptimeMillis());
+        return run.pendingFrame;
+    }
+
+    void dispatchFrame(Run run, InputFrame frame) {
+        if (currentRun != run || run.cancelled) return;
+        if (fallbackOwnsInput.getAsBoolean()) {
+            run.ignoreFallbackTail = true;
+            return;
+        }
+        if (run.ignoreFallbackTail) {
+            if (frame.contactAction != MotionEvent.ACTION_DOWN
+                    && frame.pointerAction != MotionEvent.ACTION_DOWN) return;
+            run.ignoreFallbackTail = false;
+        }
+        DisplayGeometry geometry = displayGeometry;
+        float[] contactPoint = null;
+        if (frame.contactAction >= 0) {
+            if (frame.pointerCount > 0 && Float.isFinite(frame.contactX) && Float.isFinite(frame.contactY)) {
+                contactPoint = geometry.map(run, frame.contactX, frame.contactY);
+            }
+            dispatchContactFrame(run, frame, contactPoint, geometry);
             if (currentRun != run || run.cancelled) return;
-            if (run.rejectedTwoFingerCandidate) {
-                if (pointerCount == 0) run.rejectedContactStreamEnded = true;
-                else if (run.rejectedContactStreamEnded && action == MotionEvent.ACTION_DOWN) {
+        }
+        int action = frame.pointerAction;
+        if (action < 0) return;
+        if (run.rejectedTwoFingerCandidate) {
+            if (action == MotionEvent.ACTION_UP || action == MotionEvent.ACTION_CANCEL) {
+                run.pointerDown = false;
+                if (run.rejectedContactStreamEnded) {
                     run.rejectedTwoFingerCandidate = false;
                     run.rejectedContactStreamEnded = false;
                 }
             }
-            float x = Float.NaN;
-            float y = Float.NaN;
-            float secondX = Float.NaN;
-            float secondY = Float.NaN;
-            if (pointerCount > 0 && Float.isFinite(rawX) && Float.isFinite(rawY)) {
-                WindowManager manager = (WindowManager) context.getSystemService(Context.WINDOW_SERVICE);
-                DisplayMetrics metrics = new DisplayMetrics();
-                manager.getDefaultDisplay().getRealMetrics(metrics);
-                int rotation = manager.getDefaultDisplay().getRotation();
-                float[] point = GestureMath.mapRawPoint(rawX, rawY, run.rawMaxX, run.rawMaxY,
-                        metrics.widthPixels, metrics.heightPixels, rotation);
-                x = point[0];
-                y = point[1];
-                if (Float.isFinite(secondRawX) && Float.isFinite(secondRawY)) {
-                    float[] second = GestureMath.mapRawPoint(secondRawX, secondRawY,
-                            run.rawMaxX, run.rawMaxY, metrics.widthPixels, metrics.heightPixels, rotation);
-                    secondX = second[0];
-                    secondY = second[1];
-                }
+            return;
+        }
+        float[] point = contactPoint != null && frame.contactX == frame.pointerX && frame.contactY == frame.pointerY
+                ? contactPoint : geometry.map(run, frame.pointerX, frame.pointerY);
+        if (action == MotionEvent.ACTION_DOWN) {
+            run.pointerDown = true;
+            run.ignoredGesture = OverlayTouchRegions.contains(point[0], point[1]);
+            if (run.ignoredGesture) {
+                DragShareLog.i(TAG, "ignoring gesture started inside module overlay bounds");
             }
-            if (action == MotionEvent.ACTION_DOWN && pointerCount > 0
-                    && Float.isFinite(x) && Float.isFinite(y)
-                    && OverlayTouchRegions.contains(x, y)) {
-                run.ignoredGesture = true;
+        } else if (action == MotionEvent.ACTION_UP || action == MotionEvent.ACTION_CANCEL) run.pointerDown = false;
+        run.diagnostics.root(action, point[0], point[1], frame.pointerX, frame.pointerY, -1,
+                frame.time, frame.diagnosticCount,
+                null, run.ignoredGesture ? "IGNORED" : "PHYSICAL_INPUT", null, null, null,
+                run.ignoredGesture ? "module_overlay_exclusion"
+                        : action == MotionEvent.ACTION_CANCEL ? "evdev_multiple_contacts" : "evdev_frame");
+        if (run.ignoredGesture) {
+            if (action == MotionEvent.ACTION_UP || action == MotionEvent.ACTION_CANCEL) {
+                run.ignoredGesture = false;
             }
-            ContactListener target = contactListener;
-            if (target == null || run.ignoredGesture) return;
-            boolean accepted = target.onContactEvent(
-                    action, x, y, secondX, secondY, pointerCount, eventTime);
-            handleContactDecision(run, action, x, y, eventTime, pointerCount,
-                    rawX, rawY, accepted);
-        });
+            return;
+        }
+        run.lastX = point[0];
+        run.lastY = point[1];
+        listener.onPointerEvent(action, point[0], point[1], frame.time, frame.major, frame.minor, frame.width);
+    }
+
+    private void dispatchContactFrame(Run run, InputFrame frame, float[] point, DisplayGeometry geometry) {
+        int action = frame.contactAction;
+        if (run.rejectedTwoFingerCandidate) {
+            if (frame.pointerCount == 0) run.rejectedContactStreamEnded = true;
+            else if (run.rejectedContactStreamEnded && action == MotionEvent.ACTION_DOWN) {
+                run.rejectedTwoFingerCandidate = false;
+                run.rejectedContactStreamEnded = false;
+            }
+        }
+        float x = point == null ? Float.NaN : point[0];
+        float y = point == null ? Float.NaN : point[1];
+        if (action == MotionEvent.ACTION_DOWN && point != null && OverlayTouchRegions.contains(x, y)) {
+            run.ignoredGesture = true;
+        }
+        ContactListener target = contactListener;
+        if (target == null || run.ignoredGesture) return;
+        float[] second = point != null && Float.isFinite(frame.secondX) && Float.isFinite(frame.secondY)
+                ? geometry.map(run, frame.secondX, frame.secondY) : null;
+        boolean accepted = target.onContactEvent(action, x, y,
+                second == null ? Float.NaN : second[0], second == null ? Float.NaN : second[1],
+                frame.pointerCount, frame.time);
+        handleContactDecision(run, action, x, y, frame.time, frame.pointerCount,
+                frame.contactX, frame.contactY, accepted);
     }
 
     void handleContactDecision(Run run, int action, float x, float y, long eventTime,

@@ -15,11 +15,11 @@ internal enum class SettingModule(val title: String, val icon: ImageVector, val 
     GENERAL("通用设置", MiuixIcons.Settings);
 
     val groups: List<String> get() = when (this) {
-        PORTAL -> listOf("触发与识别", "应用避让", "分词与取用", "拖拽分享", "中转站", "拖拽菜单外观", "拖拽触摸与滚动")
+        PORTAL -> listOf("总开关", "触发与识别", "应用避让", "分词与取用", "拖拽分享", "中转站", "拖拽菜单外观", "拖拽触摸与滚动")
         GESTURES -> listOf("总开关与通用", "底角触发", "动作与目标", "蜂巢布局", "布局动效", "高级设置")
-        FREEFORM -> listOf("启动行为", "窗体布局", "窗外操作")
+        FREEFORM -> listOf("总开关", "启动行为", "窗体布局", "窗外操作")
         COPY_DIRECT -> listOf("启用与触发", "目标应用")
-        GENERAL -> listOf("运行与权限", "主题与显示", "工具与诊断", "关于")
+        GENERAL -> listOf("运行与权限", "主题与显示", "工具与诊断", "高级重启", "关于")
     }
 }
 
@@ -64,6 +64,7 @@ internal fun entriesForGestureCategory(
     entries: List<SettingEntry>,
     category: SettingGroupCategory,
 ): List<SettingEntry> = entries.filter { gestureCategoryFor(it)?.id == category.id }
+    .sortedBy { it.id !in category.entryIds }
 
 internal fun gestureFocusCategoryId(
     entries: List<SettingEntry>,
@@ -160,7 +161,7 @@ internal fun settingGroupIcon(module: SettingModule, group: String): ImageVector
 internal fun defaultCollapsedSettingGroups(module: SettingModule): Set<String> = when (module) {
     SettingModule.PORTAL -> setOf("拖拽菜单外观", "拖拽触摸与滚动")
     SettingModule.FREEFORM -> setOf("窗体布局", "窗外操作")
-    SettingModule.GENERAL -> setOf("工具与诊断", "关于")
+    SettingModule.GENERAL -> setOf("工具与诊断", "高级重启", "关于")
     else -> emptySet()
 }
 
@@ -178,7 +179,8 @@ internal data class SettingEntry(
     val open: (() -> Unit)? = null,
     val content: @Composable (enabled: Boolean) -> Unit,
 ) {
-    val path: String get() = "${module.title} › $group › $title"
+    val location: String get() = "${module.title} › $group"
+    val path: String get() = "$location › $title"
     fun matches(query: String): Boolean {
         val category = if (module == SettingModule.GESTURES) gestureCategoryFor(this)?.title.orEmpty() else ""
         val haystack = "$path $category ${module.aliases} $summary $keywords".lowercase(Locale.ROOT)

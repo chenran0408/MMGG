@@ -14,4 +14,5 @@ interface IRootNodeLease {
     boolean verifySource(String sourcePackage);
     boolean isOpen();
     void close();
+    boolean startedMicRecording(String sourcePackage, long downTime);
 }

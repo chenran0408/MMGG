@@ -39,17 +39,35 @@ public class MoreAppsCatalogTest {
                 item("2", "Weather shortcut", "org.weather", true, "W", 5),
                 item("3", "Browser", "org.browser", false, "B", 5),
                 item("4", "Wallet", "org.wallet", true, "W", 1));
-        List<MoreAppsCatalog.Item> matched = MoreAppsCatalog.filter(source,
+        List<MoreAppsCatalog.Item> matched = MoreAppsCatalog.search(source,
                 MoreAppsCatalog.MODE_SHORTCUTS,
-                "weather", 5, "W");
+                "weather", 5, "W", true).items();
         assertEquals(1, matched.size());
         assertEquals("2", matched.get(0).key);
-        List<MoreAppsCatalog.Item> apps = MoreAppsCatalog.filter(source,
-                MoreAppsCatalog.MODE_APPS, "", -1, "");
+        List<MoreAppsCatalog.Item> apps = MoreAppsCatalog.search(source,
+                MoreAppsCatalog.MODE_APPS, "", -1, "", true).items();
         assertEquals(2, apps.size());
         assertFalse(apps.stream().anyMatch(item -> item.shortcut));
-        assertFalse(MoreAppsCatalog.filter(source, MoreAppsCatalog.MODE_APPS,
-                "nothing", -1, "").size() > 0);
+        assertTrue(MoreAppsCatalog.search(source, MoreAppsCatalog.MODE_APPS,
+                "nothing", -1, "", true).items().isEmpty());
+    }
+
+    @Test public void indexUsesAllMatchingInitialsAndOnlyReportsPendingIconsForSelectedLetter() {
+        List<MoreAppsCatalog.Item> source = List.of(
+                item("alpha", "Alpha", "org.Example.alpha", false, "A", MoreAppsCatalog.COLOR_BLUE),
+                item("beta", "Beta", "org.Example.beta", false, "B", MoreAppsCatalog.COLOR_BLUE),
+                item("amber", "Amber", "org.Example.amber", false, "A", MoreAppsCatalog.COLOR_PENDING),
+                item("weather", "Weather", "org.Example.weather", true, "W", MoreAppsCatalog.COLOR_PENDING));
+        var alpha = MoreAppsCatalog.search(source, MoreAppsCatalog.MODE_APPS,
+                " EXAMPLE ", MoreAppsCatalog.COLOR_BLUE, "A", true);
+        assertEquals(List.of("alpha"), alpha.items().stream().map(item -> item.key).toList());
+        assertEquals(List.of("A", "B"), alpha.initials());
+        assertTrue(alpha.pendingColors());
+        var beta = MoreAppsCatalog.search(source, MoreAppsCatalog.MODE_APPS,
+                " EXAMPLE ", MoreAppsCatalog.COLOR_BLUE, "B", false);
+        assertEquals(List.of("beta"), beta.items().stream().map(item -> item.key).toList());
+        assertTrue(beta.initials().isEmpty());
+        assertFalse(beta.pendingColors());
     }
 
     @Test public void classifiesIconColorsIntoStableGroups() {

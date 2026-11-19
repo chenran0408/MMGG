@@ -17,6 +17,48 @@ import java.util.Arrays;
 @Config(manifest = Config.NONE)
 public final class AccessibilityNodeClassifierTest {
     @Test
+    public void strongBackgroundImageDoesNotOverrideContainedNativeOrWebText() {
+        for (boolean web : new boolean[]{false, true}) {
+            AccessibilityNodeSnapshot background = snapshot(new Rect(0, 342, 1440, 2922))
+                    .packageName("reader").className("android.widget.ImageView")
+                    .insideWebView(web).build();
+            AccessibilityNodeSnapshot message = snapshot(new Rect(223, 609, 1231, 2922))
+                    .packageName("reader").className("android.widget.TextView")
+                    .text("message").insideWebView(web).build();
+
+            AccessibilityCandidateSelector.Selection selected = AccessibilityCandidateSelector.select(
+                    new AccessibilityNodeClassifier(3f, 1440, 3200)
+                            .classify(Arrays.asList(background, message)), 1000, 855, true);
+
+            assertNotNull(selected);
+            assertEquals(AccessibilityCandidate.Kind.TEXT, selected.candidate.kind);
+            assertEquals(message.bounds, selected.candidate.bounds);
+        }
+    }
+
+    @Test
+    public void imagePreferenceStillAppliesToSameBoundsAndNestedMedia() {
+        for (boolean web : new boolean[]{false, true}) {
+            for (Rect imageBounds : Arrays.asList(new Rect(20, 20, 220, 220),
+                    new Rect(40, 40, 200, 200))) {
+                AccessibilityNodeSnapshot image = snapshot(imageBounds)
+                        .packageName("reader").className("android.widget.ImageView")
+                        .insideWebView(web).build();
+                AccessibilityNodeSnapshot label = snapshot(new Rect(20, 20, 220, 220))
+                        .packageName("reader").className("android.widget.TextView")
+                        .text("media label").insideWebView(web).build();
+                AccessibilityCandidateSelector.Selection selected = AccessibilityCandidateSelector.select(
+                        new AccessibilityNodeClassifier(1f, 1080, 2400)
+                                .classify(Arrays.asList(image, label)), 100, 100, true);
+
+                assertNotNull(selected);
+                assertEquals(AccessibilityCandidate.Kind.IMAGE_REGION, selected.candidate.kind);
+                assertEquals(imageBounds, selected.candidate.bounds);
+            }
+        }
+    }
+
+    @Test
     public void textAndImageFollowDocumentedPriority() {
         AccessibilityNodeSnapshot text = snapshot(new Rect(0, 0, 200, 100))
                 .className("android.widget.TextView")

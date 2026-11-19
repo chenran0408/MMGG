@@ -1,8 +1,6 @@
 package com.leaf.hyperdragshare.codex
 
 import android.content.Context
-import android.content.Intent
-import android.provider.Settings
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -26,14 +24,13 @@ import top.yukonga.miuix.kmp.icon.extended.Report
 
 @Composable
 internal fun ActivationStatusCard(
-    context: Context,
     monitor: ActivationMonitorState,
     onOpenDiagnostics: () -> Unit,
 ) {
     val snapshot = monitor.snapshot
     val presentation = activationPresentation(snapshot, monitor.checking, true, true)
     Card(
-        modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 12.dp),
+        modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp),
     ) {
         SettingsNavigationPreference(
             title = presentation.homeTitle,
@@ -49,7 +46,7 @@ internal fun ActivationDiagnosticsPage(
     context: Context,
     monitor: ActivationMonitorState,
     onBack: () -> Unit,
-    onOpenGeneralSettings: () -> Unit,
+    onReloadApps: () -> Unit,
     onOpenProblemDiagnostics: () -> Unit,
 ) {
     val snapshot = monitor.snapshot
@@ -84,14 +81,12 @@ internal fun ActivationDiagnosticsPage(
                 Card(Modifier.padding(horizontal = 12.dp, vertical = 3.dp)) {
                     BasicComponent(
                         title = presentation.diagnosticsTitle,
-                        summary = if (monitor.checking) "正在更新状态" else
-                            "这里只显示需要处理的项目；未能确认的状态不会当作权限缺失。",
                         insideMargin = PaddingValues(horizontal = 16.dp, vertical = 12.dp),
                     )
                     SettingsNavigationPreference(
-                        title = "重新检查",
-                        summary = "重新读取权限和组件状态",
+                        title = if (monitor.checking) "正在检查…" else "重新检查",
                         icon = MiuixIcons.Update,
+                        enabled = !monitor.checking,
                         onClick = monitor.refresh,
                     )
                 }
@@ -106,10 +101,7 @@ internal fun ActivationDiagnosticsPage(
             item("diagnostics-permissions") {
                 if (missingPermissions.isNotEmpty()) {
                     SimpleDiagnosticSection("缺少权限", missingPermissions.map { it to "允许 MMGG 显示悬浮窗" }) {
-                        val intent = Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION)
-                            .setData(android.net.Uri.parse("package:${context.packageName}"))
-                            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                        context.startActivity(intent)
+                        openOverlayPermissionSettings(context)
                     }
                 }
             }
@@ -122,9 +114,8 @@ internal fun ActivationDiagnosticsPage(
             }
             item("diagnostics-reload") {
                 if (portalNeedsReload && missingSoftware.none { it.first == "小米传送门" }) {
-                    SimpleDiagnosticSection("需要检查或重载", listOf("小米传送门" to "检查 LSPosed 作用域后，在通用设置中热重载传送门")) {
-                        onOpenGeneralSettings()
-                    }
+                    SimpleDiagnosticSection("传送门待检查", listOf(RuntimeAction.ReloadApps.title to
+                        "确认 LSPosed 作用域和 Root 授权后，可尝试重载")) { onReloadApps() }
                 }
             }
             item("diagnostics-unknown") {
@@ -132,7 +123,7 @@ internal fun ActivationDiagnosticsPage(
                     Card(Modifier.padding(horizontal = 12.dp, vertical = 3.dp)) {
                         BasicComponent(
                             title = "有状态暂时无法确认",
-                            summary = "这不代表权限未授予或软件缺失。需要继续排查时，可导出诊断包查看技术信息。",
+                            summary = "可重新检查或导出诊断包",
                             insideMargin = PaddingValues(horizontal = 16.dp, vertical = 12.dp),
                         )
                     }
@@ -145,7 +136,6 @@ internal fun ActivationDiagnosticsPage(
                     Card(Modifier.padding(horizontal = 12.dp, vertical = 3.dp)) {
                         BasicComponent(
                             title = "没有发现需要处理的项目",
-                            summary = "已检查的权限和运行状态正常。",
                             insideMargin = PaddingValues(horizontal = 16.dp, vertical = 12.dp),
                         )
                     }
@@ -159,12 +149,6 @@ internal fun ActivationDiagnosticsPage(
                         summary = "导出诊断 ZIP、运行触控专项检查或提交问题",
                         icon = MiuixIcons.Report,
                         onClick = onOpenProblemDiagnostics,
-                    )
-                    SettingsNavigationPreference(
-                        title = "打开通用设置",
-                        summary = "检查模块作用域、Root 授权或重载运行服务",
-                        icon = SettingModule.GENERAL.icon,
-                        onClick = onOpenGeneralSettings,
                     )
                 }
             }

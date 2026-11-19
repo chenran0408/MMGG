@@ -4,6 +4,7 @@ import android.content.ClipData;
 import android.content.Context;
 import android.content.Intent;
 import android.net.Uri;
+import android.webkit.MimeTypeMap;
 
 final class ShareLauncher {
     private ShareLauncher() {}
@@ -44,7 +45,8 @@ final class ShareLauncher {
                 }
                 intent.setDataAndType(stagedImage, payload.mimeType());
                 intent.putExtra(Intent.EXTRA_STREAM, stagedImage);
-                intent.putExtra(Intent.EXTRA_TITLE, "drag-share.png");
+                String extension = MimeTypeMap.getSingleton().getExtensionFromMimeType(payload.mimeType());
+                intent.putExtra(Intent.EXTRA_TITLE, extension == null ? "drag-share" : "drag-share." + extension);
                 ClipData clip = ClipData.newUri(
                         context.getContentResolver(), "drag-share-image", stagedImage);
                 OperationTrace.put(clip, operation);

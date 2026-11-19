@@ -427,6 +427,19 @@ public final class RootImageSelectionTest {
         assertNull(select(node("android.widget.ImageView", "other").build(), List.of(), true, true));
     }
 
+    @Test public void overlappingStickerImageWinsOverItsPlaceholderText() {
+        AccessibilityNodeSnapshot sticker = node("android.widget.ImageView", "reader")
+                .bounds(new Rect(20, 20, 220, 220)).build();
+        AccessibilityNodeSnapshot placeholder = node("android.widget.TextView", "reader")
+                .bounds(new Rect(20, 20, 220, 220)).text("表情").build();
+        AccessibilityCandidateSelector.Selection selection = RootNodeCaptureMain.selectContent(
+                new AccessibilityNodeClassifier(1f, 1000, 2000),
+                new java.util.ArrayList<>(List.of(sticker, placeholder)), List.of(),
+                100, 100, "reader", true, true);
+        assertNotNull(selection);
+        assertTrue(selection.isImage());
+    }
+
     @Test public void overlappingPasswordExcludesWholeImageEvenWhenTouchIsOutsidePassword() {
         AccessibilityNodeSnapshot image = node("android.widget.ImageView", "reader").build();
         assertNull(select(image, List.of(new Rect(100, 100, 140, 140)), true, true));

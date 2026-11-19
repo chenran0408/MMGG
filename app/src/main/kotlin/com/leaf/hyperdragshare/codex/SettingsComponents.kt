@@ -43,13 +43,15 @@ internal fun BackNavigationIcon(onClick: () -> Unit) {
 @Composable
 internal fun SettingsNavigationPreference(
     title: String,
-    summary: String,
+    summary: String? = null,
     icon: androidx.compose.ui.graphics.vector.ImageVector,
+    enabled: Boolean = true,
     onClick: () -> Unit,
 ) {
     ArrowPreference(
         title = title,
         summary = summary,
+        enabled = enabled,
         startAction = {
             Icon(icon, contentDescription = null,
                 tint = MiuixTheme.colorScheme.onSurfaceVariantActions,

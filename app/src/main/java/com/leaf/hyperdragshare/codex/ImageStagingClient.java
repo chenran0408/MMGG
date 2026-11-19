@@ -62,10 +62,36 @@ final class ImageStagingClient {
         });
     }
 
+    static void stage(Context context, CapturedContent content, Callback callback) {
+        if (content.mediaUri != null) {
+            callback.onStaged(content.mediaUri);
+        } else if (content.encodedImage != null) {
+            EXECUTOR.execute(() -> {
+                try { callback.onStaged(stageEncoded(context, content.encodedImage)); }
+                catch (Throwable error) { callback.onFailure(error); }
+            });
+        } else {
+            stage(context, content.bitmap, callback);
+        }
+    }
+
+    /** Original compressed bytes only cross Binder through a descriptor, never a byte[] extra. */
+    static Uri stageEncoded(Context context, byte[] bytes) throws Throwable {
+        return stageStream(context, output -> output.write(bytes));
+    }
+
+    private interface StreamWriter {
+        void write(java.io.OutputStream output) throws IOException;
+    }
+
     private static Uri stagePng(Context context, Bitmap bitmap) throws Throwable {
         if (context == null || bitmap == null || bitmap.isRecycled()) {
             throw new IllegalArgumentException("Bitmap is unavailable");
         }
+        return stageStream(context, output -> BitmapEncoder.writePng(bitmap, output));
+    }
+
+    private static Uri stageStream(Context context, StreamWriter writer) throws Throwable {
         ParcelFileDescriptor[] pipe = ParcelFileDescriptor.createPipe();
         ParcelFileDescriptor readSide = pipe[0];
         ParcelFileDescriptor writeSide = pipe[1];
@@ -73,7 +99,7 @@ final class ImageStagingClient {
         Thread encoder = new Thread(() -> {
             try (ParcelFileDescriptor.AutoCloseOutputStream output =
                          new ParcelFileDescriptor.AutoCloseOutputStream(writeSide)) {
-                BitmapEncoder.writePng(bitmap, output);
+                writer.write(output);
             } catch (Throwable error) {
                 encoderFailure.set(error);
             }

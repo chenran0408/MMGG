@@ -169,6 +169,7 @@ public final class PressReaderRetryTest {
                 @Override public Bundle verifyWindow(String source, int windowId, Bundle bounds) { return null; }
                 @Override public Bundle captureOcrRegion(String source, int windowId, Bundle bounds) { return null; }
                 @Override public Bundle captureImage(String source, int windowId, Bundle bounds) { return null; }
+                @Override public boolean startedMicRecording(String source, long downTime) { return false; }
                 @Override public boolean verifySource(String source) { return false; }
                 @Override public Bundle insertTextAt(float x, float y, String text) { return null; }
                 @Override public boolean isOpen() { return true; }

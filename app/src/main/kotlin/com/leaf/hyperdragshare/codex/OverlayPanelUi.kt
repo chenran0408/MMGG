@@ -136,6 +136,7 @@ internal fun FloatingPanel(
 internal data class OverlayPanelMetrics(
     val width: Dp,
     val height: Dp,
+    val safeHeight: Dp,
     val offsetY: Dp,
     val cornerRadius: Dp,
     val multiWindow: Boolean,
@@ -186,13 +187,15 @@ internal fun rememberOverlayPanelMetrics(
     }
     val topInset = if (fullScreen) 0.dp else 72.dp
     val bottomInset = if (fullScreen) 0.dp else 56.dp
+    val safeHeight = screenHeight - topInset - bottomInset
     return OverlayPanelMetrics(
         width = screenWidth,
         height = if (fullScreen) {
             screenHeight
         } else {
-            minOf(screenHeight * panelHeightFraction, screenHeight - topInset - bottomInset)
+            minOf(screenHeight * panelHeightFraction, safeHeight)
         },
+        safeHeight = safeHeight,
         offsetY = if (fullScreen) 0.dp else 10.dp,
         cornerRadius = if (fullScreen) 0.dp else 30.dp,
         multiWindow = inMultiWindow,
@@ -252,19 +255,38 @@ internal fun OverlayHeaderBar(
     topInset: Dp = 0.dp,
     leftInset: Dp = 0.dp,
     rightInset: Dp = 0.dp,
+    stackedTitle: Boolean = false,
     leading: @Composable RowScope.() -> Unit,
     center: @Composable BoxScope.() -> Unit,
     trailing: @Composable RowScope.() -> Unit,
 ) {
+    val header = modifier.fillMaxWidth().background(backgroundColor)
+    val leftPadding = 14.dp + leftInset
+    val rightPadding = 14.dp + rightInset
+    if (stackedTitle) {
+        Column(
+            modifier = header.absolutePadding(left = leftPadding, top = topInset, right = rightPadding),
+        ) {
+            Box(Modifier.fillMaxWidth().padding(top = 4.dp), contentAlignment = Alignment.Center,
+                content = center)
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), content = leading)
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), content = trailing)
+            }
+        }
+        return
+    }
     Row(
-        modifier = modifier
-            .fillMaxWidth()
+        modifier = header
             .height(52.dp + topInset)
-            .background(backgroundColor)
             .absolutePadding(
-                left = 14.dp + leftInset,
+                left = leftPadding,
                 top = topInset,
-                right = 14.dp + rightInset,
+                right = rightPadding,
             ),
         verticalAlignment = Alignment.CenterVertically,
     ) {

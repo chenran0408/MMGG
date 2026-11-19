@@ -38,17 +38,20 @@ import kotlinx.coroutines.launch
 @Composable
 fun rememberDragDropState(
     lazyListState: LazyListState,
+    canDrag: (Int) -> Boolean,
     onMove: (Int, Int) -> Unit,
-    onDragFinished: () -> Unit = {},
+    onDragFinished: (cancelled: Boolean) -> Unit,
 ): DragDropState {
+    val currentCanDrag by rememberUpdatedState(canDrag)
     val currentOnMove by rememberUpdatedState(onMove)
     val currentOnDragFinished by rememberUpdatedState(onDragFinished)
     val scope = rememberCoroutineScope()
     val state = remember(lazyListState) {
         DragDropState(
             state = lazyListState,
+            canDrag = { currentCanDrag(it) },
             onMove = { from, to -> currentOnMove(from, to) },
-            onDragFinished = { currentOnDragFinished() },
+            onDragFinished = { currentOnDragFinished(it) },
             scope = scope,
         )
     }
@@ -63,8 +66,9 @@ fun rememberDragDropState(
 
 class DragDropState internal constructor(
     private val state: LazyListState,
+    private val canDrag: (Int) -> Boolean,
     private val onMove: (Int, Int) -> Unit,
-    private val onDragFinished: () -> Unit,
+    private val onDragFinished: (Boolean) -> Unit,
     private val scope: CoroutineScope,
 ) {
     var draggingItemIndex by mutableStateOf<Int?>(null)
@@ -74,6 +78,7 @@ class DragDropState internal constructor(
 
     private var draggingItemDraggedDelta by mutableFloatStateOf(0f)
     private var draggingItemInitialOffset by mutableIntStateOf(0)
+    private var orderChanged = false
 
     internal val draggingItemOffset: Float
         get() = draggingItemLayoutInfo?.let { item ->
@@ -94,15 +99,15 @@ class DragDropState internal constructor(
     internal fun onDragStart(offset: Offset) {
         val finalY = offset.y.toInt() - state.layoutInfo.beforeContentPadding
         state.layoutInfo.visibleItemsInfo
-            .firstOrNull { item -> finalY in item.offset..(item.offset + item.size) }
+            .firstOrNull { item -> canDrag(item.index) && finalY in item.offset until item.offsetEnd }
             ?.also {
                 draggingItemIndex = it.index
                 draggingItemInitialOffset = it.offset
             }
     }
 
-    internal fun onDragInterrupted() {
-        if (draggingItemIndex != null) {
+    internal fun onDragInterrupted(cancelled: Boolean) {
+        if (!cancelled && draggingItemIndex != null) {
             previousIndexOfDraggedItem = draggingItemIndex
             val startOffset = draggingItemOffset
             scope.launch {
@@ -120,19 +125,19 @@ class DragDropState internal constructor(
         draggingItemDraggedDelta = 0f
         draggingItemIndex = null
         draggingItemInitialOffset = 0
-        onDragFinished()
+        if (orderChanged) onDragFinished(cancelled)
+        orderChanged = false
     }
 
     internal fun onDrag(offset: Offset) {
-        draggingItemDraggedDelta += offset.y
-
         val draggingItem = draggingItemLayoutInfo ?: return
+        draggingItemDraggedDelta += offset.y
         val startOffset = draggingItem.offset + draggingItemOffset
         val endOffset = startOffset + draggingItem.size
         val middleOffset = startOffset + (endOffset - startOffset) / 2f
 
         val targetItem = state.layoutInfo.visibleItemsInfo.find { item ->
-            middleOffset.toInt() in item.offset..item.offsetEnd &&
+            canDrag(item.index) && middleOffset.toInt() in item.offset until item.offsetEnd &&
                 draggingItem.index != item.index
         }
         if (targetItem != null) {
@@ -146,6 +151,7 @@ class DragDropState internal constructor(
                 )
             }
             onMove(draggingItem.index, targetItem.index)
+            orderChanged = true
             draggingItemIndex = targetItem.index
         } else {
             val overscroll = when {
@@ -162,26 +168,19 @@ class DragDropState internal constructor(
         }
     }
 
-    internal fun onDragFinished() {
-        onDragFinished.invoke()
-    }
-
     private val LazyListItemInfo.offsetEnd: Int
         get() = offset + size
 }
 
 fun Modifier.dragContainer(dragDropState: DragDropState): Modifier = pointerInput(dragDropState) {
     detectDragGesturesAfterLongPress(
-        onDrag = { change, offset ->
-            change.consume()
-            dragDropState.onDrag(offset)
-        },
+        onDrag = { _, offset -> dragDropState.onDrag(offset) },
         onDragStart = dragDropState::onDragStart,
         onDragEnd = {
-            dragDropState.onDragInterrupted()
+            dragDropState.onDragInterrupted(cancelled = false)
         },
         onDragCancel = {
-            dragDropState.onDragInterrupted()
+            dragDropState.onDragInterrupted(cancelled = true)
         },
     )
 }

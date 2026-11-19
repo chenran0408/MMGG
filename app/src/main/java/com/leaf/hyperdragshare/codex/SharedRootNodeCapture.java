@@ -229,6 +229,12 @@ final class SharedRootNodeCapture {
             } finally { Binder.restoreCallingIdentity(identity); io.unlock(); }
         }
 
+        @Override public boolean startedMicRecording(String source, long downTime) {
+            enforceOwner();
+            // This snapshot is updated by helper events, independently of screenshot requests.
+            return root.startedMicRecording(source, downTime, uid / 100000);
+        }
+
         @Override public boolean isOpen() {
             if (Binder.getCallingUid() != uid) throw new SecurityException("Capture lease belongs to another UID");
             return !closed;
@@ -314,20 +320,31 @@ final class SharedRootNodeCapture {
         }
 
         PressResult capturePress(float x, float y, Set<String> blocked, boolean text, boolean images, boolean earlyCapture,
-                                 RootNodeCaptureClient.CandidateHandler handler)
+                                 RootNodeCaptureClient.CandidateHandler handler,
+                                 java.util.function.Consumer<String> contentReady)
                 throws IOException, InterruptedException {
-            return captureResult(x, y, blocked, text, images, true, earlyCapture, handler);
+            return captureResult(x, y, blocked, text, images, true, earlyCapture, handler, contentReady);
+        }
+
+        boolean startedMicRecording(String source, long downTime) {
+            try {
+                return lease.startedMicRecording(source, downTime);
+            } catch (RemoteException | IllegalStateException | SecurityException error) {
+                DragShareLog.w("DragShare/RecordingAvoidance", "Cannot check microphone activity", error);
+                return false;
+            }
         }
 
         private CapturedContent capture(float x, float y, Set<String> blocked, boolean text, boolean images,
                                         boolean pressLookup, boolean earlyCapture, RootNodeCaptureClient.CandidateHandler handler)
                 throws IOException, InterruptedException {
-            return captureResult(x, y, blocked, text, images, pressLookup, earlyCapture, handler).content;
+            return captureResult(x, y, blocked, text, images, pressLookup, earlyCapture, handler, null).content;
         }
 
         private PressResult captureResult(float x, float y, Set<String> blocked, boolean text, boolean images,
                                           boolean pressLookup, boolean earlyCapture,
-                                          RootNodeCaptureClient.CandidateHandler handler)
+                                          RootNodeCaptureClient.CandidateHandler handler,
+                                          java.util.function.Consumer<String> contentReady)
                 throws IOException, InterruptedException {
             if (closed) throw new ConnectionFailedException("取词连接已关闭", null);
             try {
@@ -349,6 +366,13 @@ final class SharedRootNodeCapture {
                 }
                 String rejectionReason = pressLookup && node != null
                         ? node.getString(RootNodeCaptureClient.KEY_CAPTURE_REASON) : null;
+                // Publish a validated semantic node before the slower screenshot. An OCR
+                // region is not a drag candidate and must not consume the app's long press.
+                if (contentReady != null && node != null && node.containsKey("package")
+                        && !node.getBoolean("press_ocr_region")
+                        && (node.getBoolean("image") ? images : text)) {
+                    contentReady.accept(node.getString("package"));
+                }
                 CapturedContent content = RootNodeCaptureClient.contentFromNode(
                         context, node,
                         (source, windowId, bounds) -> {

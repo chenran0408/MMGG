@@ -16,6 +16,20 @@ import static org.junit.Assert.assertTrue;
 @RunWith(RobolectricTestRunner.class)
 @Config(sdk = 35)
 public final class GestureOrientationConfigTest {
+    @Test public void honeycombLandscapeOptionAppliesOnlyWhenHoneycombIsEnabled() {
+        Bundle config = new Bundle();
+        config.putBoolean(ConfigContract.KEY_HONEYCOMB_ENABLED, true);
+        config.putBoolean(ConfigContract.KEY_HONEYCOMB_LANDSCAPE_ENABLED, false);
+        GestureConfig gesture = GestureConfig.from(config);
+        assertTrue(gesture.honeycombEnabledFor(false));
+        assertFalse(gesture.honeycombEnabledFor(true));
+
+        config.putBoolean(ConfigContract.KEY_HONEYCOMB_LANDSCAPE_ENABLED, true);
+        assertTrue(GestureConfig.from(config).honeycombEnabledFor(true));
+        config.putBoolean(ConfigContract.KEY_HONEYCOMB_ENABLED, false);
+        assertFalse(GestureConfig.from(config).honeycombEnabledFor(true));
+    }
+
     @Test
     public void hotBottomGapLoadsSeparatelyFromLegacyHeightAndDefaultsToZero() {
         GestureConfig legacy = GestureConfig.from(new Bundle());

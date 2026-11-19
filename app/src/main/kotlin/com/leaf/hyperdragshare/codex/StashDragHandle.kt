@@ -87,7 +87,7 @@ private suspend fun startStashDrag(view: View, entries: List<StashStore.Entry>, 
     }
     try {
         var thumbnail: Bitmap? = null
-        val clip = if (!hasImages) ClipData.newPlainText("中转站文字", entries.joinToString("\n") { it.text.orEmpty() })
+        val content = if (!hasImages) ClipData.newPlainText("中转站文字", entries.joinToString("\n") { it.text.orEmpty() })
         else {
             val prepared = withContext(Dispatchers.IO) {
                 StashStore(view.context.applicationContext).use { store ->
@@ -112,6 +112,7 @@ private suspend fun startStashDrag(view: View, entries: List<StashStore.Entry>, 
             prepared.first.forEach { uri -> OperationTrace.event(operation, "asset_ready", "available", uri) }
             clip
         }
+        val clip = StashDragContract.mark(content)
         OperationTrace.put(clip, operation)
         if (!isHeld() || !view.isAttachedToWindow) {
             OperationTrace.event(operation, "drag_prepare", "abandoned")

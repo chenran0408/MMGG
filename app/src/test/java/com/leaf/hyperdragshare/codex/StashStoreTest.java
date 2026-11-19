@@ -135,6 +135,26 @@ public final class StashStoreTest {
     }
 
     @Test
+    public void listingRecoversCleanupAfterAnInterruptedImageDeletion() throws IOException {
+        StashStore.Entry image = store.addImage(new ByteArrayInputStream(new byte[]{1}), "image/png");
+        File file = store.openImage(image.id);
+        // Simulate a process exit after the transaction committed, before file cleanup.
+        try (android.database.sqlite.SQLiteDatabase db = android.database.sqlite.SQLiteDatabase.openDatabase(
+                context.getDatabasePath("stash.db"), new android.database.sqlite.SQLiteDatabase.OpenParams.Builder().build())) {
+            db.beginTransaction();
+            try {
+                db.execSQL("INSERT INTO stash_pending_deletions (file_name) VALUES (?)",
+                        new Object[]{image.imageFileName});
+                db.delete("stash_entries", "id = ?", new String[]{image.id});
+                db.setTransactionSuccessful();
+            } finally { db.endTransaction(); }
+        }
+        assertTrue(file.exists());
+        assertTrue(store.listEntries().isEmpty());
+        assertFalse(file.exists());
+    }
+
+    @Test
     public void rejectsNonUuidIdsBeforeUsingThemAsPaths() throws IOException {
         File outside = new File(context.getFilesDir(), "stash-outside.txt");
         assertTrue(outside.createNewFile());

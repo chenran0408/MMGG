@@ -3,8 +3,10 @@ package com.leaf.hyperdragshare.gestures.xposed;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Comparator;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
+import java.util.Set;
 
 /** Immutable searchable metadata shared by the enhanced app drawer and its tests. */
 final class MoreAppsCatalog {
@@ -13,6 +15,7 @@ final class MoreAppsCatalog {
             "N", "O", "P", "Q", "R", "S", "T", "U", "V", "W", "X", "Y", "Z"
     };
     static final int COLOR_ALL = -1;
+    static final int COLOR_PENDING = -2;
     static final int MODE_APPS = 0;
     static final int MODE_SHORTCUTS = 1;
     static final int COLOR_GRAY = 0;
@@ -29,8 +32,8 @@ final class MoreAppsCatalog {
 
     static final class Item {
         final String key;
-        final String label;
-        final String packageName;
+        final String searchLabel;
+        final String searchPackageName;
         final boolean shortcut;
         final String initial;
         final int color;
@@ -39,8 +42,8 @@ final class MoreAppsCatalog {
         Item(String key, String label, String packageName, boolean shortcut,
              String initial, int color, Object payload) {
             this.key = key;
-            this.label = label == null ? "" : label;
-            this.packageName = packageName == null ? "" : packageName;
+            this.searchLabel = label == null ? "" : label.toLowerCase(Locale.ROOT);
+            this.searchPackageName = packageName == null ? "" : packageName.toLowerCase(Locale.ROOT);
             this.shortcut = shortcut;
             this.initial = normalizeInitial(initial);
             this.color = color;
@@ -48,33 +51,41 @@ final class MoreAppsCatalog {
         }
     }
 
+    record SearchResult(List<Item> items, List<String> initials, boolean pendingColors) {}
+
     private MoreAppsCatalog() { }
 
     static List<Item> sorted(List<Item> input) {
         ArrayList<Item> result = new ArrayList<>(input);
         result.sort(Comparator.comparing((Item item) -> item.initial)
-                .thenComparing(item -> item.label.toLowerCase(Locale.ROOT))
+                .thenComparing(item -> item.searchLabel)
                 .thenComparing(item -> item.key));
         return Collections.unmodifiableList(result);
     }
 
-    static List<Item> filter(List<Item> source, int mode, String query,
-                             int color, String initial) {
+    static SearchResult search(List<Item> source, int mode, String query,
+                               int color, String initial, boolean collectInitials) {
         String normalizedQuery = query == null ? "" : query.trim().toLowerCase(Locale.ROOT);
         String normalizedInitial = initial == null || initial.isEmpty()
                 ? "" : normalizeInitial(initial);
-        ArrayList<Item> result = new ArrayList<>();
+        ArrayList<Item> items = new ArrayList<>();
+        Set<String> initials = collectInitials ? new LinkedHashSet<>() : Collections.emptySet();
+        boolean pendingColors = false;
         for (Item item : source) {
             if (mode == MODE_APPS && item.shortcut) continue;
             if (mode == MODE_SHORTCUTS && !item.shortcut) continue;
-            if (color != COLOR_ALL && item.color != color) continue;
-            if (!normalizedInitial.isEmpty() && !normalizedInitial.equals(item.initial)) continue;
             if (!normalizedQuery.isEmpty()
-                    && !item.label.toLowerCase(Locale.ROOT).contains(normalizedQuery)
-                    && !item.packageName.toLowerCase(Locale.ROOT).contains(normalizedQuery)) continue;
-            result.add(item);
+                    && !item.searchLabel.contains(normalizedQuery)
+                    && !item.searchPackageName.contains(normalizedQuery)) continue;
+            boolean matchesInitial = normalizedInitial.isEmpty() || normalizedInitial.equals(item.initial);
+            if (color != COLOR_ALL && item.color != color) {
+                if (item.color == COLOR_PENDING && matchesInitial) pendingColors = true;
+                continue;
+            }
+            if (collectInitials) initials.add(item.initial);
+            if (matchesInitial) items.add(item);
         }
-        return result;
+        return new SearchResult(items, List.copyOf(initials), pendingColors);
     }
 
     static int indexOfLetter(List<Item> source, String letter) {

@@ -30,9 +30,8 @@ class SettingsEffectNoticeTest {
 
         saveDragShareSettingsWithNotice(context, previous, next)
 
-        assertToastContains("应用主题立即更新")
-        assertToastContains("新建的浮窗")
-        assertToastContains("无需重启")
+        assertToastEquals("主题已更新，新打开的浮窗将使用此主题。")
+        assertEquals(DragShareSettings.COLOR_DARK, DragShareSettings.readLocal(context).colorMode)
     }
 
     @Test
@@ -45,9 +44,7 @@ class SettingsEffectNoticeTest {
 
         saveDragShareSettingsWithNotice(context, previous, next)
 
-        assertToastContains("日志等级和保存位置已即时应用")
-        assertToastContains("无需重启")
-        assertToastDoesNotContain("下次取词或选图")
+        assertToastEquals("日志设置已生效。")
     }
 
     @Test
@@ -59,13 +56,11 @@ class SettingsEffectNoticeTest {
 
         saveDragShareSettingsWithNotice(context, previous, next)
 
-        assertToastContains("传送门在下一次取词或选图时读取")
-        assertToastContains("当前操作不变")
-        assertToastContains("无需重启")
+        assertToastEquals("下次取词或选图时生效。")
     }
 
     @Test
-    fun blacklistChangeNamesPortalAndSystemUiConsumers() {
+    fun blacklistChangeNamesBothOperationsThatReadTheList() {
         val previous = DragShareSettings.defaults()
         val next = changedSettings {
             putStringArrayList("accessibility_blacklisted_packages", arrayListOf("example.game"))
@@ -73,14 +68,11 @@ class SettingsEffectNoticeTest {
 
         saveDragShareSettingsWithNotice(context, previous, next)
 
-        assertToastContains("传送门下次读取避让名单")
-        assertToastContains("系统界面（SystemUI）")
-        assertToastContains("后续手势读取")
-        assertToastContains("无需重启")
+        assertToastEquals("应用避让名单在下次取词或手势时生效。")
     }
 
     @Test
-    fun configStoreWriteReportsSystemUiHostWithoutClaimingRuntimeConfirmation() {
+    fun configStoreWriteReportsNextGestureWithoutClaimingRuntimeConfirmation() {
         val store = ConfigStore(context)
 
         saveGestureBooleanSetting(context, store, ConfigContract.KEY_ENABLED, true)
@@ -88,11 +80,7 @@ class SettingsEffectNoticeTest {
         // ConfigStore coalesces writes for 120 ms before persisting and notifying hosts.
         ShadowLooper.shadowMainLooper().idleFor(Duration.ofMillis(120))
         assertTrue(store.preferences().getBoolean(ConfigContract.KEY_ENABLED, false))
-        assertToastContains("系统界面（SystemUI）")
-        assertToastContains("后续手势读取新设置")
-        assertToastContains("无需重启")
-        assertToastDoesNotContain("已生效")
-        assertToastDoesNotContain("已收到")
+        assertToastEquals("已保存，下次手势生效")
     }
 
     @Test
@@ -115,10 +103,10 @@ class SettingsEffectNoticeTest {
 
             // Separate calls model callbacks from the settings pages.
             persist { setColorMode(DragShareSettings.COLOR_DARK) }
-            assertToastContains("应用主题立即更新")
+            assertToastEquals("主题已更新，新打开的浮窗将使用此主题。")
             persist { setEdgeTriggerDp(123) }
             persist { setTwoFingerLongPressTimeoutMillis(900) }
-            assertToastContains("根输入（Root）")
+            assertToastEquals("下次长按时生效。")
             persist { setTwoFingerLongPressTimeoutMillis(900) }
 
             persist { settings ->
@@ -138,7 +126,7 @@ class SettingsEffectNoticeTest {
                 packages.add("app.added-blocked")
                 setAccessibilityBlacklistedPackages(packages)
             }
-            assertToastContains("系统界面（SystemUI）")
+            assertToastEquals("应用避让名单在下次取词或手势时生效。")
             persist { settings ->
                 val packages = LinkedHashSet(settings.accessibilityBlacklistedPackages)
                 packages.remove("app.initial-blocked")
@@ -149,7 +137,7 @@ class SettingsEffectNoticeTest {
                 packages.add("app.added-game")
                 setManualGamePackages(packages)
             }
-            assertToastContains("系统界面（SystemUI）")
+            assertToastEquals("应用避让名单在下次取词或手势时生效。")
 
             val saved = DragShareSettings.readLocal(context)
             assertEquals(DragShareSettings.COLOR_DARK, current.colorMode)
@@ -160,7 +148,7 @@ class SettingsEffectNoticeTest {
             assertEquals(listOf("target.second", "target.first"), saved.targetOrder)
             assertEquals(setOf("app.added-blocked"), saved.accessibilityBlacklistedPackages)
             assertEquals(setOf("app.initial-game", "app.added-game"), saved.manualGamePackages)
-            assertToastContains("后续手势读取更新后的名单")
+            assertToastEquals("应用避让名单在下次取词或手势时生效。")
         } finally {
             previous.saveLocal(context)
         }
@@ -172,13 +160,24 @@ class SettingsEffectNoticeTest {
         return DragShareSettings.fromBundle(bundle)
     }
 
-    private fun assertToastContains(text: String) {
-        ShadowLooper.shadowMainLooper().idle()
-        assertTrue(ShadowToast.getTextOfLatestToast().contains(text))
+    @Test
+    fun savingSeveralSettingsReportsImmediateAndNextOperationSeparately() {
+        val previous = DragShareSettings.defaults()
+        val next = previous.toBuilder()
+            .setLogLevel(DragShareSettings.LOG_LEVEL_DEBUG)
+            .setTwoFingerLongPressTimeoutMillis(900)
+            .build()
+
+        saveDragShareSettingsWithNotice(context, previous, next)
+
+        assertToastEquals("日志设置已生效。 下次长按时生效。")
+        val saved = DragShareSettings.readLocal(context)
+        assertEquals(DragShareSettings.LOG_LEVEL_DEBUG, saved.logLevel)
+        assertEquals(900, saved.twoFingerLongPressTimeoutMillis)
     }
 
-    private fun assertToastDoesNotContain(text: String) {
+    private fun assertToastEquals(text: String) {
         ShadowLooper.shadowMainLooper().idle()
-        assertTrue(!ShadowToast.getTextOfLatestToast().contains(text))
+        assertEquals(text, ShadowToast.getTextOfLatestToast())
     }
 }

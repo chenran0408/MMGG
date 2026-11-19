@@ -11,6 +11,7 @@ public final class ConfigContract {
     public static final Uri RUNTIME_URI = Uri.parse("content://" + AUTHORITY + "/runtime");
     /** App/shortcut catalog changes; observed by the app picker UI. */
     public static final Uri CATALOG_URI = Uri.parse("content://" + AUTHORITY + "/catalog");
+    public static final Uri CATALOG_REFRESH_URI = Uri.parse("content://" + AUTHORITY + "/catalog-refresh");
     /** Interface status/heartbeat changes; observed by the dashboard. */
     public static final Uri STATUS_URI = Uri.parse("content://" + AUTHORITY + "/status");
     /** Ephemeral touch bounds for live module-owned floating windows. */

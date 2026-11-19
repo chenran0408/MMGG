@@ -29,7 +29,7 @@
    组合触发（2026-11-05用户决定，替代旧“单指/双指互斥模式”及一切模式选择）：单指长按固定触发拖拽，双指长按固定触发分词，两者共存、无模式开关。首指按下即按单指启动；第二指在单指确认前加入则升级为双指按压（时长从第二指加入起算）。出口由手势类型决定：单指 fire 进入拖拽（文字待拖分词面板 drag_preview=true、图片待拖预览），双指 fire 打开分词与大爆炸（drag_preview=false），双指按在图片上回退现有拖拽菜单；松手时长不参与出口分流，`<T` 仍不触发。Portal 模式键不再读取，`PortalPressSettings` 与模块后备开关 `two_finger_long_press_enabled` 已删除；双指独立时长（250–3000ms，默认600）仍由模块设置。双指确认后的pointer退化不能重分类为单指触发；已 fire 的单指按压不接受迟到第二指升级（维持现有拒绝＋合成CANCEL）。活动单指拖拽不能因双指存在而放行第二指。不得把原始evdev轴值当屏幕px阈值。
 3. Root 流进入活动拖拽后是唯一权威输入。真实 UP/CANCEL决定结束；Portal `cancelTask`、257/258、重复 pick不能提前结束活动会话。cancelTask/257须在真实结束后回放以复位宿主，258移动取消继续抑制。不得混入旧 MIUI 监听或凭私有控制码伪造松手。
 4. 拖拽预览和边缘菜单保持 `FLAG_NOT_TOUCHABLE`、被动跟手；交互分词/中转站窗口按各自策略处理，不能把上述规则扩成所有窗口永久穿透。所有退出/取消/服务销毁释放窗口、任务、Bitmap、InputMonitor；旧回调不能影响新会话。
-5. Hook精确限制包、进程、类和方法；当前作用域以 `MainHook.java` 与 `res/values/arrays.xml`核对（包括可选MiTrustService）。安全中心只适配已核对版本40001365/SDK37的`:ui`。不加入/强停 `com.miui.contentcatcher`，不批量杀系统进程，不全局关闭phantom/内存回收。普通运行时不导入Xposed；仅现有Hook入口/适配层使用。
+5. Hook精确限制包、进程、类和方法；当前作用域以 `MainHook.java` 与 `res/values/arrays.xml`核对（包括可选MiTrustService）。手机管家适配限 `com.miui.securitycenter:ui`、SDK 37 及以上。按侧栏接口和现场布局校验决定是否挂载中转站，版本号用于诊断。接口或布局不匹配时保留原生侧栏与独立中转站入口。不加入/强停 `com.miui.contentcatcher`，不批量杀系统进程，不全局关闭phantom/内存回收。普通运行时不导入Xposed；仅现有Hook入口/适配层使用。
 6. 传送门5.1.5私有接口不可凭猜测改名/控制码；跨版本先核对目标实现。启动用其原生 `TextContentExtensionService` 前台服务，不恢复Provider-only缓存进程保活。模块注入以当前构建＋存活Binder/PID证据判断，不把进程存在、普通get_settings、历史报告或启动命令零退出码当功能可用。
 7. Root、模块注入、服务、输入、取词、悬浮窗与OCR依赖分别判断；证据不足/超时是未知，不能写成未授权。保留代次隔离、有限等待和按功能说明影响的诊断。
 8. 配置由模块UID私有SharedPreferences保存，Provider受限读取；不改world-readable、不清用户数据/重置配置掩盖问题。边缘距离按dp，速度按dp/s；数据库schema2不能直接搭配schema1旧包降级，先保留对应数据备份。

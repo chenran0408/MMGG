@@ -29,6 +29,7 @@ public final class StashStore implements AutoCloseable {
     private static final String DATABASE_NAME = "stash.db";
     private static final int DATABASE_VERSION = 2;
     private static final String TABLE = "stash_entries";
+    private static final String DELETIONS = "stash_pending_deletions";
     private static final long MAX_IMAGE_BYTES = 32L * 1024L * 1024L;
     private static final Pattern UUID_PATTERN = Pattern.compile(
             "[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}");
@@ -110,6 +111,7 @@ public final class StashStore implements AutoCloseable {
 
     public List<Entry> listEntries() throws IOException {
         List<Entry> entries = new ArrayList<>();
+        cleanupPendingDeletions();
         try (Cursor cursor = database.getReadableDatabase().query(
                 TABLE,
                 COLUMNS,
@@ -249,46 +251,49 @@ public final class StashStore implements AutoCloseable {
         try {
             SQLiteDatabase db = database.getWritableDatabase();
             db.beginTransaction();
+            boolean deleted;
             try {
-                Entry entry;
-                try (Cursor cursor = db.query(
-                        TABLE,
-                        COLUMNS,
-                        "id = ?",
-                        new String[]{id},
-                        null,
-                        null,
-                        null,
-                        "1")) {
-                    entry = cursor.moveToFirst() ? readEntry(cursor) : null;
-                }
-                if (entry == null) {
-                    db.setTransactionSuccessful();
-                    return false;
-                }
-
-                int deleted = db.delete(TABLE, "id = ?", new String[]{id});
-                if (deleted == 0) {
-                    db.setTransactionSuccessful();
-                    return false;
-                }
-
+                Entry entry = getEntry(id);
+                if (entry == null) return false;
                 if (KIND_IMAGE.equals(entry.kind)) {
                     File image = imageFile(entry.imageFileName);
-                    try {
-                        java.nio.file.Files.deleteIfExists(image.toPath());
-                    } catch (IOException error) {
-                        throw new IOException("Stash image file could not be deleted", error);
+                    if (image.isDirectory()) {
+                        throw new IOException("Stash image file could not be deleted",
+                                new IOException("Stash image path is a directory"));
                     }
+                    ContentValues tombstone = new ContentValues();
+                    tombstone.put("file_name", entry.imageFileName);
+                    db.insertOrThrow(DELETIONS, null, tombstone);
                 }
-
-                db.setTransactionSuccessful();
-                return true;
+                deleted = db.delete(TABLE, "id = ?", new String[]{id}) == 1;
+                if (deleted) db.setTransactionSuccessful();
             } finally {
                 db.endTransaction();
             }
+            if (deleted) cleanupPendingDeletions();
+            return deleted;
         } catch (SQLiteException error) {
             throw databaseFailure("delete stash entry", error);
+        }
+    }
+
+    private void cleanupPendingDeletions() {
+        try {
+            SQLiteDatabase db = database.getWritableDatabase();
+            try (Cursor pending = db.query(DELETIONS, new String[]{"file_name"},
+                    null, null, null, null, null)) {
+                while (pending.moveToNext()) {
+                    String file = pending.getString(0);
+                    try {
+                        java.nio.file.Files.deleteIfExists(imageFile(file).toPath());
+                        db.delete(DELETIONS, "file_name = ?", new String[]{file});
+                    } catch (IOException error) {
+                        DragShareLog.w("DragShare/Stash", "Pending image deletion will be retried", error);
+                    }
+                }
+            }
+        } catch (SQLiteException error) {
+            DragShareLog.w("DragShare/Stash", "Cannot process pending image deletions", error);
         }
     }
 
@@ -404,6 +409,12 @@ public final class StashStore implements AutoCloseable {
                     + "created_at INTEGER NOT NULL, "
                     + "batch_id TEXT NOT NULL, "
                     + "batch_order INTEGER NOT NULL DEFAULT 0)");
+        }
+
+        @Override
+        public void onOpen(SQLiteDatabase db) {
+            super.onOpen(db);
+            db.execSQL("CREATE TABLE IF NOT EXISTS " + DELETIONS + " (file_name TEXT PRIMARY KEY NOT NULL)");
         }
 
         @Override

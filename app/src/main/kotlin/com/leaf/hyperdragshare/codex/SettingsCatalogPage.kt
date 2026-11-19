@@ -31,13 +31,13 @@ import top.yukonga.miuix.kmp.theme.MiuixTheme
 @Composable
 internal fun SettingsHomePage(
     context: Context,
-    settings: DragShareSettings,
     directory: List<SettingEntry>,
     query: String,
     onQueryChange: (String) -> Unit,
     homeListState: LazyListState,
     searchListState: LazyListState,
     topAppBarState: TopAppBarState,
+    isCurrent: Boolean,
     activation: ActivationMonitorState,
     onOpenDiagnostics: () -> Unit,
     onOpenModule: (SettingModule) -> Unit,
@@ -46,6 +46,10 @@ internal fun SettingsHomePage(
     val scrollBehavior = MiuixScrollBehavior(state = topAppBarState)
     val focus = LocalFocusManager.current
     val searching = query.isNotBlank()
+    BackHandler(enabled = isCurrent && searching) {
+        focus.clearFocus()
+        onQueryChange("")
+    }
     val results = if (searching) directory.filter { it.matches(query) } else emptyList()
     Scaffold(topBar = {
         SmallTopAppBar(title = "MMGG", scrollBehavior = scrollBehavior)
@@ -77,7 +81,7 @@ internal fun SettingsHomePage(
                     items(results, key = { it.id }) { entry ->
                         Card(Modifier.padding(horizontal = 12.dp)) {
                             SettingsNavigationPreference(entry.title,
-                                entry.path,
+                                entry.location,
                                 entry.icon,
                                 onClick = { focus.clearFocus(); onOpenResult(entry) })
                             if (!entry.enabled && entry.prerequisite != null) Text(entry.prerequisite,
@@ -88,34 +92,39 @@ internal fun SettingsHomePage(
                 } else {
                     item("status") {
                         ActivationStatusCard(
-                            context = context,
                             monitor = activation,
                             onOpenDiagnostics = onOpenDiagnostics,
                         )
                     }
-                    items(SettingModule.entries.filter { it != SettingModule.GENERAL }, key = { it.name }) { module ->
+                    item("modules") {
+                        SmallTitle("功能")
                         Card(Modifier.padding(horizontal = 12.dp)) {
-                            SettingsNavigationPreference(module.title,
-                                when (module) {
-                                    SettingModule.PORTAL -> "取词、分词与分享"
-                                    SettingModule.GESTURES -> "底角手势与应用启动"
-                                    SettingModule.FREEFORM -> "小窗启动与操作"
-                                    SettingModule.COPY_DIRECT -> "复制卡片与浏览器"
-                                    else -> error("Unexpected home module")
-                                }, module.icon, onClick = { focus.clearFocus(); onOpenModule(module) })
+                            for (module in SettingModule.entries) {
+                                if (module == SettingModule.GENERAL) continue
+                                SettingsNavigationPreference(
+                                    title = module.title,
+                                    summary = when (module) {
+                                        SettingModule.GESTURES -> "底角斜滑与蜂巢"
+                                        SettingModule.COPY_DIRECT -> "复制卡片与浏览器"
+                                        else -> null
+                                    },
+                                    icon = module.icon,
+                                    onClick = { focus.clearFocus(); onOpenModule(module) },
+                                )
+                            }
                         }
                     }
                     item("general") {
                         Card(Modifier.padding(horizontal = 12.dp)) {
                             SettingsNavigationPreference(SettingModule.GENERAL.title,
-                                "权限、显示与诊断", SettingModule.GENERAL.icon,
+                                "权限、主题与重启", SettingModule.GENERAL.icon,
                                 onClick = { focus.clearFocus(); onOpenModule(SettingModule.GENERAL) })
                         }
                     }
                 }
             }
         }
-        FirstRunGuide(context)
+        FirstRunGuide(context, onOpenDiagnostics = onOpenDiagnostics)
     }
 }
 
@@ -275,11 +284,10 @@ private fun GestureSettingsModulePage(
                 verticalArrangement = Arrangement.spacedBy(8.dp),
             ) {
                 items(categories, key = { it.id }) { item ->
-                    val count = entriesForGestureCategory(entries, item).size
                     Card(Modifier.padding(horizontal = 12.dp)) {
                         SettingsNavigationPreference(
                             item.title,
-                            "${item.summary} · $count 项",
+                            item.summary,
                             settingGroupIcon(SettingModule.GESTURES, item.title),
                             onClick = { selectedCategoryId = item.id },
                         )

@@ -14,12 +14,15 @@ import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipInputStream;
 
 import android.content.Context;
+
+import io.github.libxposed.service.HookedTarget;
 
 import org.junit.After;
 import org.junit.Before;
@@ -28,6 +31,8 @@ import org.junit.runner.RunWith;
 import org.robolectric.RobolectricTestRunner;
 import org.robolectric.annotation.Config;
 import org.robolectric.RuntimeEnvironment;
+import org.robolectric.util.ReflectionHelpers;
+import org.robolectric.util.ReflectionHelpers.ClassParameter;
 import org.json.JSONObject;
 
 @RunWith(RobolectricTestRunner.class)
@@ -73,6 +78,47 @@ public final class DiagnosticBundleExporterTest {
         assertTrue(entries.containsKey("runtime-log.txt"));
         assertTrue(entries.get("manifest.txt").contains("Compatibility report reason: IllegalStateException"));
         assertNull(result.missingLogReason);
+    }
+
+    @Test public void targetSummaryReportsEachRunningProcessAndItsLoadedVersion() {
+        HookedTarget current = runningTarget("com.android.systemui", 410,
+                HookedTarget.State.UP_TO_DATE, BuildConfig.VERSION_CODE);
+        HookedTarget stale = runningTarget("com.miui.securitycenter:ui", 580,
+                HookedTarget.State.STALE, BuildConfig.VERSION_CODE - 1L);
+
+        String summary = DiagnosticBundleExporter.runningTargetSummary(
+                () -> 102, () -> List.of(current, stale));
+
+        assertTrue(summary.contains("Xposed API: 102"));
+        assertTrue(summary.contains("process=com.android.systemui pid=410 loaded_version_code="
+                + BuildConfig.VERSION_CODE + " state=UP_TO_DATE"));
+        assertTrue(summary.contains("process=com.miui.securitycenter:ui pid=580 loaded_version_code="
+                + (BuildConfig.VERSION_CODE - 1L) + " state=STALE"));
+    }
+
+    @Test public void targetSummaryDistinguishesUnsupportedFailedAndEmptyQueries() {
+        String unsupported = DiagnosticBundleExporter.runningTargetSummary(
+                () -> 101, () -> {
+                    throw new AssertionError("Target query requires API 102");
+                });
+        String versionFailed = DiagnosticBundleExporter.runningTargetSummary(
+                () -> {
+                    throw new IllegalStateException("Connection closed");
+                }, () -> {
+                    throw new AssertionError("Target query requires a known API");
+                });
+        String queryFailed = DiagnosticBundleExporter.runningTargetSummary(
+                () -> 102, () -> {
+                    throw new IllegalStateException("Connection closed");
+                });
+        String empty = DiagnosticBundleExporter.runningTargetSummary(() -> 102, List::of);
+
+        assertTrue(unsupported.contains("Xposed API: 101"));
+        assertTrue(unsupported.contains("requires API 102"));
+        assertTrue(versionFailed.contains("API version query failed"));
+        assertTrue(queryFailed.contains("Xposed API: 102"));
+        assertTrue(queryFailed.contains("Running targets unavailable (query failed)"));
+        assertTrue(empty.contains("No running targets reported by the framework"));
     }
 
     @Test public void unavailableRuntimeStillExportsOtherInformationWithoutRecommendingLogChanges() throws Exception {
@@ -341,6 +387,8 @@ public final class DiagnosticBundleExporterTest {
                 result.missingLogReason);
         Map<String, String> entries = readZip(result.file);
         assertTrue(entries.containsKey("compatibility.txt"));
+        assertTrue(entries.get("summary.txt").contains(
+                "Xposed running targets unavailable (service not connected)"));
         assertTrue(entries.get("operation-trace.txt").contains("press-export-disabled-1"));
         assertTrue(entries.get("manifest.txt").contains("operation-trace.txt: included"));
         assertEquals(originalLevel, preferences.getInt("log_level", -1));
@@ -371,6 +419,17 @@ public final class DiagnosticBundleExporterTest {
     private static String validStateSummary() {
         return "overall=NORMAL; root=READY; injection=READY; portal_service=READY; "
                 + "portal_root=READY; root_input=READY; press_reader=READY; overlay=READY";
+    }
+
+    private static HookedTarget runningTarget(
+            String processName, int pid, HookedTarget.State state, long loadedVersionCode) {
+        return ReflectionHelpers.callConstructor(HookedTarget.class,
+                ClassParameter.from(long.class, (long) pid),
+                ClassParameter.from(int.class, 1000),
+                ClassParameter.from(int.class, pid),
+                ClassParameter.from(String.class, processName),
+                ClassParameter.from(HookedTarget.State.class, state),
+                ClassParameter.from(long.class, loadedVersionCode));
     }
 
     private static String validCompatibility() {

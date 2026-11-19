@@ -24,14 +24,16 @@ FileProvider继续使用现有`${applicationId}.updates`、read grant、EXTRA_ST
 
 | 条目 | 内容/可用条件 |
 |---|---|
-| summary.txt | 版本/版本码、设备环境和当前ActivationSnapshot枚举摘要；无状态时明确不可用 |
+| summary.txt | 版本/版本码、设备环境、当前 ActivationSnapshot 和 LSPosed API 102 宿主版本快照。宿主清单记录进程名、PID、已加载版本码和框架报告的状态 |
 | root-connection.txt | 模块进程最近80条受控连接/lease/重试与传送门Root检查阶段；无记录明确说明，不依赖文件日志 |
 | operation-trace.txt | 当前MMGG应用进程最近160条结构化操作阶段摘要；不依赖文件日志，不含正文、图片或原始URI。其他进程只在已有跨进程安全摘要可用时体现 |
 | compatibility.txt | 既有CompatibilityReport的设备、固定AICR/传送门组件版本、非敏感数值配置等受控字段；生成失败可缺失 |
 | runtime-log.txt | 能读取文件日志时，保留按“隐私与追踪上限”过滤的运行日志；没有记录时可缺失 |
 | manifest.txt | 每项included/unavailable、缺失原因和实际应用的打码规则清单 |
 
-日志关闭、设为系统日志、Root不可读取或无文件时，summary、root-connection、operation-trace与manifest仍可生成。导出不会自动修改用户日志设置；只有需要系统原始日志的高级排查才需要另行开启文件日志。既有状态是快照，不进行新的探测以伪装确定结论。
+日志关闭、设为系统日志、Root 不可读取或无文件时，summary、root-connection、operation-trace 与 manifest 仍可生成。导出沿用用户的日志设置。
+
+导出时向已连接框架读取一次宿主快照。未连接、API 版本不足、查询失败和空列表分别注明。用摘要顶部的版本码对照各进程的已加载版本码，可定位仍运行旧代码的宿主。`UP_TO_DATE` 表示框架报告代码版本已更新，功能可用性以各环节诊断为准。快照查询不会请求重载或重启。
 
 ## 隐私与追踪上限
 

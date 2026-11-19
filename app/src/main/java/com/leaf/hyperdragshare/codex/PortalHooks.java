@@ -36,6 +36,8 @@ final class PortalHooks {
     private static final String BASE_FLOAT_CLASS =
             "com.miui.contentextension.text.floatview.BaseFloatView";
     private static final String MOTION_KEY = "MotionEvent";
+    private static final Handler INPUT_MAIN = new Handler(Looper.getMainLooper());
+    private static final PortalInputHandoff inputHandoff = new PortalInputHandoff();
     private static final GestureDiagnostics.Stream callbackDiagnostics =
             new GestureDiagnostics.Stream("portal_callback_observed");
     private static final String CONTROL_KEY = "observe_control_event";
@@ -273,6 +275,7 @@ final class PortalHooks {
                             log("ignoring host cancel while root drag is active");
                         }
                     } else {
+                        invalidateLegacyPick();
                         current.onHostTaskCancelled();
                     }
                 }
@@ -308,10 +311,9 @@ final class PortalHooks {
                             || "startPickImageTask".equals(methodName))) {
                         return;
                     }
-                    CapturedContent content = PortalContentCaptureSource.capture(
+                    PortalContentCaptureSource.Pick pick = PortalContentCaptureSource.capturePick(
                             param.thisObject, settings, catcherResult);
-                    if (content != null) dispatchPortalContent(param.thisObject,
-                            catcherResult, settings, content);
+                    if (pick != null) dispatchPortalPick(param.thisObject, catcherResult, settings, pick);
                 }
             }
         };
@@ -340,56 +342,116 @@ final class PortalHooks {
     /** Native callbacks can arrive on Binder threads; qualification owns the main queue. */
     static void dispatchPortalContent(Object service, Object result,
                                       DragShareSettings settings, CapturedContent content) {
+        dispatchPortalPick(service, result, settings, new PortalContentCaptureSource.Pick(content, null));
+    }
+
+    private static long legacyPickGeneration;
+    private static Runnable legacyPickCancellation;
+
+    private static void invalidateLegacyPick() {
+        if (thumbCaptureSource != null) return;
+        if (Looper.myLooper() == Looper.getMainLooper()) clearLegacyPick();
+        else new Handler(Looper.getMainLooper()).post(PortalHooks::clearLegacyPick);
+    }
+
+    private static void clearLegacyPick() {
+        legacyPickGeneration++;
+        Runnable cancellation = legacyPickCancellation;
+        legacyPickCancellation = null;
+        if (cancellation != null) cancellation.run();
+    }
+
+    private static void dispatchPortalPick(Object service, Object result, DragShareSettings settings,
+                                           PortalContentCaptureSource.Pick pick) {
         DragShareController current = controller;
         PressCaptureSource press = thumbCaptureSource;
         Runnable deliver = () -> {
+            CapturedContent preview = pick.preview();
+            var original = pick.original();
             if (current == null || current != controller || press != thumbCaptureSource) {
-                if (content.isImage()) content.bitmap.recycle();
+                recyclePortalPreview(preview);
                 return;
             }
             if (press != null) {
-                if (press.acceptPortalContent(content)) {
-                    schedulePortalOriginal(service, result, press, content);
-                } else {
-                    if (content.isImage()) content.bitmap.recycle();
+                if (preview != null && !press.acceptPortalContent(preview)) {
+                    recyclePortalPreview(preview);
                     log("portal pick ignored without a qualified live press");
+                    return;
                 }
-                // With combined gestures enabled, only the detector chooses drag
-                // versus segmentation. A native result cannot create its own drag.
+                if (original != null) press.loadPortalOriginal(service, original, preview != null);
                 return;
             }
             if (current.isAwaitingRootRelease()) {
-                if (content.isImage()) content.bitmap.recycle();
+                recyclePortalPreview(preview);
                 log("portal pick ignored while Root press owns the gesture");
                 return;
             }
             PointF point = PortalContentCaptureSource.touchPointFromResult(result);
             if (point == null) point = PortalContentCaptureSource.initialPoint(
                     service, current.latestPointerX(), current.latestPointerY());
-            current.reservePortalHostFloatWindowSuppression();
-            current.show(content, point == null ? -1f : point.x,
-                    point == null ? -1f : point.y, settings);
+            float x = point == null ? -1f : point.x;
+            float y = point == null ? -1f : point.y;
+            clearLegacyPick();
+            if (original == null) {
+                showLegacyPick(current, settings, preview, x, y);
+                return;
+            }
+            // Legacy capture has no press-owned preview to upgrade. Use the prior
+            // display deadline asynchronously and keep just one load.
+            long generation = legacyPickGeneration;
+            Handler main = new Handler(Looper.getMainLooper());
+            class LegacyPickResult {
+                boolean delivered;
+                PortalContentCaptureSource.OriginalImageRequest request;
+                final Runnable showPreview = () -> deliver(null);
+
+                void cancel() {
+                    if (delivered) return;
+                    delivered = true;
+                    main.removeCallbacks(showPreview);
+                    request.cancel();
+                    recyclePortalPreview(preview);
+                }
+
+                void deliver(CapturedContent image) {
+                    if (delivered) {
+                        recyclePortalPreview(image);
+                        return;
+                    }
+                    delivered = true;
+                    main.removeCallbacks(showPreview);
+                    if (generation == legacyPickGeneration) legacyPickCancellation = null;
+                    if (image == null) request.cancel();
+                    if (generation != legacyPickGeneration || controller != current
+                            || thumbCaptureSource != null
+                            || current.isAwaitingRootRelease()) {
+                        recyclePortalPreview(image);
+                        recyclePortalPreview(preview);
+                        return;
+                    }
+                    if (image != null) recyclePortalPreview(preview);
+                    showLegacyPick(current, settings, image == null ? preview : image, x, y);
+                }
+            }
+            LegacyPickResult completion = new LegacyPickResult();
+            completion.request = PortalContentCaptureSource.loadOriginalImageAsync(
+                    service, original, image -> main.post(() -> completion.deliver(image)));
+            legacyPickCancellation = completion::cancel;
+            if (preview != null) main.postDelayed(completion.showPreview, 250L);
         };
         if (Looper.myLooper() == Looper.getMainLooper()) deliver.run();
         else new Handler(Looper.getMainLooper()).post(deliver);
     }
 
-    private static void schedulePortalOriginal(Object taplusService, Object catcherResult,
-                                                PressCaptureSource press,
-                                                CapturedContent currentContent) {
-        if (catcherResult == null || press == null || currentContent == null
-                || !currentContent.isImage()) return;
-        long downTime = press.downTime();
-        if (downTime < 0L) return;
-        PortalContentCaptureSource.loadOriginalImageAsync(taplusService, catcherResult, bitmap -> {
-            CapturedContent replacement = CapturedContent.portalMediaImage(
-                    bitmap, currentContent.sourcePackage, currentContent.sourceBounds);
-            if (replacement == null) {
-                if (bitmap != null && !bitmap.isRecycled()) bitmap.recycle();
-                return;
-            }
-            press.replacePortalImage(replacement, downTime);
-        });
+    private static void showLegacyPick(DragShareController current, DragShareSettings settings,
+                                       CapturedContent content, float x, float y) {
+        if (content == null) return;
+        current.reservePortalHostFloatWindowSuppression();
+        current.show(content, x, y, settings);
+    }
+
+    private static void recyclePortalPreview(CapturedContent content) {
+        if (content != null && content.isImage()) content.bitmap.recycle();
     }
 
     private static void hookKnownCallbackClass(ClassLoader classLoader) {
@@ -471,7 +533,7 @@ final class PortalHooks {
             if (motion instanceof MotionEvent) {
                 callbackDiagnostics.motion((MotionEvent) motion, current.diagnosticPackage(),
                         "HOST_CALLBACK_OBSERVED", null, null, null, "miui_motion_fallback");
-                dispatchMotion(MotionEvent.obtain((MotionEvent) motion));
+                offerMotion((MotionEvent) motion);
                 // A motion-only result is not valid Taplus pick content. The
                 // fallback above has already received the event when Root is
                 // not ready.
@@ -498,6 +560,7 @@ final class PortalHooks {
                     param.setResult(null);
                 } else {
                     if (current != null) {
+                        invalidateLegacyPick();
                         current.finishFromControlEvent();
                     }
                 }
@@ -546,10 +609,13 @@ final class PortalHooks {
         clearDeferredHostCalls();
         controller = new DragShareController(context, OverlayWindowPolicy.portal());
         rootGateway = new RootGateway(context, PortalHooks::dispatchRootPointer,
-                (ready, reason) -> ModuleActivation.reportRootInput(context, ready, reason));
+                (ready, reason) -> {
+                    syncFallbackMotion(ready);
+                    ModuleActivation.reportRootInput(context, ready, reason);
+                });
         rootTouchSource = rootGateway.input();
-        motionSource = new MiuiMotionSource(classLoader, PortalHooks::dispatchMotion);
-        motionSource.start();
+        rootTouchSource.setFallbackOwnsInput(inputHandoff::fallbackActive);
+        motionSource = new MiuiMotionSource(classLoader, PortalHooks::offerMotion);
         configureThumbCapture(context, settings);
         rootGateway.startInput();
         log("portal runtime started");
@@ -559,10 +625,15 @@ final class PortalHooks {
         PressCaptureSource thumb = thumbCaptureSource;
         thumbCaptureSource = null;
         if (thumb != null) thumb.stop();
+        invalidateLegacyPick();
         updateHostIdleTimer(false);
         if (replayDeferredCalls) {
             replayDeferredHostCalls();
         }
+        MiuiMotionSource fallback = motionSource;
+        motionSource = null;
+        inputHandoff.finishFallback();
+        if (fallback != null) fallback.stop();
         RootTouchSource rootSource = rootTouchSource;
         rootTouchSource = null;
         if (rootSource != null) {
@@ -571,9 +642,6 @@ final class PortalHooks {
             if (gateway != null) gateway.stopInput();
             else rootSource.stop();
         }
-        MiuiMotionSource fallback = motionSource;
-        motionSource = null;
-        if (fallback != null) fallback.stop();
         DragShareController current = controller;
         controller = null;
         if (current != null) {
@@ -624,6 +692,7 @@ final class PortalHooks {
     private static void dispatchRootPointer(
             int action, float x, float y, long eventTime, int rawTouchMajor, int rawTouchMinor, int rawWidthMajor) {
         if (action != MotionEvent.ACTION_MOVE) {
+            invalidateLegacyPick();
             DragShareLog.dSampled(TAG, "root-pointer:" + action, 250L,
                     () -> "root pointer action=" + MotionEvent.actionToString(action)
                             + " point=" + Math.round(x) + "," + Math.round(y)
@@ -647,46 +716,78 @@ final class PortalHooks {
         }
     }
 
-    /** Delivers MIUI motion only while Root evdev is unavailable. */
+    private static void syncFallbackMotion(boolean rootReady) {
+        MiuiMotionSource fallback = motionSource;
+        if (fallback == null) return;
+        if (inputHandoff.shouldListen(rootReady)) fallback.start();
+        else fallback.stop();
+    }
+
+    /** Only copy a borrowed event when it will cross onto the main queue. */
+    private static void offerMotion(MotionEvent event) {
+        MiuiMotionSource fallback = motionSource;
+        if (fallback == null || !inputHandoff.shouldListen(hasReadyRootSource())) return;
+        if (Looper.myLooper() == INPUT_MAIN.getLooper()) {
+            dispatchMotion(event);
+            return;
+        }
+        MotionEvent copy = MotionEvent.obtainNoHistory(event);
+        INPUT_MAIN.post(() -> {
+            try {
+                if (motionSource == fallback) dispatchMotion(copy);
+            } finally {
+                copy.recycle();
+            }
+        });
+    }
+
+    /** New gestures prefer Root. A fallback gesture already in progress keeps its source. */
     private static void dispatchMotion(MotionEvent event) {
-        try {
-            if (hasReadyRootSource()) {
-                return;
-            }
-            DragShareController current = controller;
-            PressCaptureSource press = thumbCaptureSource;
-            if (current == null && press == null) return;
-            int action = event.getActionMasked();
-            float x = event.getRawX();
-            float y = event.getRawY();
-            long time = event.getEventTime();
-            if (current != null && (action == MotionEvent.ACTION_DOWN
-                    || action == MotionEvent.ACTION_MOVE
-                    || action == MotionEvent.ACTION_UP
-                    || action == MotionEvent.ACTION_CANCEL)) {
-                current.acceptPointerEvent(action, x, y, time, "miui",
-                        action == MotionEvent.ACTION_UP || action == MotionEvent.ACTION_CANCEL
-                                ? PortalHooks::replayDeferredHostCalls : null);
-            }
-            if (press != null) {
-                int pointerCount = event.getPointerCount();
-                if (action == MotionEvent.ACTION_DOWN && pointerCount == 1) {
-                    press.onPointerEvent(action, x, y, time);
-                } else if (action == MotionEvent.ACTION_MOVE && pointerCount == 1) {
-                    press.onPointerEvent(action, x, y, time);
-                } else if (action == MotionEvent.ACTION_UP || action == MotionEvent.ACTION_CANCEL) {
-                    press.onContactEvent(action, x, y,
-                            pointerCount > 1 ? event.getRawX(1) : Float.NaN,
-                            pointerCount > 1 ? event.getRawY(1) : Float.NaN,
-                            pointerCount, time);
-                    press.onPointerEvent(action, x, y, time);
-                } else if (pointerCount > 1) {
-                    press.onContactEvent(action, x, y, event.getRawX(1), event.getRawY(1),
-                            pointerCount, time);
-                }
-            }
-        } finally {
-            event.recycle();
+        boolean rootReady = hasReadyRootSource();
+        int action = event.getActionMasked();
+        long downTime = event.getDownTime();
+        if (action == MotionEvent.ACTION_DOWN && inputHandoff.missedFallbackEnd(downTime, rootReady)) {
+            deliverMotion(event, MotionEvent.ACTION_CANCEL);
+            inputHandoff.finishFallback();
+            syncFallbackMotion(rootReady);
+            return;
+        }
+        if (!inputHandoff.acceptFallback(action, downTime, rootReady)) return;
+        deliverMotion(event, action);
+        if (action == MotionEvent.ACTION_UP || action == MotionEvent.ACTION_CANCEL) {
+            inputHandoff.finishFallback();
+            syncFallbackMotion(rootReady);
+        }
+    }
+
+    private static void deliverMotion(MotionEvent event, int action) {
+        DragShareController current = controller;
+        PressCaptureSource press = thumbCaptureSource;
+        float x = event.getRawX();
+        float y = event.getRawY();
+        long time = event.getEventTime();
+        if (current != null && (action == MotionEvent.ACTION_DOWN
+                || action == MotionEvent.ACTION_MOVE
+                || action == MotionEvent.ACTION_UP
+                || action == MotionEvent.ACTION_CANCEL)) {
+            if (action != MotionEvent.ACTION_MOVE) invalidateLegacyPick();
+            current.acceptPointerEvent(action, x, y, time, "miui",
+                    action == MotionEvent.ACTION_UP || action == MotionEvent.ACTION_CANCEL
+                            ? PortalHooks::replayDeferredHostCalls : null);
+        }
+        if (press == null) return;
+        int pointerCount = event.getPointerCount();
+        if ((action == MotionEvent.ACTION_DOWN || action == MotionEvent.ACTION_MOVE) && pointerCount == 1) {
+            press.onPointerEvent(action, x, y, time);
+        } else if (action == MotionEvent.ACTION_UP || action == MotionEvent.ACTION_CANCEL) {
+            press.onContactEvent(action, x, y,
+                    pointerCount > 1 ? event.getRawX(1) : Float.NaN,
+                    pointerCount > 1 ? event.getRawY(1) : Float.NaN,
+                    pointerCount, time);
+            press.onPointerEvent(action, x, y, time);
+        } else if (pointerCount > 1) {
+            press.onContactEvent(action, x, y, event.getRawX(1), event.getRawY(1),
+                    pointerCount, time);
         }
     }
 
@@ -701,6 +802,7 @@ final class PortalHooks {
             thumbCaptureSource = null;
             if (previous != null) previous.stop();
             if (thumb.enabled) {
+                invalidateLegacyPick();
                 thumbCaptureSource = new PressCaptureSource(
                         context, rootTouchSource, controller, settings);
                 log("reference press trigger enabled; no calibration required");

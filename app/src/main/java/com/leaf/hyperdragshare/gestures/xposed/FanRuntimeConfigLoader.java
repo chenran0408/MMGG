@@ -4,6 +4,7 @@ import android.content.Context;
 import android.os.Bundle;
 
 import com.leaf.hyperdragshare.codex.GestureDiagnostics;
+import com.leaf.hyperdragshare.codex.HookFeatureFlags;
 import com.leaf.hyperdragshare.gestures.config.ConfigContract;
 
 import java.util.List;
@@ -20,6 +21,9 @@ final class FanRuntimeConfigLoader {
 
     LoadedConfig load() {
         Bundle bundle = context.getContentResolver().call(ConfigContract.URI, "get", null, null);
+        if (bundle != null && HookFeatureFlags.startup().gesturesOverride() != null) {
+            bundle.putBoolean(ConfigContract.KEY_ENABLED, HookFeatureFlags.startup().gestures(true));
+        }
         GestureDiagnostics.configure(bundle);
         GestureConfig config = GestureConfig.from(bundle);
         FanRuntimeTargetResolver.ResolvedTargets resolved =

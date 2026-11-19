@@ -1,16 +1,20 @@
 package com.leaf.hyperdragshare.gestures.xposed;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertTrue;
 
 import android.content.Context;
 import android.content.ContextWrapper;
+import android.graphics.Bitmap;
+import android.graphics.Canvas;
 import android.graphics.Color;
 import android.graphics.drawable.ColorDrawable;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
+import android.view.MotionEvent;
 import android.view.WindowManager;
 
 import com.leaf.hyperdragshare.gestures.config.ConfigContract;
@@ -107,6 +111,62 @@ public final class HoneycombOverlayControllerTest {
         controller.removeNow();
         assertEquals(1, tracking.removedViews);
         assertTrue((boolean) field(field(container, "backgroundView"), "released"));
+    }
+
+    @Test public void tappingAnIconRemovesThePickerAndLaunchesInTheSameTurn() throws Exception {
+        Context base = RuntimeEnvironment.getApplication();
+        TrackingWindowManager tracking = new TrackingWindowManager(
+                base.getSystemService(WindowManager.class));
+        Context context = new WindowManagerContext(base, tracking.proxy);
+        HoneycombOverlayController controller = new HoneycombOverlayController(
+                context, new Handler(Looper.getMainLooper()));
+        RuntimeTarget target = new RuntimeTarget("pkg", "shortcut", "", "Target",
+                new ColorDrawable(Color.RED), 0);
+        List<RuntimeTarget> launched = new ArrayList<>();
+        assertTrue(controller.show(List.of(target), GestureGeometry.Corner.RIGHT,
+                180f, 240f, GestureConfig.from(new Bundle()), true,
+                new HoneycombOverlayController.Listener() {
+                    @Override public void onLaunch(RuntimeTarget selected) {
+                        assertFalse(controller.isVisible());
+                        launched.add(selected);
+                    }
+
+                    @Override public void onClosed() { }
+                }));
+        HoneycombOverlayView view = (HoneycombOverlayView) field(controller, "view");
+        view.layout(0, 0, 480, 800);
+        // Render the settled picker, independent of the test's animation clock.
+        Field entry = HoneycombOverlayView.class.getDeclaredField("entryProgress");
+        entry.setAccessible(true);
+        entry.setFloat(view, 1f);
+        Bitmap bitmap = Bitmap.createBitmap(480, 800, Bitmap.Config.ARGB_8888);
+        try {
+            view.draw(new Canvas(bitmap));
+        } finally {
+            bitmap.recycle();
+        }
+        float x = ((float[]) field(view, "stableHitX"))[0];
+        float y = ((float[]) field(view, "stableHitY"))[0];
+        assertTrue(Float.isFinite(x) && Float.isFinite(y));
+
+        sendTouch(view, MotionEvent.ACTION_DOWN, x, y);
+        sendTouch(view, MotionEvent.ACTION_UP, x, y);
+        assertEquals(List.of(target), launched);
+        assertEquals(1, tracking.removedViews);
+
+        // A repeated UP from the same input sequence cannot launch again.
+        sendTouch(view, MotionEvent.ACTION_UP, x, y);
+        assertEquals(List.of(target), launched);
+        assertEquals(1, tracking.removedViews);
+    }
+
+    private static void sendTouch(HoneycombOverlayView view, int action, float x, float y) {
+        MotionEvent event = MotionEvent.obtain(0L, 1L, action, x, y, 0);
+        try {
+            view.onTouchEvent(event);
+        } finally {
+            event.recycle();
+        }
     }
 
     private static Object field(Object target, String name) throws Exception {

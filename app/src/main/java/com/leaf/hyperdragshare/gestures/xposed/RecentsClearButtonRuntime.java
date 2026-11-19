@@ -78,7 +78,10 @@ final class RecentsClearButtonRuntime {
         try {
             Bundle state = context.getContentResolver().call(
                     ConfigContract.URI, "get", null, null);
-            hidden = state != null && state.getBoolean(
+            hidden = state != null
+                    && com.leaf.hyperdragshare.codex.HookFeatureFlags.startup().gestures(
+                            state.getBoolean(ConfigContract.KEY_ENABLED, ConfigContract.DEFAULT_ENABLED))
+                    && state.getBoolean(
                     ConfigContract.KEY_HIDE_SYSTEM_RECENTS_CLEAR,
                     ConfigContract.DEFAULT_HIDE_SYSTEM_RECENTS_CLEAR);
             MAIN.post(RecentsClearButtonRuntime::applyAll);

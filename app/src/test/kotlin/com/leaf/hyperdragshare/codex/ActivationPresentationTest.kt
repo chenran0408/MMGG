@@ -2,6 +2,7 @@ package com.leaf.hyperdragshare.codex
 
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -20,6 +21,16 @@ class ActivationPresentationTest {
         cases.forEach { (stateSnapshot, expectedState) ->
             assertEquals(expectedState, activationPresentation(stateSnapshot, false, true, true).overallState)
         }
+    }
+
+    @Test
+    fun aNewCheckDisplaysCheckingEvenWithAnOlderResult() {
+        val presentation = activationPresentation(snapshot(), true, true, true)
+
+        assertEquals(ActivationState.CHECKING, presentation.overallState)
+        assertEquals("正在检查运行状态", presentation.homeTitle)
+        assertNull(presentation.homeSummary)
+        assertEquals("正在检查", presentation.diagnosticsTitle)
     }
 
     @Test
@@ -65,7 +76,7 @@ class ActivationPresentationTest {
 
         assertEquals(ActivationState.UNKNOWN, presentation.overallState)
         assertEquals("部分状态待确认", presentation.homeTitle)
-        assertTrue(presentation.homeSummary.contains("不代表权限已被拒绝"))
+        assertNull(presentation.homeSummary)
         assertTrue(presentation.hasUnknown)
         assertFalse(presentation.portalNeedsReload)
         assertTrue(presentation.rootNeeds.isEmpty())

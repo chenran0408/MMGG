@@ -17,6 +17,7 @@ import com.leaf.hyperdragshare.compat.xposed.XposedHelpers;
  */
 final class MiuiMotionSource {
     interface Listener {
+        /** Ownership stays with the vendor callback. */
         void onMotionEvent(MotionEvent event);
     }
 
@@ -34,7 +35,7 @@ final class MiuiMotionSource {
     private final Listener listener;
     private HandlerThread thread;
     private Object manager;
-    private Object motionListener;
+    private volatile Object motionListener;
     private boolean firstEventLogged;
 
     MiuiMotionSource(ClassLoader classLoader, Listener listener) {
@@ -63,7 +64,7 @@ final class MiuiMotionSource {
                 if (method.getDeclaringClass() == Object.class) {
                     return handleObjectMethod(proxy, method, args);
                 }
-                if (ON_MOTION_EVENT.equals(method.getName())
+                if (proxy == motionListener && ON_MOTION_EVENT.equals(method.getName())
                         && args != null && args.length == 1
                         && args[0] instanceof MotionEvent) {
                     MotionEvent source = (MotionEvent) args[0];
@@ -74,7 +75,7 @@ final class MiuiMotionSource {
                                 + " point=" + Math.round(source.getRawX()) + ","
                                 + Math.round(source.getRawY()));
                     }
-                    listener.onMotionEvent(MotionEvent.obtain(source));
+                    listener.onMotionEvent(source);
                 }
                 return null;
             };
@@ -82,10 +83,10 @@ final class MiuiMotionSource {
                     listenerClass.getClassLoader(),
                     new Class<?>[]{listenerClass},
                     invocationHandler);
-            XposedHelpers.callMethod(inputManager, REGISTER, proxy, handler);
             thread = inputThread;
             manager = inputManager;
             motionListener = proxy;
+            XposedHelpers.callMethod(inputManager, REGISTER, proxy, handler);
             DragShareLog.i(TAG, "fallback listener registered");
         } catch (Throwable error) {
             DragShareLog.w(TAG, "fallback listener unavailable", error);

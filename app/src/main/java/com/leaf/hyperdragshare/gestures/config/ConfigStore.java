@@ -670,7 +670,7 @@ public final class ConfigStore {
     public void requestShortcutCatalog() {
         preferences.edit().putLong(ConfigContract.KEY_SHORTCUT_CATALOG_REQUEST,
                 System.currentTimeMillis()).apply();
-        context.getContentResolver().notifyChange(ConfigContract.CATALOG_URI, null);
+        context.getContentResolver().notifyChange(ConfigContract.CATALOG_REFRESH_URI, null);
     }
 
     public List<ActivityCatalogEntry> getActivityCatalog() {
@@ -696,7 +696,7 @@ public final class ConfigStore {
     public void requestActivityCatalog() {
         preferences.edit().putLong(ConfigContract.KEY_ACTIVITY_CATALOG_REQUEST,
                 System.currentTimeMillis()).apply();
-        context.getContentResolver().notifyChange(ConfigContract.CATALOG_URI, null);
+        context.getContentResolver().notifyChange(ConfigContract.CATALOG_REFRESH_URI, null);
     }
 
     public static final class ShortcutCatalogEntry {

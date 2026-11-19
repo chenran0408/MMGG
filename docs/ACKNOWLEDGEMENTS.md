@@ -79,3 +79,6 @@ MMGG 建立在许多开源项目、系统接口研究和参考应用的交互经
 
 如果项目名称、作者署名、许可证或引用用途需要更正，请提交 Issue 或 Pull Request。
 无法从公开资料可靠确认的个人账号不会凭猜测填写。
+# MeiWindow 迷你小窗菜单
+
+菜单图标和按下状态来自 [MeiWindow v1.4.7 的 drawable-xxxhdpi 资源](https://github.com/Leaf-lsgtky/MeiWindow/tree/v1.4.7/app/src/main/res/drawable-xxxhdpi)，上游项目声明 GPL-3.0。MMGG 中对应文件以 `mei_mini_` 开头。窗口内遮罩、按键布局、长按交互和动画参照该版本的 `FlymeMiniMenuOverlay.kt` 及 `FlymeFreeformController.kt`。
