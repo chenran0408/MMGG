@@ -14,6 +14,7 @@ import org.robolectric.RobolectricTestRunner;
 import org.robolectric.annotation.Config;
 
 import java.io.ByteArrayOutputStream;
+import java.io.ByteArrayInputStream;
 import java.io.IOException;
 
 @RunWith(RobolectricTestRunner.class)
@@ -26,6 +27,21 @@ public final class LocalImageSaverTest {
         assertTrue(name.endsWith(".png"));
         assertEquals(19, name.length());
         assertTrue(name.matches("\\d{8}_\\d{6}\\.png"));
+    }
+
+    @Test
+    public void timestampNameUsesSourceFormatExtension() {
+        assertTrue(LocalImageSaver.timestampName(0L, "gif").endsWith(".gif"));
+    }
+
+    @Test
+    public void sourceCopyPreservesEncodedBytes() throws IOException {
+        byte[] original = new byte[]{'G', 'I', 'F', '8', '9', 'a', 0, 1, 2, 3};
+        ByteArrayOutputStream output = new ByteArrayOutputStream();
+
+        LocalImageSaver.copy(new ByteArrayInputStream(original), output);
+
+        org.junit.Assert.assertArrayEquals(original, output.toByteArray());
     }
 
     @Test

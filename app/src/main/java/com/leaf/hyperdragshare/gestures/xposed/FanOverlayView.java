@@ -40,9 +40,6 @@ final class FanOverlayView extends View {
     private CharSequence fittedRingLabel;
     private String fittedRingLabelSource;
     private float fittedRingLabelMaxWidth;
-    private CharSequence fittedSideLabel;
-    private String fittedSideLabelSource;
-    private float fittedSideLabelMaxWidth;
     private float fanRadius;
     private int fanLayoutMode;
     private int fanOuterCapacity = 7;
@@ -56,15 +53,7 @@ final class FanOverlayView extends View {
     private float pointerX;
     private float pointerY;
     private boolean showBackdrop = true;
-    private boolean sideListLayout;
-    private boolean sideFanListLayout;
-    private boolean sideRingListLayout;
-    private float sideListTop;
-    private float sideRowHeight;
-    private float sideListCenterX;
-    private float sideFanRadius;
-    private final SideIconLayout.Cache sideLayoutCache = new SideIconLayout.Cache();
-    private boolean showSideNames;
+    private boolean showNames;
     private boolean animationsEnabled;
     private int animationSpeed = 100;
     private int revealAmount = 42;
@@ -151,13 +140,7 @@ final class FanOverlayView extends View {
         this.fanRadius = radius;
         this.iconDiameter = iconDiameter;
         this.showBackdrop = showBackdrop;
-        this.sideListLayout = false;
-        this.sideFanListLayout = false;
-        this.sideRingListLayout = false;
-        this.sideListTop = 0f;
-        this.sideRowHeight = 0f;
-        this.sideListCenterX = 0f;
-        this.showSideNames = showSelectedName;
+        this.showNames = showSelectedName;
         this.animationsEnabled = animationsEnabled;
         this.animationSpeed = Math.max(75, Math.min(160, animationSpeed));
         this.revealAmount = Math.max(15, Math.min(130, revealAmount));
@@ -176,111 +159,6 @@ final class FanOverlayView extends View {
         this.dismissing = false;
         selected = -1;
         updateBackdropShader();
-        invalidate();
-    }
-
-    void configureSideList(List<RuntimeTarget> targets, GestureGeometry.Corner side,
-                           float centerX, float listTop, float rowHeight, float iconDiameter,
-                           boolean showNames, boolean showBackdrop,
-                           boolean animationsEnabled, int animationSpeed,
-                           int revealAmount, int rotationDegrees,
-                           int selectionScalePercent, boolean showSelectionRing) {
-        this.targets = targets;
-        this.corner = side;
-        this.fanRadius = 0f;
-        this.iconDiameter = iconDiameter;
-        this.showBackdrop = showBackdrop;
-        this.sideListLayout = true;
-        this.sideFanListLayout = false;
-        this.sideRingListLayout = false;
-        fanCenters = new GestureGeometry.Point[0];
-        this.sideListTop = listTop;
-        this.sideRowHeight = rowHeight;
-        this.sideListCenterX = centerX;
-        this.showSideNames = showNames;
-        this.animationsEnabled = animationsEnabled;
-        this.animationSpeed = Math.max(75, Math.min(160, animationSpeed));
-        this.revealAmount = Math.max(15, Math.min(130, revealAmount));
-        this.rotationDegrees = Math.max(0, Math.min(90, rotationDegrees));
-        this.selectionScalePercent = Math.max(5, Math.min(40,
-                selectionScalePercent));
-        this.showSelectionRing = showSelectionRing;
-        this.revealStartedAt = SystemClock.uptimeMillis();
-        this.animatedSelection = -1;
-        this.confirmationSelection = -1;
-        this.dismissing = false;
-        selected = -1;
-        invalidate();
-    }
-
-    void configureSideFanList(List<RuntimeTarget> targets, GestureGeometry.Corner side,
-                              float apexX, float centerY, float radius, float iconDiameter,
-                              boolean showNames, boolean showBackdrop,
-                              boolean animationsEnabled, int animationSpeed,
-                              int revealAmount, int rotationDegrees,
-                              int selectionScalePercent, boolean showSelectionRing) {
-        this.targets = targets;
-        this.corner = side;
-        this.fanRadius = 0f;
-        this.iconDiameter = iconDiameter;
-        this.showBackdrop = showBackdrop;
-        this.sideListLayout = true;
-        this.sideFanListLayout = true;
-        this.sideRingListLayout = false;
-        fanCenters = new GestureGeometry.Point[0];
-        this.sideListCenterX = apexX;
-        this.sideListTop = centerY;
-        this.sideRowHeight = 0f;
-        this.sideFanRadius = radius;
-        this.showSideNames = showNames;
-        this.animationsEnabled = animationsEnabled;
-        this.animationSpeed = Math.max(75, Math.min(160, animationSpeed));
-        this.revealAmount = Math.max(15, Math.min(130, revealAmount));
-        this.rotationDegrees = Math.max(0, Math.min(90, rotationDegrees));
-        this.selectionScalePercent = Math.max(5, Math.min(40,
-                selectionScalePercent));
-        this.showSelectionRing = showSelectionRing;
-        this.revealStartedAt = SystemClock.uptimeMillis();
-        this.animatedSelection = -1;
-        this.confirmationSelection = -1;
-        this.dismissing = false;
-        selected = -1;
-        invalidate();
-    }
-
-    void configureSideRingList(List<RuntimeTarget> targets, GestureGeometry.Corner side,
-                               float centerX, float centerY, float radius,
-                               float iconDiameter, boolean showNames,
-                               boolean showBackdrop, boolean animationsEnabled,
-                               int animationSpeed, int revealAmount,
-                               int rotationDegrees, int selectionScalePercent,
-                               boolean showSelectionRing) {
-        this.targets = targets;
-        this.corner = side;
-        this.fanRadius = 0f;
-        this.iconDiameter = iconDiameter;
-        this.showBackdrop = showBackdrop;
-        this.sideListLayout = true;
-        this.sideFanListLayout = false;
-        this.sideRingListLayout = true;
-        fanCenters = new GestureGeometry.Point[0];
-        this.sideListCenterX = centerX;
-        this.sideListTop = centerY;
-        this.sideRowHeight = 0f;
-        this.sideFanRadius = radius;
-        this.showSideNames = showNames;
-        this.animationsEnabled = animationsEnabled;
-        this.animationSpeed = Math.max(75, Math.min(160, animationSpeed));
-        this.revealAmount = Math.max(15, Math.min(130, revealAmount));
-        this.rotationDegrees = Math.max(0, Math.min(90, rotationDegrees));
-        this.selectionScalePercent = Math.max(5, Math.min(40,
-                selectionScalePercent));
-        this.showSelectionRing = showSelectionRing;
-        this.revealStartedAt = SystemClock.uptimeMillis();
-        this.animatedSelection = -1;
-        this.confirmationSelection = -1;
-        this.dismissing = false;
-        selected = -1;
         invalidate();
     }
 
@@ -306,7 +184,7 @@ final class FanOverlayView extends View {
     }
 
     boolean playDismissal() {
-        if (!animationsEnabled || (sideListLayout && !sideRingListLayout)) return false;
+        if (!animationsEnabled) return false;
         dismissing = true;
         dismissalStartedAt = SystemClock.uptimeMillis();
         invalidate();
@@ -318,26 +196,7 @@ final class FanOverlayView extends View {
     }
 
     @Override public boolean onTouchEvent(MotionEvent event) {
-        if (touchListener == null || !sideRingListLayout || dismissing) return false;
-        int action = event.getActionMasked();
-        if (action == MotionEvent.ACTION_CANCEL) {
-            touchListener.onDismiss();
-            return true;
-        }
-        if (action != MotionEvent.ACTION_DOWN && action != MotionEvent.ACTION_MOVE
-                && action != MotionEvent.ACTION_UP) return true;
-        int next = sideLayoutCache.get(SideIconLayout.RING, corner, targets.size(), 0,
-                sideListCenterX, sideListTop, sideFanRadius).selection(event.getX(), event.getY(),
-                iconDiameter, dp(10));
-        boolean changed = next != selected;
-        updateSelection(next, event.getX(), event.getY());
-        if (changed && next >= 0) touchListener.onSelectionChanged(next);
-        if (action == MotionEvent.ACTION_UP) {
-            performClick();
-            if (next >= 0) touchListener.onLaunch(next);
-            else touchListener.onDismiss();
-        }
-        return true;
+        return false;
     }
 
     @Override public boolean performClick() {
@@ -349,10 +208,6 @@ final class FanOverlayView extends View {
     protected void onDraw(Canvas canvas) {
         super.onDraw(canvas);
         if (targets.isEmpty()) return;
-        if (sideListLayout) {
-            drawSideList(canvas);
-            return;
-        }
         float originX = corner == GestureGeometry.Corner.LEFT ? 0 : getWidth();
         float drawOriginY = getHeight();
         float radius = fanRadius > 0 ? fanRadius : Math.min(getWidth(), getHeight()) * 0.58f;
@@ -417,7 +272,7 @@ final class FanOverlayView extends View {
             canvas.restoreToCount(save);
         }
 
-        if (showSideNames && selected >= 0 && selected < targets.size()) {
+        if (showNames && selected >= 0 && selected < targets.size()) {
             String label = targets.get(selected).label;
             float padding = dp(14);
             float width = textPaint.measureText(label) + padding * 2;
@@ -429,165 +284,6 @@ final class FanOverlayView extends View {
             canvas.drawText(label, centerX, centerY, textPaint);
         }
         if (keepAnimating) postInvalidateOnAnimation();
-    }
-
-    private void drawSideList(Canvas canvas) {
-        float railPadding = dp(8);
-        float railLeft = sideListCenterX - iconDiameter / 2f - railPadding;
-        float railRight = sideListCenterX + iconDiameter / 2f + railPadding;
-        float railTop = sideListTop + dp(2);
-        float railBottom = sideListTop + targets.size() * sideRowHeight - dp(2);
-        if (showBackdrop && !sideFanListLayout && !sideRingListLayout) {
-            canvas.drawRoundRect(railLeft, railTop, railRight, railBottom,
-                    dp(22), dp(22), railPaint);
-        }
-
-        long now = SystemClock.uptimeMillis();
-        float revealProgress = animationsEnabled
-                ? progress(revealStartedAt, duration(170L), now) : 1f;
-        float reveal = animationsEnabled ? easeOutBack(revealProgress) : 1f;
-        boolean keepAnimating = revealProgress < 1f;
-        float dismissalProgress = dismissing && sideRingListLayout
-                ? easeOut(progress(dismissalStartedAt, dismissalDurationMs(), now)) : 0f;
-        if (dismissing && dismissalProgress < 1f) keepAnimating = true;
-        float startFactor = 1f - revealAmount / 100f;
-        int anchor = (targets.size() - 1) / 2;
-        float iconOriginX = sideRingListLayout ? sideListCenterX
-                : corner == GestureGeometry.Corner.LEFT ? 0f : getWidth();
-        float iconOriginY = sideRingListLayout ? sideListTop
-                : sideFanListLayout ? sideListTop
-                : sideListTop + (anchor + 0.5f) * sideRowHeight;
-        SideIconLayout centers = sideLayoutCache.get(sideRingListLayout ? SideIconLayout.RING
-                : sideFanListLayout ? SideIconLayout.FAN : SideIconLayout.LIST,
-                corner, targets.size(), sideFanListLayout ? getWidth() : 0,
-                sideListCenterX, sideListTop, sideFanListLayout || sideRingListLayout
-                        ? sideFanRadius : sideRowHeight);
-        for (int i = 0; i < targets.size(); i++) {
-            float revealFactor = startFactor + (1f - startFactor) * reveal;
-            revealFactor *= 1f - 0.38f * dismissalProgress;
-            float x = iconOriginX + (centers.x(i) - iconOriginX) * revealFactor;
-            float y = iconOriginY + (centers.y(i) - iconOriginY) * revealFactor;
-            boolean active = i == selected;
-            float pop = selectionPop(i, now);
-            if (selectionAnimationActive(i, now) || revealRotationActive(i, now)) {
-                keepAnimating = true;
-            }
-            float diameter = iconDiameter * (active ? selectionScale() : 1f)
-                    * (0.78f + 0.22f * reveal) * pop
-                    * (1f - 0.24f * dismissalProgress);
-            float radius = diameter / 2f;
-            int save = canvas.save();
-            canvas.rotate(revealRotation(i, now), x, y);
-            if (active) {
-                float pulse = Math.max(0f, pop - 1f) * 5f;
-                int direction = corner == GestureGeometry.Corner.LEFT ? 1 : -1;
-                canvas.rotate(SelectionTransform.rotation(selectionTransformLevel,
-                        direction, pulse), x, y);
-                canvas.scale(SelectionTransform.scaleX(selectionTransformLevel, pulse),
-                        SelectionTransform.scaleY(selectionTransformLevel, pulse), x, y);
-            }
-            if (active && showSelectionRing) {
-                canvas.drawCircle(x, y, radius + dp(7), selectedFillPaint);
-            }
-            if (forceCircularIcons) canvas.drawCircle(x, y, radius, iconShadowPaint);
-            RuntimeTarget target = targets.get(i);
-            drawCircularIcon(canvas, target.icon, x, y, diameter);
-            if (target.isShortcut()) {
-                ShortcutBadgeRenderer.draw(canvas, x, y, diameter,
-                        alphaFromDismissal(dismissalProgress),
-                        getResources().getDisplayMetrics().density);
-            }
-            if (target.userId != 0) {
-                ShortcutBadgeRenderer.drawDual(canvas, x, y, diameter,
-                        alphaFromDismissal(dismissalProgress),
-                        getResources().getDisplayMetrics().density, target.isShortcut());
-            }
-            if (forceCircularIcons) {
-                canvas.drawCircle(x, y, radius - dp(0.5f), iconStrokePaint);
-            }
-            if (active && showSelectionRing) {
-                canvas.drawCircle(x, y, radius + dp(5), selectedPaint);
-            }
-            canvas.restoreToCount(save);
-            if (showSideNames && active && !sideRingListLayout) {
-                drawSideLabel(canvas, targets.get(i).label, x, y,
-                        diameter, active);
-            }
-        }
-        if (showSideNames && sideRingListLayout
-                && selected >= 0 && selected < targets.size()) {
-            drawFixedRingLabel(canvas, targets.get(selected).label);
-        }
-        if (keepAnimating) postInvalidateOnAnimation();
-    }
-
-    private void drawFixedRingLabel(Canvas canvas, String label) {
-        float maxTextWidth = Math.min(dp(190), getWidth() * 0.50f);
-        CharSequence fitted = fittedRingLabel;
-        if (fittedRingLabelSource != label || fittedRingLabelMaxWidth != maxTextWidth) {
-            fittedRingLabelSource = label;
-            fittedRingLabelMaxWidth = maxTextWidth;
-            fittedRingLabel = TextUtils.ellipsize(label, textPaint,
-                    maxTextWidth, TextUtils.TruncateAt.END);
-            fitted = fittedRingLabel;
-        }
-        float textWidth = textPaint.measureText(fitted, 0, fitted.length());
-        float padding = dp(13);
-        float boxHeight = dp(36);
-        float centerX = Math.max(textWidth / 2f + padding + dp(10),
-                Math.min(getWidth() - textWidth / 2f - padding - dp(10),
-                        sideListCenterX));
-        float safeTop = statusBarTop >= 0 ? statusBarTop : dp(24);
-        float centerY = Math.max(safeTop + boxHeight / 2f + dp(8),
-                sideListTop - sideFanRadius - iconDiameter / 2f - dp(22));
-        pillPaint.setColor(0xf020263f);
-        canvas.drawRoundRect(centerX - textWidth / 2f - padding,
-                centerY - boxHeight / 2f, centerX + textWidth / 2f + padding,
-                centerY + boxHeight / 2f, boxHeight / 2f, boxHeight / 2f,
-                pillPaint);
-        textPaint.getFontMetrics(labelMetrics);
-        Paint.FontMetrics metrics = labelMetrics;
-        float baseline = centerY - (metrics.ascent + metrics.descent) / 2f;
-        textPaint.setTextAlign(Paint.Align.CENTER);
-        canvas.drawText(fitted, 0, fitted.length(), centerX, baseline, textPaint);
-    }
-
-    private void drawSideLabel(Canvas canvas, String label, float iconX, float iconY,
-                               float diameter, boolean active) {
-        float maxTextWidth = Math.min(dp(180), getWidth() * 0.46f);
-        CharSequence fitted = fittedSideLabel;
-        if (fittedSideLabelSource != label || fittedSideLabelMaxWidth != maxTextWidth) {
-            fittedSideLabelSource = label;
-            fittedSideLabelMaxWidth = maxTextWidth;
-            fittedSideLabel = TextUtils.ellipsize(label, textPaint,
-                    maxTextWidth, TextUtils.TruncateAt.END);
-            fitted = fittedSideLabel;
-        }
-        float textWidth = textPaint.measureText(fitted, 0, fitted.length());
-        float horizontalPadding = dp(13);
-        float gap = dp(10);
-        float boxWidth = textWidth + horizontalPadding * 2f;
-        float boxHeight = dp(36);
-        float left;
-        float right;
-        if (iconX < getWidth() / 2f) {
-            left = iconX + diameter / 2f + gap;
-            right = Math.min(getWidth() - dp(10), left + boxWidth);
-            left = right - boxWidth;
-        } else {
-            right = iconX - diameter / 2f - gap;
-            left = Math.max(dp(10), right - boxWidth);
-            right = left + boxWidth;
-        }
-        pillPaint.setColor(active ? 0xf020263f : 0xc820263f);
-        canvas.drawRoundRect(left, iconY - boxHeight / 2f, right,
-                iconY + boxHeight / 2f, boxHeight / 2f, boxHeight / 2f, pillPaint);
-        textPaint.getFontMetrics(labelMetrics);
-        Paint.FontMetrics metrics = labelMetrics;
-        float baseline = iconY - (metrics.ascent + metrics.descent) / 2f;
-        textPaint.setTextAlign(Paint.Align.CENTER);
-        canvas.drawText(fitted, 0, fitted.length(), (left + right) / 2f,
-                baseline, textPaint);
     }
 
     private void drawCircularIcon(Canvas canvas, Drawable drawable, float centerX, float centerY,
@@ -699,7 +395,7 @@ final class FanOverlayView extends View {
     }
 
     private void rebuildFanCenters() {
-        if (sideListLayout || targets.isEmpty() || getWidth() <= 0 || getHeight() <= 0) {
+        if (targets.isEmpty() || getWidth() <= 0 || getHeight() <= 0) {
             fanCenters = new GestureGeometry.Point[0];
             return;
         }

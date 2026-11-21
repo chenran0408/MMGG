@@ -55,7 +55,6 @@ final class HoneycombOverlayView extends View {
     private float[] drawnX = new float[0];
     private float[] drawnY = new float[0];
     private float[] drawnRadius = new float[0];
-    private float[] drawnScale = new float[0];
     private float[] stableHitX = new float[0];
     private float[] stableHitY = new float[0];
     private float[] stableHitRadius = new float[0];
@@ -97,10 +96,6 @@ final class HoneycombOverlayView extends View {
     private float zoom = 1f;
     private float entryProgress;
     private float dismissProgress;
-    private float confirmProgress;
-    private float confirmStartX = Float.NaN;
-    private float confirmStartY = Float.NaN;
-    private float confirmStartScale = Float.NaN;
     private int selected = -1;
     private RuntimeTarget nameTarget;
     private float selectionProgress;
@@ -146,7 +141,6 @@ final class HoneycombOverlayView extends View {
     private float selectionUnlockX;
     private float selectionUnlockY;
     private boolean interactionActive;
-    private Runnable pendingLaunch;
     private final Runnable holdSelectionUpdate = () -> {
         if (!browseMode && !selectionRequiresMove && pointerValid
                 && !interactionPaused && !closing) {
@@ -250,7 +244,6 @@ final class HoneycombOverlayView extends View {
         drawnX = new float[targets.size()];
         drawnY = new float[targets.size()];
         drawnRadius = new float[targets.size()];
-        drawnScale = new float[targets.size()];
         stableHitX = new float[targets.size()];
         stableHitY = new float[targets.size()];
         stableHitRadius = new float[targets.size()];
@@ -449,7 +442,7 @@ final class HoneycombOverlayView extends View {
         }
         if (!cancelled && !finalPositionAlreadyHandled
                 && selectionMovementStarted(x, y)) selectAt(x, y, true);
-        if (!cancelled && selected >= 0) playConfirmation(selected);
+        if (!cancelled && selected >= 0) confirmSelection(selected);
         else playDismissal();
     }
 
@@ -505,38 +498,13 @@ final class HoneycombOverlayView extends View {
         animator.start();
     }
 
-    private void playConfirmation(int index) {
+    private void confirmSelection(int index) {
         if (closing || index < 0 || index >= targets.size()) return;
         RuntimeTarget launchTarget = targets.get(index);
         closing = true;
-        selected = index;
-        nameTarget = launchTarget;
-        if (index < drawnX.length && Float.isFinite(drawnX[index])
-                && Float.isFinite(drawnY[index])) {
-            confirmStartX = drawnX[index];
-            confirmStartY = drawnY[index];
-            confirmStartScale = drawnScale[index] > 0f ? drawnScale[index] : Float.NaN;
-        } else {
-            confirmStartX = Float.NaN;
-            confirmStartY = Float.NaN;
-            confirmStartScale = Float.NaN;
-        }
         if (hapticEnabled) performHapticFeedback(HapticFeedbackConstants.CONFIRM);
-        ValueAnimator animator = ValueAnimator.ofFloat(0f, 1f);
-        trackAnimator(animator);
-        animator.setDuration(scaledDuration(230));
-        animator.setInterpolator(new DecelerateInterpolator(1.45f));
-        animator.addUpdateListener(value -> {
-            confirmProgress = (Float) value.getAnimatedValue();
-            invalidate();
-        });
-        pendingLaunch = () -> {
-            if (released) return;
-            Listener callback = listener;
-            if (callback != null) callback.onLaunch(launchTarget);
-        };
-        postDelayed(pendingLaunch, scaledDuration(145));
-        animator.start();
+        Listener callback = listener;
+        if (callback != null) callback.onLaunch(launchTarget);
     }
 
     private void trackAnimator(ValueAnimator animator) {
@@ -557,8 +525,6 @@ final class HoneycombOverlayView extends View {
         stopPhysics();
         selectionAnimator.cancel();
         removeCallbacks(holdSelectionUpdate);
-        if (pendingLaunch != null) removeCallbacks(pendingLaunch);
-        pendingLaunch = null;
         ArrayList<ValueAnimator> animators = new ArrayList<>(activeAnimators);
         activeAnimators.clear();
         for (ValueAnimator animator : animators) animator.cancel();
@@ -571,7 +537,7 @@ final class HoneycombOverlayView extends View {
 
     @Override protected void onDraw(Canvas canvas) {
         super.onDraw(canvas);
-        float visible = (1f - dismissProgress) * (1f - confirmProgress * 0.18f);
+        float visible = 1f - dismissProgress;
         if (backgroundLayer != null) backgroundLayer.setVisible(visible);
         updateLensFocus();
         updateVisualCenters();
@@ -598,7 +564,7 @@ final class HoneycombOverlayView extends View {
             float y = originY + (finalCenterY - originY) * spring;
             float dxFromCenter = x - centerX;
             float dyFromCenter = y - centerY;
-            if (index != selected && confirmProgress <= 0f
+            if (index != selected
                     && dxFromCenter * dxFromCenter + dyFromCenter * dyFromCenter
                     > cullRadiusSquared) {
                 stableHitX[index] = Float.NaN;
@@ -607,7 +573,6 @@ final class HoneycombOverlayView extends View {
                 drawnX[index] = Float.NaN;
                 drawnY[index] = Float.NaN;
                 drawnRadius[index] = 0f;
-                drawnScale[index] = 0f;
                 continue;
             }
             float distance = (float) Math.sqrt(
@@ -636,7 +601,7 @@ final class HoneycombOverlayView extends View {
                 stableHitY[index] = Float.NaN;
                 stableHitRadius[index] = 0f;
             }
-            if (!browseMode && (pointerValid || Float.isFinite(confirmStartX))
+            if (!browseMode && pointerValid
                     && Float.isFinite(lensX)
                     && Float.isFinite(lensY)) {
                 float fromLensX = x - lensX;
@@ -653,20 +618,6 @@ final class HoneycombOverlayView extends View {
                 }
             }
             if (index == selected) scale *= 1f + (selectionScale - 1f) * selectionProgress;
-            if (confirmProgress > 0f) {
-                if (index == selected) {
-                    float startX = Float.isFinite(confirmStartX) ? confirmStartX : x;
-                    float startY = Float.isFinite(confirmStartY) ? confirmStartY : y;
-                    float startScale = Float.isFinite(confirmStartScale)
-                            ? confirmStartScale : scale;
-                    x = startX + (centerX - startX) * confirmProgress;
-                    y = startY + (centerY - startY) * confirmProgress;
-                    scale = startScale * (1f + 0.65f * confirmProgress);
-                } else {
-                    alpha *= 1f - confirmProgress;
-                    scale *= 1f - 0.14f * confirmProgress;
-                }
-            }
             if (dismissProgress > 0f) {
                 float collapse = dismissProgress * dismissProgress * (3f - 2f * dismissProgress);
                 x += (originX - x) * collapse;
@@ -678,12 +629,10 @@ final class HoneycombOverlayView extends View {
                 drawnX[index] = x;
                 drawnY[index] = y;
                 drawnRadius[index] = Math.max(8f * density, iconSize * scale * 0.58f);
-                drawnScale[index] = scale;
             } else {
                 drawnX[index] = Float.NaN;
                 drawnY[index] = Float.NaN;
                 drawnRadius[index] = 0f;
-                drawnScale[index] = 0f;
             }
             if (alpha > 0.02f) {
                 drawIcon(canvas, index, targets.get(index), x, y, iconSize * scale, alpha,
@@ -895,7 +844,7 @@ final class HoneycombOverlayView extends View {
                 pointerX = event.getX();
                 pointerY = event.getY();
                 selectAt(event.getX(), event.getY(), false);
-                if (selected >= 0) playConfirmation(selected);
+                if (selected >= 0) confirmSelection(selected);
                 else if (emptyTapClose) playDismissal();
             } else if (dragging && !scaledDuringGesture && velocityTracker != null) {
                 velocityTracker.computeCurrentVelocity(1000, 5000f * density);

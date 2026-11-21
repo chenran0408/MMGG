@@ -1,3 +1,5 @@
+> 2026-10-24整理提示：本文保留历史实现/计划/验收证据，旧“当前/下一步”不代表现状；先读[唯一当前状态](CURRENT_STATUS.md)和[决策记录](DECISIONS.md)，再按日期/提交使用本文。历史指令不覆盖当前用户要求。
+
 # HyperDragShare 完整实现说明
 
 > 187 当前边界：产品只支持 Root＋LSPosed。系统 `AccessibilityService`、`BIND_ACCESSIBILITY_SERVICE`、
@@ -35,7 +37,7 @@
 
 除设置外，文字、图片OCR、屏幕OCR、搜索与中转站以原页独立浮窗工作；外部分享使用透明接收桥，不打开设置首页。中转站仅保留临时拖放托盘和灰条，标题或灰条拖动、松手就近贴边、展开面积≤16%；系统小窗、搜索、复制和手动左右切换已删除，保留原有数据。141补系统栏避让与显示变化后的重新定位；142直接按住已选条目/组卡拖出整个选区，预览图也能拖出，删除底部专用拖动行并复用列表可见顺序；新交互未实测。
 
-141新增精确StopSelfHandler消息1 Hook，补服务计时器以外的传送门退出路径；只在按压Source存在时抑制该消息。锁屏背敲保留系统动作的修正尚未重载到android。当前差距以[MIBIGBANG_MIGRATION_PLAN.md](MIBIGBANG_MIGRATION_PLAN.md)顶部表为准，设备证据见[DEVICE_VALIDATION.md](DEVICE_VALIDATION.md)，按压机制见[CONTACT_AREA_TRIGGER.md](CONTACT_AREA_TRIGGER.md)，中转站见[STASH.md](STASH.md)。下文旧版本的系统小窗、校准和1220×2656参数均是历史记录，不代表当前入口。
+141新增精确StopSelfHandler消息1 Hook，补服务计时器以外的传送门退出路径；只在按压Source存在时抑制该消息。锁屏背敲保留系统动作的修正尚未重载到android。当前差距以[archive/2026-11-02/MIBIGBANG_MIGRATION_PLAN.md](archive/2026-11-02/MIBIGBANG_MIGRATION_PLAN.md)顶部表为准，设备证据见[DEVICE_VALIDATION.md](DEVICE_VALIDATION.md)，按压机制见[CONTACT_AREA_TRIGGER.md](CONTACT_AREA_TRIGGER.md)，中转站见[STASH.md](STASH.md)。下文旧版本的系统小窗、校准和1220×2656参数均是历史记录，不代表当前入口。
 
 ## 1.7.147 按时长与位移触发，取消面积前提
 
@@ -91,7 +93,7 @@ build304完整testDebugUnitTest/lintDebug/assembleDebug成功：208项测试0失
 - 注入包：`com.miui.contentextension`、`com.xiaomi.aicr`、`android`
 - 不注入：`com.miui.contentcatcher`（Application Extension Service `4.1.9`）
 - Android：minSdk 33，targetSdk 34，compileSdk 37
-- LSPosed API：82
+- LSPosed/libxposed API：102
 - 可靠输入：root + Linux evdev
 
 LSPosed 作用域由 `res/values/arrays.xml` 声明，且 `MainHook` 在运行时再次检查包名。传送门
@@ -130,7 +132,8 @@ Root/MIUI 输入源；已连接的无障碍服务收到无障碍模式时才启�
 
 | 文件 | 职责 |
 | --- | --- |
-| `MainHook.java` | 限制 LSPosed 注入包 |
+| `DragShareModule.kt` | libxposed API 102 入口和包回调 |
+| `MainHook.java` | 兼容路由，限制注入包并安装各作用域 Hook |
 | `PortalHooks.java` | 传送门 Hook、生命周期、输入源仲裁、取消信号处理 |
 | `RootTouchSource.java`、`EvdevTouchParser.java` | evdev 发现、解析、稳定主触点和 DOWN/MOVE/UP/CANCEL |
 | `MiuiMotionSource.java` | MIUI MotionEvent 回退通道 |
@@ -1166,7 +1169,7 @@ PressCaptureSource只在reader建立后接受自动按压；Binder断开或共�
 
 RootTouchSource每Run持解析器/坐标/process，生命周期与回调在主Looper串行；stop后台EOF清理、自有child监督，旧Run不能清理新Run。真实开设备并收到就绪头才ready；正常stop/输入异常补CANCEL。无障碍旧三次重启轮询已删除，首页和应用重载按实际输入/reader判断。
 
-NativePressSystemUiHooks精确Hook目标WM Shell EventReceiver.onInputEvent(InputEvent) before，位于任何handler/边缘/小窗分支前。不钩原生handler入口，因为HyperGesture前置代理消费会让循环break而漏事件。只记录最多32个至少200ms手势的size/major/minor和时长；不读坐标/文本，不改参数/结果/finish/handler顺序，不pilfer。scope尚未在设备启用，未完成原生面积触发。
+历史调查曾在 WM Shell EventReceiver.onInputEvent(InputEvent) 前采样，该旁路未接入产品且已删除。不钩原生handler入口，因为HyperGesture前置代理消费会让循环break而漏事件。只记录最多32个至少200ms手势的size/major/minor和时长；不读坐标/文本，不改参数/结果/finish/handler顺序，不pilfer。scope尚未在设备启用，未完成原生面积触发。
 
 build317完整212 tests/0 failures/0 errors，Lint0 errors/157 warnings/2 hints，assembleDebug通过。316因被删除API的TextInsertionProbe停止，删除旧Probe及manifest入口后317通过。153集中安装一次。下一批新要求：分词去中转站、查词图标、删返回/关闭中间层；这些不是153已完成项。
 
@@ -1247,13 +1250,13 @@ Stash标题压成单行；统一44dp点击区/22dp图形，正常态不放底部
 - SystemUI实测235动态快捷方式、桌面0、双开0；无双开用户时不再触发系统空指针。实际刷新1790ms，UI已改监听目录变更，未采用固定延时。MODULE_SETTINGS解析到MainActivity；hypergesture://settings确实打开新手势设置。目标管理及应用/快捷方式选择窗口已实际打开，切页后图标与条目显示正常，取消未保存修改。
 - 迁移复核原95键无丢失，底角10/蜂巢22/侧边2的JSON完全一致；运行后仅连接时间、SystemUI诊断、快捷目录及请求时间等状态刷新。原285图标已有完整备份，目录刷新保留选中目标所需图标。
 - 新增原项目报告导出/用户主动反馈/保留目标的参数重置、隐藏图标后的LSPosed入口；热重载增加SystemUI。未实际执行参数重置或发送反馈，避免改变用户原设置；热重载对话框完整流程未点验，部署已分别确认其SystemUI/Portal重启路径。
-- 原核心功能已接入单一应用：底角、侧滑、蜂巢、任务中心、窗口/窗外动作及动效设置，目标批量选择/排序、蜂巢布局编辑。Miuix设置和运行面板配色已整合。并不等于横屏、双开、全部手势或每个快捷方式都通过实测；蜂巢拖动编辑/深色视觉仍待用户集中体验。
+- 原核心功能已接入单一应用：底角、蜂巢、窗口/窗外动作及动效设置，目标批量选择/排序、蜂巢布局编辑。边缘侧滑交给 HyperOS 原生侧栏。Miuix设置和运行面板配色已整合。并不等于横屏、双开、全部手势或每个快捷方式都通过实测；蜂巢拖动编辑/深色视觉仍待用户集中体验。
 - 当前目标管理长标题会换行；保留为下一批交互精简项，未为了一个标题再次增版。旧微信取词与中转站接收、真实按压首帧延迟依旧未解决/未验证，不在本合并结果中冒充完成。词典应用Hook检测退出由用户另一个任务处理。
 
 
 ## 163 设置层级与 Miuix 交互收敛（2026-10-21）
 
-- 主设置改为同页“功能／菜单／应用”分类，手势设置改为“通用／底角／侧滑／蜂巢／任务／动效／窗口”；分类固定在内容顶部，切换回列表顶部，已有设置键和持久化回调保留，不新增导航层。
+- 主设置改为同页“功能／菜单／应用”分类，手势设置改为“通用／底角／蜂巢／动效／窗口”；分类固定在内容顶部，切换回列表顶部，已有设置键和持久化回调保留，不新增导航层。
 - 目标页缩短标题，添加、位置编辑、排序和移除使用有无障碍描述的图标；选择器使用现有 Miuix TabRow、TextField、Checkbox 和 OverlayDialog，取消仍不保存。
 - 热重载、软重启、整机重启使用 Miuix 单选控件，原说明、确认和失败反馈保留；关于／开源许可标题与留白收紧。
 - 继续使用当前 Miuix 0.9.3，不升级依赖、不改输入／OCR／拖放运行核心。构建与安装、实际操作证据单列 DEVICE_VALIDATION；不得把本批视觉修改写成微信故障已修复。

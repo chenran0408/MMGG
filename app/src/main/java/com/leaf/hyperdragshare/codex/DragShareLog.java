@@ -3,8 +3,12 @@ package com.leaf.hyperdragshare.codex;
 import android.content.ContentResolver;
 import android.content.Context;
 import android.net.Uri;
+import android.os.Build;
 import android.os.Process;
+import android.os.SystemClock;
 import android.util.Log;
+
+import com.leaf.hyperdragshare.codex.touchprobe.ExportFileNames;
 
 import java.io.ByteArrayOutputStream;
 import java.io.FileNotFoundException;
@@ -16,11 +20,13 @@ import java.text.SimpleDateFormat;
 import java.util.ArrayDeque;
 import java.util.Date;
 import java.util.Locale;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.Supplier;
 
 /** Logging boundary shared by the module process and the injected portal process. */
 final class DragShareLog {
@@ -31,9 +37,13 @@ final class DragShareLog {
     private static final String TAG = "DragShare/Log";
     private static final int MAX_FILE_BYTES = 4 * 1024 * 1024;
     private static final int MAX_PENDING_FILE_LINES = 1_024;
-    private static final long ROOT_COMMAND_TIMEOUT_MS = 8_000L;
+    private static final long ROOT_COMMAND_TIMEOUT_MS = 15_000L;
     private static final long STREAM_CLOSE_TIMEOUT_MS = 1_000L;
+    private static final String SESSION_ID =
+            Long.toHexString(System.currentTimeMillis()) + "-" + Process.myPid();
     private static final Object FILE_LOCK = new Object();
+    private static final ConcurrentHashMap<String, SampleState> SAMPLE_STATES =
+            new ConcurrentHashMap<>();
     private static final ArrayDeque<String> PENDING_FILE_LINES = new ArrayDeque<>();
     private static final ExecutorService FILE_EXECUTOR = Executors.newSingleThreadExecutor(runnable -> {
         Thread thread = new Thread(runnable, "drag-share-log-file");
@@ -53,6 +63,9 @@ final class DragShareLog {
     private static RootFileSink fileSink;
 
     private DragShareLog() {}
+
+    /** Identifies this logger/process lifetime; operation IDs are separate. */
+    static String processInstance() { return SESSION_ID; }
 
     static void configure(DragShareSettings settings) {
         if (settings == null) {
@@ -89,6 +102,31 @@ final class DragShareLog {
         emit(DragShareSettings.LOG_LEVEL_DEBUG, Log.DEBUG, tag, message, null);
     }
 
+    /** Emits at most one debug line per key/interval and reports how many were collapsed. */
+    static void dSampled(String tag, String sampleKey, long intervalMs, Supplier<String> message) {
+        if (!shouldEmit(DragShareSettings.LOG_LEVEL_DEBUG)) {
+            return;
+        }
+        String safeTag = tag == null || tag.trim().isEmpty() ? TAG : tag;
+        String key = safeTag + '\n' + (sampleKey == null ? "" : sampleKey);
+        SampleState state = SAMPLE_STATES.computeIfAbsent(key, unused -> new SampleState());
+        long now = SystemClock.elapsedRealtime();
+        synchronized (state) {
+            if (state.lastEmitMs >= 0L && now - state.lastEmitMs < intervalMs) {
+                state.suppressed++;
+                return;
+            }
+            int suppressed = state.suppressed;
+            state.suppressed = 0;
+            state.lastEmitMs = now;
+            String value = message == null ? "" : message.get();
+            if (suppressed > 0) {
+                value += " sampled_suppressed=" + suppressed;
+            }
+            emit(DragShareSettings.LOG_LEVEL_DEBUG, Log.DEBUG, safeTag, value, null);
+        }
+    }
+
     static void i(String tag, String message) {
         emit(DragShareSettings.LOG_LEVEL_INFO, Log.INFO, tag, message, null);
     }
@@ -110,9 +148,7 @@ final class DragShareLog {
     }
 
     static String exportFileName() {
-        return "HyperDragShare-" + new SimpleDateFormat(
-                "yyyyMMdd-HHmmss",
-                Locale.US).format(new Date()) + ".log";
+        return ExportFileNames.runtimeLog();
     }
 
     /** Copies the root-owned diagnostic file to a user-selected document URI. */
@@ -129,8 +165,14 @@ final class DragShareLog {
             process = new ProcessBuilder(
                     "su",
                     "-c",
-                    "if [ -r " + LOG_FILE_PATH + " ]; then cat " + LOG_FILE_PATH
-                            + "; else exit 3; fi")
+                    "found=0; "
+                            + "if [ -r " + LOG_BACKUP_FILE_PATH + " ]; then "
+                            + "echo '=== archived diagnostic log ==='; cat "
+                            + LOG_BACKUP_FILE_PATH + "; found=1; fi; "
+                            + "if [ -r " + LOG_FILE_PATH + " ]; then "
+                            + "echo '=== current diagnostic log ==='; cat "
+                            + LOG_FILE_PATH + "; found=1; fi; "
+                            + "[ $found -eq 1 ] || exit 3")
                     .redirectErrorStream(true)
                     .start();
             final java.lang.Process exportProcess = process;
@@ -302,8 +344,17 @@ final class DragShareLog {
             synchronized (FILE_LOCK) {
                 line = PENDING_FILE_LINES.pollFirst();
                 if (line == null) {
-                    fileDrainScheduled = false;
-                    return;
+                    int dropped = droppedFileLines;
+                    droppedFileLines = 0;
+                    if (dropped == 0) {
+                        fileDrainScheduled = false;
+                        return;
+                    }
+                    line = formatFileLine(
+                            Log.WARN,
+                            TAG,
+                            "diagnostic file queue recovered dropped_lines=" + dropped,
+                            null);
                 }
             }
             try {
@@ -329,8 +380,32 @@ final class DragShareLog {
             }
             fileSink = RootFileSink.open(rotateOnNextOpen);
             rotateOnNextOpen = false;
+            fileSink.append(formatFileLine(
+                    Log.INFO,
+                    TAG,
+                    "diagnostic file opened session=" + SESSION_ID
+                            + " build=" + BuildConfig.VERSION_NAME
+                            + "/" + BuildConfig.VERSION_CODE
+                            + " device=" + Build.MANUFACTURER + " " + Build.MODEL
+                            + " android=" + Build.VERSION.RELEASE
+                            + "/" + Build.VERSION.SDK_INT
+                            + " level=" + levelName(configuredLevel)
+                            + " destination=" + destinationName(configuredDestination)
+                            + " max_bytes=" + MAX_FILE_BYTES
+                            + " sampled_debug=true",
+                    null).getBytes(StandardCharsets.UTF_8));
         }
         fileSink.append(bytes);
+    }
+
+    private static String levelName(int level) {
+        if (level == DragShareSettings.LOG_LEVEL_DEBUG) return "debug";
+        if (level == DragShareSettings.LOG_LEVEL_INFO) return "info";
+        return "disabled";
+    }
+
+    private static String destinationName(int destination) {
+        return destination == DragShareSettings.LOG_DESTINATION_FILE ? "file" : "system";
     }
 
     private static void closeFileSink() {
@@ -386,10 +461,11 @@ final class DragShareLog {
         static RootFileSink open(boolean rotate) throws IOException {
             String command = "mkdir -p " + LOG_DIRECTORY
                     + " && chmod 700 " + LOG_DIRECTORY
-                    + (rotate
-                    ? " && if [ -f " + LOG_FILE_PATH + " ]; then mv -f "
+                    + " && size=$(stat -c %s " + LOG_FILE_PATH + " 2>/dev/null || echo 0)"
+                    + " && if [ -f " + LOG_FILE_PATH + " ] && { [ "
+                    + (rotate ? "1" : "0") + " -eq 1 ] || [ $size -ge "
+                    + MAX_FILE_BYTES + " ]; }; then mv -f "
                     + LOG_FILE_PATH + " " + LOG_BACKUP_FILE_PATH + "; fi"
-                    : "")
                     + " && touch " + LOG_FILE_PATH
                     + " && chmod 600 " + LOG_FILE_PATH
                     + " && exec sh -c 'cat >> " + LOG_FILE_PATH + "'";
@@ -412,5 +488,10 @@ final class DragShareLog {
             }
             process.destroy();
         }
+    }
+
+    private static final class SampleState {
+        long lastEmitMs = -1L;
+        int suppressed;
     }
 }

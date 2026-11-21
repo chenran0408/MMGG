@@ -1,4 +1,37 @@
+> 2026-10-24整理提示：本文保留历史实现/计划/验收证据，旧“当前/下一步”不代表现状；先读[唯一当前状态](CURRENT_STATUS.md)和[决策记录](DECISIONS.md)，再按日期/提交使用本文。历史指令不覆盖当前用户要求。
+
 # 目标设备验证记录
+
+## 2026-10-22：Beta 1.7.219-beta.2 撤下与图片问题复核
+
+- 曾以默认分支最新提交 `3520884` 为代码基线，加入 48dp 小图/启动器过滤后构建
+  Beta `1.7.219-beta.2/244`。APK 为 4,657,389 bytes，SHA256
+  `5A8731CCEA07412A7F245826387ED4BF7D2BE3A3AC7DDA94F8D0704B552F3EA5`；
+  `aapt2` 确认包名不变、仅 `arm64-v8a`，签名 SHA-256 仍为
+  `B86A4A1D5CA870EA986585714FD2E9D349A6679FC8D7E1E682E1594D7C2C89C0`。
+- 21:12:13 使用 `adb install -r -d` 原位覆盖成功。设备读回
+  `versionCode=244`、`versionName=1.7.219-beta.2`，`firstInstallTime` 仍为
+  2026-10-20 21:13:25，说明安装未清数据。
+- 用户指出尺寸准入不是根因修复且会破坏原有小图拖拽。该过滤及所有相关行为特判已撤回，
+  GitHub Pre-release、tag 与远端 beta 分支已删除；Beta.2 不作为发布候选保留。
+- 通知转储已定位原提示为 `android`/`AlertWindowNotification`，不是 MMGG 自己的
+  通知服务。设备 framework DEX 已确认目标类、`mPackageName`、`post()` 与
+  `onPostNotification()`；Beta 的 R8 mapping 也保留对应 Hook。
+- 日志显示 19:03 的用户反馈走了传送门图片路径，而不是 Root 取词：传送门先 stage
+  图片并抑制宿主浮窗，之后才出现 MMGG 的 `preview shown kind=IMAGE`。设备上的
+  Portal 5.1.5 同时支持 `imgUrl` 与 `viewBitmap` 两种图片来源，诊断构建将记录二者
+  类型而不记录 URL 或图片内容。
+- 21:20 与 21:23 两次安装诊断 Beta.3，最终读回 `versionCode=244`、
+  `versionName=1.7.219-beta.3`，`firstInstallTime` 保持 2026-10-20 21:13:25；
+  427 项测试、Lint、R8 和 arm64-only 打包通过。最终诊断 APK SHA256 为
+  `E3869E6708A15ECEBCEA48A470FE824DFEF363B644E3F2DEB751C75A6B5939B7`
+  （21:42:04 再次覆盖安装，加入多进程真实大小轮转检查）。
+- 安装时设备前台是用户的酷安页面，未切到桌面、未重载传送门，也未执行
+  `setprop ctl.restart zygote`。因此当前只确认安装、版本、签名、构建和静态接线；
+  两个图片反馈的真实命中链、应保留的原动作及通知栏消失均未声称真机通过。
+  关于页 QQ 群卡片已完成编译与 APK 字符串核验，但未在设备上点击复制或目视复看。
+  Root shell 的 `stat` + 条件轮转语法已在设备临时测试文件上验证通过；旧日志实测
+  6,838,759 bytes，证明原进程内计数不能单独约束共享文件。
 
 ## 2026-10-22：218 MiTrustService MRM 门禁 Hook
 
@@ -112,7 +145,7 @@
 
 184的 `testDebugUnitTest lintDebug assembleDebug assembleRelease` 全部通过。Release采用R8、arm64-v8a，签名与apksigner校验通过；APK `outputs/HyperDragShare-1.7.184-arm64-v8a.apk`，7,446,367 bytes，SHA256 `143A64D4A6A0EF26A4C181B5B78BCE68FD83EE247ABE67B7D132026FDD586BD7`。设备已覆盖安装184（versionCode 208，lastUpdateTime 2026-10-22 01:13:12），前台仍是微信会话。仅重载Portal/AICR后，Portal PID 13444日志显示 `portal hooks installed`、`portal runtime started`；Root helper PID 12729 `connection ready elapsed_ms=450`，按压 reader `ready elapsed_ms=465`。AICR将在下次识别绑定新代码，SystemUI未重载。设备中连续真实微信长按多次命中 `kind=ocr_region`，观察到至少6次 `WeChat OCR result delivered to existing panel`，证明识别结果走同一分词面板，不再经过图片暂存和中间识字窗。日志中Root语义查询43–58ms；首帧约889–1215ms，AICR调用耗时159–718ms。由press confirmed到direct start有约0.82–1.23s，主要耗时在OCR开始前的区域截图/交接阶段，尚未拆分到单个步骤；不能归因于AICR全部耗时。未读取聊天文字或采集微信截图。用户主观视觉准确度与速度反馈仍待。预期日志为 `WeChat OCR direct start`、`WeChat OCR finished elapsedMs=... characters=...` 和 `WeChat OCR result delivered to existing panel`，日志不含识别文本.
 
-继续工作前先阅读本文件与 MIBIGBANG_MIGRATION_PLAN.md。代码与设备现状优先于历史计划；未执行的行为不得标成通过。
+继续工作前先阅读本文件与 archive/2026-11-02/MIBIGBANG_MIGRATION_PLAN.md。代码与设备现状优先于历史计划；未执行的行为不得标成通过。
 
 ## 当前设备与安装
 
@@ -460,7 +493,7 @@ Root追加文字的确认页新增多行勾选，默认全选，可点击整行�
 
 ScreenOcrActivity注册息屏监听：移除待执行截图、取消AICR请求并finish；正在执行的截图/ML Kit仍由已有结束回调处理图片生命周期，不伪装同步取消。追加模式发送restore_panel=false的取消结果，Launcher作废该会话，避免解锁后恢复旧分词面板。销毁时注销监听，普通用户取消仍恢复原面板。
 
-新增NEXT_DEVICE_ACCEPTANCE.md，将下一次体验集中到原页文字/图片、Root追加、侧窗取用及菜单缺失方向。用户尚未恢复设备测试，本轮没有操作设备；息屏广播与真实引擎回调时序仍待验收。
+新增archive/2026-11-02/NEXT_DEVICE_ACCEPTANCE.md，将下一次体验集中到原页文字/图片、Root追加、侧窗取用及菜单缺失方向。用户尚未恢复设备测试，本轮没有操作设备；息屏广播与真实引擎回调时序仍待验收。
 1.7.97（121）：159项现有测试、Lint、assembleDebug通过，未增加测试基建；设备仍1.7.80。
 
 ### 2026-10-21 02:29–02:33：1.7.97 集中真机验收
@@ -1281,7 +1314,7 @@ build323的`testDebugUnitTest lintDebug assembleDebug`完整通过，228 tests/0
 - SystemUI实测235动态快捷方式、桌面0、双开0；无双开用户时不再触发系统空指针。实际刷新1790ms，UI已改监听目录变更，未采用固定延时。MODULE_SETTINGS解析到MainActivity；hypergesture://settings确实打开新手势设置。目标管理及应用/快捷方式选择窗口已实际打开，切页后图标与条目显示正常，取消未保存修改。
 - 迁移复核原95键无丢失，底角10/蜂巢22/侧边2的JSON完全一致；运行后仅连接时间、SystemUI诊断、快捷目录及请求时间等状态刷新。原285图标已有完整备份，目录刷新保留选中目标所需图标。
 - 新增原项目报告导出/用户主动反馈/保留目标的参数重置、隐藏图标后的LSPosed入口；热重载增加SystemUI。未实际执行参数重置或发送反馈，避免改变用户原设置；热重载对话框完整流程未点验，部署已分别确认其SystemUI/Portal重启路径。
-- 原核心功能已接入单一应用：底角、侧滑、蜂巢、任务中心、窗口/窗外动作及动效设置，目标批量选择/排序、蜂巢布局编辑。Miuix设置和运行面板配色已整合。并不等于横屏、双开、全部手势或每个快捷方式都通过实测；蜂巢拖动编辑/深色视觉仍待用户集中体验。
+- 原核心功能已接入单一应用：底角、蜂巢、窗口/窗外动作及动效设置，目标批量选择/排序、蜂巢布局编辑。边缘侧滑交给 HyperOS 原生侧栏。Miuix设置和运行面板配色已整合。并不等于横屏、双开、全部手势或每个快捷方式都通过实测；蜂巢拖动编辑/深色视觉仍待用户集中体验。
 - 当前目标管理长标题会换行；保留为下一批交互精简项，未为了一个标题再次增版。旧微信取词与中转站接收、真实按压首帧延迟依旧未解决/未验证，不在本合并结果中冒充完成。词典应用Hook检测退出由用户另一个任务处理。
 
 
@@ -1340,7 +1373,7 @@ build346：383测试通过，0失败/错误/跳过；Lint0错误179警告3提示
 
 已核对设备安装王者荣耀包名命中内置表，但未启动游戏、未实测游戏内阻断。设置首页已打开；检查期间页面转入菜单分类，停止点击避免抢占。新选择页真实添加/移除及暗色尚未验；持久化/Bundle/主开关/精确匹配有针对性自动测试。默认开关与用户原配置保持。
 
-新增后续任务已读取并记入NEXT_INTEGRATION_BATCH.md：底部导航区与Hyper手势让位、AI引擎复制直达复用、原生四区侧边栏候选合并。候选未合入；不得把旧165候选APK覆盖当前版。
+新增后续任务已读取并记入archive/2026-11-02/NEXT_INTEGRATION_BATCH.md：底部导航区与Hyper手势让位、AI引擎复制直达复用、原生四区侧边栏候选合并。候选未合入；不得把旧165候选APK覆盖当前版。
 
 
 ## 2026-10-21 170/194 蜂巢编辑与避让
@@ -1440,3 +1473,14 @@ build375共404项单测0失败/错误/跳过；修复Lint缩进后build376的lin
 - `testDebugUnitTest lintDebug assembleRelease` 成功：406 tests、0 failed/error/skipped；Lint 0 errors/188 warnings/2 hints；R8、资源压缩及 arm64-only 均确认。
 - 安装 `1.7.189/213`，设备 `base.apk` SHA256 与交付 APK 同为 `1DA13F528CB29188E75661988D04BDB9D7C557F730AB73C80B9AFD64461C9C29`。Portal PID 9040 已加载，Root input ready 218ms，press reader ready 531ms。
 - 未使用 ADB 注入代替真实按压。当前页面的真实物理拖拽和落点到目标应用尚未验收；测试没有保留含 WLAN 密码的截图，也未提交用户页面内容。
+
+## 2026-10-23 beta.12 验证边界
+
+最终版本254包已构建并验签，529逻辑/Robolectric测试通过，Lint0错误187警告2提示。Xiaomi 2410DPN6CC / Android17 / HyperOS4前期只做beta11生成文字面板和系统玻璃API元数据验证；最终beta12安装前ADB设备已断开。未安装或热重载254，未把历史版本253宿主自报视为254。没有新整机/软重启、没有清数据或发送消息。完整未验项目及恢复顺序见archive/2026-11-02/FEEDBACK_2026_10_23_BETA12.md和本轮外部TASK_CHECKLIST。
+
+### beta.12 安装已完成（2026-10-23）
+按用户“安装后由其测试”授权，同签覆盖253→254成功；设备APK哈希与交付完全一致，firstInstallTime保持。安装验证通过不等于功能验收；未执行应用热重载/整机重启，已提示用户从通用设置执行热重载。设备交互由用户，后续开发不自动换包。
+
+## beta14交付时的设备边界（2026-10-23）
+新包1.7.219-beta.14/256未安装；用户继续测试已安装beta12。此阶段没有抢占页面、注入触摸、换包、重载或重启；只读设备/安全中心PID及特定窗口元数据，采样中没有可用本次Sidebar生命周期记录。不能据此声称真实拖放或布局通过。
+用户报告beta12：微信首次分词有效，图片仍拖截图；N06拖不出/拖动露连接字；N04目前未误退；N07等待N06；音视频避让基本有效但仍误触；B04肉眼改善待具体比较；原分词布局未接受；GH01/GH02未找到未测试；H02未复现可标本轮完成。N09澄清为窗外点击开关，本批修runtime丢master。beta14的554测试及NATIVE View/Canvas是离线覆盖，真实设备待验，详见archive/2026-11-02/FEEDBACK_2026_10_23_BETA14.md。

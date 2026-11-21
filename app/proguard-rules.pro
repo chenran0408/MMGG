@@ -1,4 +1,6 @@
-# Xposed entry points are loaded by class name from assets/xposed_init.
+# libxposed API 102 entry point is loaded by class name from META-INF/xposed/java_init.list.
+-keep class com.leaf.hyperdragshare.codex.DragShareModule { *; }
+-keep class com.leaf.hyperdragshare.compat.xposed.** { *; }
 -keep class com.leaf.hyperdragshare.codex.MainHook { *; }
 -keep class com.leaf.hyperdragshare.codex.RootNodeCaptureMain {
     public static void main(java.lang.String[]);

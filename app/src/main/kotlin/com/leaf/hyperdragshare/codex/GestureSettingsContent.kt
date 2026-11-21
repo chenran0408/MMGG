@@ -1,50 +1,50 @@
 package com.leaf.hyperdragshare.codex
 
-import android.content.ActivityNotFoundException
 import android.content.Context
-import android.content.Intent
-import android.net.Uri
-import android.util.Log
+import android.content.ContextWrapper
+import android.content.res.Configuration
 import android.widget.Toast
-import androidx.activity.compose.rememberLauncherForActivityResult
-import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.MutableIntState
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import com.leaf.hyperdragshare.gestures.config.ConfigContract as C
 import com.leaf.hyperdragshare.gestures.config.ConfigStore
-import com.leaf.hyperdragshare.gestures.diagnostics.CompatibilityReport
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
 import top.yukonga.miuix.kmp.basic.ButtonDefaults
+import top.yukonga.miuix.kmp.basic.Text
 import top.yukonga.miuix.kmp.preference.ArrowPreference
 import top.yukonga.miuix.kmp.icon.MiuixIcons
 import top.yukonga.miuix.kmp.icon.extended.GridView
-import top.yukonga.miuix.kmp.icon.extended.Help
+import top.yukonga.miuix.kmp.icon.extended.Info
 import top.yukonga.miuix.kmp.icon.extended.Refresh
-import top.yukonga.miuix.kmp.icon.extended.Report
 import top.yukonga.miuix.kmp.overlay.OverlayDialog
 import top.yukonga.miuix.kmp.preference.OverlayDropdownPreference
 import top.yukonga.miuix.kmp.preference.SliderPreference
 import top.yukonga.miuix.kmp.preference.SwitchPreference
 import top.yukonga.miuix.kmp.basic.TextButton
-import java.io.IOException
-import java.nio.charset.StandardCharsets
+import top.yukonga.miuix.kmp.theme.MiuixTheme
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.LifecycleOwner
 import java.util.Locale
 
 /** Register Hyper gesture/freeform settings for the shared searchable settings catalog. */
@@ -52,11 +52,83 @@ import java.util.Locale
 internal fun gestureSettingEntries(
     context: Context,
     onManageTargets: (String) -> Unit,
+    previewPageActive: Boolean = false,
+    gesturesEnabled: Boolean = true,
 ): List<SettingEntry> {
     val store = remember(context) { ConfigStore(context) }
     val prefs = remember(store) { store.preferences() }
     val revision = remember(store) { mutableIntStateOf(0) }
     val localValues = remember(store) { mutableStateMapOf<String, Any>() }
+    val sliderPreviewValues = remember(store) { mutableStateMapOf<String, Float>() }
+    val previewOverlay = remember(context.applicationContext) {
+        BottomCornerPreviewOverlay(context.applicationContext)
+    }
+    var previewVisible by remember(previewOverlay) { mutableStateOf(false) }
+    val previewLifecycleOwner = remember(context) { findPreviewLifecycleOwner(context) }
+    DisposableEffect(previewOverlay, previewLifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_STOP) {
+                previewOverlay.stop()
+                previewVisible = false
+            }
+        }
+        previewLifecycleOwner?.lifecycle?.addObserver(observer)
+        onDispose {
+            previewLifecycleOwner?.lifecycle?.removeObserver(observer)
+            previewOverlay.stop()
+        }
+    }
+    DisposableEffect(previewOverlay, previewPageActive) {
+        if (!previewPageActive) {
+            previewOverlay.stop()
+            previewVisible = false
+        }
+        onDispose {
+            if (!previewPageActive) {
+                previewOverlay.stop()
+                previewVisible = false
+            }
+        }
+    }
+    val scheme = MiuixTheme.colorScheme
+    val landscape = LocalConfiguration.current.orientation == Configuration.ORIENTATION_LANDSCAPE
+    val bottomOrientationKey = if (landscape) C.KEY_BOTTOM_LANDSCAPE_ENABLED else C.KEY_BOTTOM_PORTRAIT_ENABLED
+    val bottomOrientationDefault = if (landscape) C.DEFAULT_BOTTOM_LANDSCAPE_ENABLED else C.DEFAULT_BOTTOM_PORTRAIT_ENABLED
+    fun previewData() = BottomCornerPreviewOverlay.PreviewData(
+        hotWidthPercent = (sliderPreviewValues[C.KEY_HOT_WIDTH_PERCENT]
+            ?: ((localValues[C.KEY_HOT_WIDTH_PERCENT] as? Int)
+                ?: prefs.getInt(C.KEY_HOT_WIDTH_PERCENT, C.DEFAULT_HOT_WIDTH_PERCENT)).toFloat()).toInt(),
+        hotHeightPercent = (sliderPreviewValues[C.KEY_HOT_HEIGHT_PERCENT]
+            ?: ((localValues[C.KEY_HOT_HEIGHT_PERCENT] as? Int)
+                ?: prefs.getInt(C.KEY_HOT_HEIGHT_PERCENT, C.DEFAULT_HOT_HEIGHT_PERCENT)).toFloat()).toInt(),
+        bottomGapDp = (sliderPreviewValues[C.KEY_HOT_BOTTOM_GAP_DP]
+            ?: ((localValues[C.KEY_HOT_BOTTOM_GAP_DP] as? Int)
+                ?: prefs.getInt(C.KEY_HOT_BOTTOM_GAP_DP, C.DEFAULT_HOT_BOTTOM_GAP_DP)).toFloat()).toInt(),
+        fanDistancePercent = (sliderPreviewValues[C.KEY_TRIGGER_PERCENT]
+            ?: ((localValues[C.KEY_TRIGGER_PERCENT] as? Int)
+                ?: prefs.getInt(C.KEY_TRIGGER_PERCENT, C.DEFAULT_TRIGGER_PERCENT)).toFloat()).toInt(),
+        leftCornerEnabled = ((localValues[C.KEY_BOTTOM_LEFT_ENABLED] as? Boolean)
+            ?: prefs.getBoolean(C.KEY_BOTTOM_LEFT_ENABLED, C.DEFAULT_BOTTOM_LEFT_ENABLED))
+            && ((localValues[bottomOrientationKey] as? Boolean)
+                ?: prefs.getBoolean(bottomOrientationKey, bottomOrientationDefault)),
+        rightCornerEnabled = ((localValues[C.KEY_BOTTOM_RIGHT_ENABLED] as? Boolean)
+            ?: prefs.getBoolean(C.KEY_BOTTOM_RIGHT_ENABLED, C.DEFAULT_BOTTOM_RIGHT_ENABLED))
+            && ((localValues[bottomOrientationKey] as? Boolean)
+                ?: prefs.getBoolean(bottomOrientationKey, bottomOrientationDefault)),
+        primaryColor = scheme.primary.toArgb(),
+        surfaceColor = scheme.surfaceContainer.toArgb(),
+        textColor = scheme.onSurface.toArgb(),
+        mutedColor = scheme.onSurfaceVariantSummary.toArgb(),
+    )
+    if (previewVisible) previewOverlay.update(previewData())
+    val startPreview: () -> Unit = {
+        if (previewPageActive && previewOverlay.show(previewData())) previewVisible = true
+        else Toast.makeText(context, "请先允许 MMGG 显示悬浮窗，再开始屏幕预览。", Toast.LENGTH_LONG).show()
+    }
+    val stopPreview: () -> Unit = {
+        previewOverlay.stop()
+        previewVisible = false
+    }
     val entries = mutableListOf<SettingEntry>()
     var currentModule = SettingModule.GESTURES
     var currentGroup = "总开关与通用"
@@ -87,6 +159,7 @@ internal fun gestureSettingEntries(
         if (currentModule == SettingModule.FREEFORM) {
             when (key) {
                 C.KEY_CUSTOM_WINDOW_BOUNDS_ENABLED, C.KEY_OUTSIDE_ENABLED -> Unit
+                C.KEY_MINI_MEDIA_AUTO_MUTE -> result += C.KEY_MINI_MEDIA_CONTROLS_ENABLED
                 C.KEY_CUSTOM_WINDOW_PORTRAIT_ENABLED,
                 C.KEY_CUSTOM_WINDOW_LANDSCAPE_ENABLED -> result += C.KEY_CUSTOM_WINDOW_BOUNDS_ENABLED
                 C.KEY_PORTRAIT_PROPORTIONAL_SIZE_ENABLED,
@@ -146,6 +219,7 @@ internal fun gestureSettingEntries(
                 C.KEY_CUSTOM_WINDOW_PORTRAIT_ENABLED -> "启用竖屏自定义尺寸"
                 C.KEY_CUSTOM_WINDOW_LANDSCAPE_ENABLED -> "启用横屏自定义尺寸"
                 C.KEY_OUTSIDE_ENABLED -> "启用窗外点击"
+                C.KEY_MINI_MEDIA_CONTROLS_ENABLED -> "迷你小窗媒体控件"
                 C.KEY_FAN_ANIMATIONS_ENABLED -> "启用扇形动效"
                 else -> key
             }
@@ -172,7 +246,8 @@ internal fun gestureSettingEntries(
         val required = dependencies(id)
         revision.intValue
         val registryEnabled = required.all {
-            (localValues[it] as? Boolean) ?: prefs.getBoolean(it, dependencyDefault(it))
+            if (it == C.KEY_ENABLED) gesturesEnabled
+            else (localValues[it] as? Boolean) ?: prefs.getBoolean(it, dependencyDefault(it))
         }
         entries += SettingEntry(
             id = id,
@@ -191,7 +266,7 @@ internal fun gestureSettingEntries(
 
     fun bool(title: String, summary: String, key: String, default: Boolean) {
         register(key, title, summary) { enabled ->
-            GestureBooleanPreference(store, prefs, localValues, revision, key, title, summary, default, enabled)
+            GestureBooleanPreference(context, store, prefs, localValues, revision, key, title, summary, default, enabled)
         }
     }
 
@@ -204,13 +279,14 @@ internal fun gestureSettingEntries(
         values: List<Int> = options.indices.toList(),
     ) {
         register(key, title, options.joinToString("、")) { enabled ->
-            GestureChooserPreference(store, prefs, localValues, key, title, options, default, booleanValue, values, enabled)
+            GestureChooserPreference(context, store, prefs, localValues, key, title, options, default, booleanValue, values, enabled)
         }
     }
 
     fun slider(title: String, key: String, min: Int, max: Int, suffix: String, speedMultiplier: Boolean = false) {
         register(key, title, if (speedMultiplier) "调整任务拖动速度" else "范围 $min–$max$suffix") { enabled ->
-            GestureSliderPreference(store, prefs, localValues, revision, key, title, min, max, suffix, speedMultiplier, enabled)
+            GestureSliderPreference(context, store, prefs, localValues, sliderPreviewValues,
+                revision, key, title, min, max, suffix, speedMultiplier, enabled)
         }
     }
 
@@ -223,17 +299,7 @@ internal fun gestureSettingEntries(
 
     fun addUtilityEntries() {
     currentModule = SettingModule.GENERAL
-    currentGroup = "公共工具"
-        val reportTitle = "导出兼容性报告"
-        val reportSummary = "生成设备与模块运行环境信息，不含已选应用"
-        entries += SettingEntry(
-            id = "gesture_compatibility_report", title = reportTitle,
-            module = currentModule, group = currentGroup,
-            summary = reportSummary,
-            keywords = "诊断 日志 报告 导出",
-            icon = MiuixIcons.Report,
-            content = { enabled -> GestureReportPreference(context, store, reportTitle, reportSummary, enabled) },
-        )
+    currentGroup = "工具与诊断"
         val resetTitle = "恢复手势与小窗参数"
         val resetSummary = "恢复手势和小窗参数；保留已选应用、排序与快捷方式"
         entries += SettingEntry(
@@ -244,23 +310,13 @@ internal fun gestureSettingEntries(
             icon = MiuixIcons.Refresh,
             content = { enabled -> GestureResetPreference(context, store, localValues, revision, resetTitle, resetSummary, enabled) },
         )
-        val feedbackTitle = "问题反馈"
-        val feedbackSummary = "打开 GitHub 新问题页面，附上报告供你检查"
-        entries += SettingEntry(
-            id = "gesture_feedback", title = feedbackTitle,
-            module = currentModule, group = currentGroup,
-            summary = feedbackSummary,
-            keywords = "帮助 兼容 故障 bug",
-            icon = MiuixIcons.Help,
-            content = { enabled -> GestureFeedbackPreference(context, store, feedbackTitle, feedbackSummary, enabled) },
-        )
     }
 
     currentModule = SettingModule.GESTURES
     currentGroup = "总开关与通用"
-    bool("启用手势", "总开关", C.KEY_ENABLED, C.DEFAULT_ENABLED)
     bool("触发震动", "手势成功触发时反馈", C.KEY_HAPTIC, C.DEFAULT_HAPTIC)
     bool("显示当前应用名称", "手势选择过程中显示应用名称", C.KEY_SHOW_SELECTED_APP_NAME, C.DEFAULT_SHOW_SELECTED_APP_NAME)
+    bool("更多应用增强面板", "使用网格、字母索引和颜色筛选。关闭后使用搜索列表。", C.KEY_MORE_APPS_ENHANCED, C.DEFAULT_MORE_APPS_ENHANCED)
     bool("强制圆形图标", "将目标图标裁切为圆形", C.KEY_FORCE_CIRCULAR_ICONS, C.DEFAULT_FORCE_CIRCULAR_ICONS)
     chooser("图标旋转形变", listOf("关闭", "轻微", "标准", "明显"), C.KEY_SELECTION_TRANSFORM_LEVEL, C.DEFAULT_SELECTION_TRANSFORM_LEVEL)
     currentGroup = "底角触发"
@@ -278,7 +334,17 @@ internal fun gestureSettingEntries(
     currentGroup = "底角触发"
     slider("触发区宽度", C.KEY_HOT_WIDTH_PERCENT, 5, 20, "%")
     slider("触发区高度", C.KEY_HOT_HEIGHT_PERCENT, 3, C.MAX_HOT_HEIGHT_PERCENT, "%")
+    slider("触发区距屏幕底边", C.KEY_HOT_BOTTOM_GAP_DP,
+        C.MIN_HOT_BOTTOM_GAP_DP, C.MAX_HOT_BOTTOM_GAP_DP, " dp")
     slider("一段扇形距离", C.KEY_TRIGGER_PERCENT, 6, 24, "%")
+    register("bottom_corner_preview", "触发范围预览", "实时查看底角触发范围与扇形距离", MiuixIcons.Info) { _ ->
+        BottomCornerTriggerPreview(
+            visible = previewVisible,
+            enabled = previewPageActive,
+            onStart = startPreview,
+            onStop = stopPreview,
+        )
+    }
     slider("蜂巢停顿时间", C.KEY_BOTTOM_HONEYCOMB_SETTLE_MS, C.MIN_BOTTOM_HONEYCOMB_SETTLE_MS, C.MAX_BOTTOM_HONEYCOMB_SETTLE_MS, " ms")
     slider("图标选择距离", C.KEY_SELECTION_RADIUS_PERCENT, C.MIN_SELECTION_RADIUS_PERCENT, C.MAX_SELECTION_RADIUS_PERCENT, "%")
     currentGroup = "高级设置"
@@ -287,7 +353,6 @@ internal fun gestureSettingEntries(
     chooser("扇形排列", listOf("智能排布", "自定义排数"), C.KEY_FAN_LAYOUT_MODE, C.DEFAULT_FAN_LAYOUT_MODE, values = listOf(C.FAN_LAYOUT_SMART, C.FAN_LAYOUT_CUSTOM))
     slider("内排数量", C.KEY_FAN_CUSTOM_INNER_COUNT, C.MIN_FAN_CUSTOM_ROW_COUNT, C.MAX_FAN_CUSTOM_INNER_COUNT, " 个")
     slider("中排数量", C.KEY_FAN_CUSTOM_MIDDLE_COUNT, C.MIN_FAN_CUSTOM_ROW_COUNT, C.MAX_FAN_CUSTOM_MIDDLE_COUNT, " 个")
-    slider("外排数量", C.KEY_FAN_CUSTOM_OUTER_COUNT, C.MIN_FAN_CUSTOM_ROW_COUNT, C.MAX_FAN_CUSTOM_OUTER_COUNT, " 个")
     currentGroup = "蜂巢布局"
     bool("启用蜂巢", "底角第二段使用", C.KEY_HONEYCOMB_ENABLED, C.DEFAULT_HONEYCOMB_ENABLED)
     bool("横屏蜂巢", "允许横屏打开蜂巢", C.KEY_HONEYCOMB_LANDSCAPE_ENABLED, C.DEFAULT_HONEYCOMB_LANDSCAPE_ENABLED)
@@ -324,6 +389,12 @@ internal fun gestureSettingEntries(
     slider("扇形应用选择放大", C.KEY_FAN_SELECTION_SCALE_PERCENT, C.MIN_FAN_SELECTION_SCALE_PERCENT, C.MAX_FAN_SELECTION_SCALE_PERCENT, "%")
     bool("扇形应用选择蓝色圈", "显示选中应用的圆圈反馈", C.KEY_FAN_SELECTION_RING, C.DEFAULT_FAN_SELECTION_RING)
     currentModule = SettingModule.FREEFORM
+    currentGroup = "系统小窗扩展"
+    bool("通知栏小窗启动", "将系统已有的通知栏小窗入口按小窗方式启动；默认关闭", C.KEY_NOTIFICATION_FREEFORM_ENABLED, C.DEFAULT_NOTIFICATION_FREEFORM_ENABLED)
+    bool("迷你小窗媒体控件", "在迷你小窗旁显示播放控制；默认关闭", C.KEY_MINI_MEDIA_CONTROLS_ENABLED, C.DEFAULT_MINI_MEDIA_CONTROLS_ENABLED)
+    bool("迷你小窗自动静音", "需要先启用媒体控件；默认关闭", C.KEY_MINI_MEDIA_AUTO_MUTE, C.DEFAULT_MINI_MEDIA_AUTO_MUTE)
+    bool("移除小窗黑名单", "允许系统黑名单中的应用使用小窗；谨慎开启", C.KEY_REMOVE_FREEFORM_BLACKLIST, C.DEFAULT_REMOVE_FREEFORM_BLACKLIST)
+    bool("放宽小窗数量限制", "移除系统的小窗数量上限；谨慎开启", C.KEY_REMOVE_FREEFORM_COUNT_LIMIT, C.DEFAULT_REMOVE_FREEFORM_COUNT_LIMIT)
     currentGroup = "启动行为"
     bool("启用自定义窗体尺寸", "控制竖屏与横屏小窗", C.KEY_CUSTOM_WINDOW_BOUNDS_ENABLED, C.DEFAULT_CUSTOM_WINDOW_BOUNDS_ENABLED)
     bool("竖屏自定义尺寸", "使用竖屏单独配置", C.KEY_CUSTOM_WINDOW_PORTRAIT_ENABLED, C.DEFAULT_CUSTOM_WINDOW_PORTRAIT_ENABLED)
@@ -347,6 +418,7 @@ internal fun gestureSettingEntries(
     bool("横屏窗外点击", "横屏时生效", C.KEY_OUTSIDE_LANDSCAPE_ENABLED, C.DEFAULT_OUTSIDE_LANDSCAPE_ENABLED)
     chooser("窗外单击", listOf("无操作", "关闭小窗", "挂起到右上角", "全屏", "小窗贴边"), C.KEY_OUTSIDE_SINGLE_ACTION, C.DEFAULT_OUTSIDE_SINGLE_ACTION)
     chooser("窗外双击", listOf("无操作", "关闭小窗", "挂起到右上角", "全屏", "小窗贴边"), C.KEY_OUTSIDE_DOUBLE_ACTION, C.DEFAULT_OUTSIDE_DOUBLE_ACTION)
+    chooser("窗外长按", listOf("无操作", "关闭小窗", "挂起到右上角", "全屏", "小窗贴边"), C.KEY_OUTSIDE_LONG_ACTION, C.DEFAULT_OUTSIDE_LONG_ACTION)
     slider("单双击判定时间", C.KEY_OUTSIDE_TAP_WINDOW_MS, C.MIN_OUTSIDE_TAP_WINDOW_MS, C.MAX_OUTSIDE_TAP_WINDOW_MS, " ms")
 
     currentModule = SettingModule.GESTURES
@@ -359,6 +431,7 @@ internal fun gestureSettingEntries(
 
 @Composable
 private fun GestureBooleanPreference(
+    context: Context,
     store: ConfigStore,
     prefs: android.content.SharedPreferences,
     localValues: MutableMap<String, Any>,
@@ -380,13 +453,14 @@ private fun GestureBooleanPreference(
         onCheckedChange = { value ->
             checked = value
             localValues[key] = value
-            store.putBoolean(key, value)
+            saveGestureBooleanSetting(context, store, key, value)
         },
     )
 }
 
 @Composable
 private fun GestureChooserPreference(
+    context: Context,
     store: ConfigStore,
     prefs: android.content.SharedPreferences,
     localValues: MutableMap<String, Any>,
@@ -411,10 +485,10 @@ private fun GestureChooserPreference(
             val value = values[index]
             if (booleanValue) {
                 localValues[key] = value != 0
-                store.putBoolean(key, value != 0)
+                saveGestureBooleanSetting(context, store, key, value != 0)
             } else {
                 localValues[key] = value
-                store.putInt(key, value)
+                saveGestureIntegerSetting(context, store, key, value)
             }
         },
     )
@@ -422,9 +496,11 @@ private fun GestureChooserPreference(
 
 @Composable
 private fun GestureSliderPreference(
+    context: Context,
     store: ConfigStore,
     prefs: android.content.SharedPreferences,
     localValues: MutableMap<String, Any>,
+    previewValues: MutableMap<String, Float>,
     revision: MutableIntState,
     key: String,
     title: String,
@@ -438,6 +514,9 @@ private fun GestureSliderPreference(
     var value by remember(key, currentRevision) {
         mutableFloatStateOf(((localValues[key] as? Int) ?: prefs.getInt(key, gestureSettingDefault(key, min))).coerceIn(min, max).toFloat())
     }
+    DisposableEffect(key, previewValues) {
+        onDispose { previewValues.remove(key) }
+    }
     SliderPreference(
         title = title,
         enabled = enabled,
@@ -446,12 +525,52 @@ private fun GestureSliderPreference(
             else "${value.toInt()}$suffix",
         valueRange = min.toFloat()..max.toFloat(),
         steps = (max - min - 1).coerceAtLeast(0),
-        onValueChange = { value = it },
+        onValueChange = {
+            value = it
+            previewValues[key] = it
+        },
         onValueChangeFinished = {
             localValues[key] = value.toInt()
-            store.putInt(key, value.toInt())
+            saveGestureIntegerSetting(context, store, key, value.toInt())
+            previewValues.remove(key)
         },
     )
+}
+
+@Composable
+private fun BottomCornerTriggerPreview(
+    visible: Boolean,
+    enabled: Boolean,
+    onStart: () -> Unit,
+    onStop: () -> Unit,
+) {
+    Column(
+        modifier = Modifier.fillMaxWidth().padding(end = 12.dp, top = 10.dp, bottom = 12.dp),
+        verticalArrangement = Arrangement.spacedBy(6.dp),
+    ) {
+        Text("屏幕实时预览", fontSize = 14.sp, color = MiuixTheme.colorScheme.onSurface)
+        Text(
+            "显示底角触发范围和菜单位置；叠加层不会拦截触摸，菜单仅作示意。",
+            fontSize = 12.sp,
+            color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
+        )
+        TextButton(
+            text = if (visible) "结束屏幕预览" else "开始屏幕预览",
+            modifier = Modifier.fillMaxWidth(),
+            colors = ButtonDefaults.textButtonColorsPrimary(),
+            enabled = enabled,
+            onClick = if (visible) onStop else onStart,
+        )
+    }
+}
+
+private fun findPreviewLifecycleOwner(context: Context): LifecycleOwner? {
+    var current: Context? = context
+    while (current != null) {
+        if (current is LifecycleOwner) return current
+        current = (current as? ContextWrapper)?.baseContext
+    }
+    return null
 }
 
 @Composable
@@ -462,37 +581,6 @@ private fun GestureActionPreference(
     onClick: () -> Unit,
 ) {
     ArrowPreference(title = title, summary = summary, enabled = enabled, onClick = onClick)
-}
-
-@Composable
-private fun GestureReportPreference(
-    context: Context,
-    store: ConfigStore,
-    title: String,
-    summary: String,
-    enabled: Boolean,
-) {
-    val scope = rememberCoroutineScope()
-    val launcher = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("text/plain")) { destination ->
-        if (destination != null) scope.launch {
-            val failure = withContext(Dispatchers.IO) {
-                try {
-                    val output = context.contentResolver.openOutputStream(destination, "w")
-                        ?: throw IOException("无法打开所选文件")
-                    output.bufferedWriter(StandardCharsets.UTF_8).use { it.write(CompatibilityReport.build(context, store)) }
-                    null
-                } catch (error: IOException) { error }
-                catch (error: SecurityException) { error }
-            }
-            Toast.makeText(context,
-                if (failure == null) "兼容性报告已导出" else "导出兼容性报告失败：${failure.message ?: failure.javaClass.simpleName}",
-                Toast.LENGTH_LONG).show()
-            if (failure != null) Log.w("HyperDragShare/GestureSettings", "Compatibility report export failed", failure)
-        }
-    }
-    GestureActionPreference(title, summary, enabled) {
-        launcher.launch(CompatibilityReport.FILE_NAME)
-    }
 }
 
 @Composable
@@ -522,36 +610,12 @@ private fun GestureResetPreference(
                 localValues.clear()
                 revision.intValue++
                 showConfirmation = false
-                Toast.makeText(context, "手势与小窗参数已恢复默认；目标和快捷方式未更改", Toast.LENGTH_SHORT).show()
+                Toast.makeText(
+                    context,
+                    "已恢复默认；系统界面（SystemUI）会在后续手势读取，无需重启。目标和快捷方式未更改。",
+                    Toast.LENGTH_SHORT,
+                ).show()
             })
-        }
-    }
-}
-
-@Composable
-private fun GestureFeedbackPreference(
-    context: Context,
-    store: ConfigStore,
-    title: String,
-    summary: String,
-    enabled: Boolean,
-) {
-    val scope = rememberCoroutineScope()
-    GestureActionPreference(title, summary, enabled) {
-        scope.launch {
-            try {
-                val report = withContext(Dispatchers.IO) { CompatibilityReport.build(context, store) }
-                val issueUri = Uri.parse("https://github.com/chenran0408/MMGG/issues/new")
-                    .buildUpon().appendQueryParameter("title", "Hyper 手势兼容性反馈")
-                    .appendQueryParameter("body", report).build()
-                context.startActivity(Intent(Intent.ACTION_VIEW, issueUri).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
-            } catch (error: ActivityNotFoundException) {
-                Log.w("HyperDragShare/GestureSettings", "No feedback handler", error)
-                Toast.makeText(context, "无法打开浏览器或 GitHub 客户端", Toast.LENGTH_LONG).show()
-            } catch (error: SecurityException) {
-                Log.w("HyperDragShare/GestureSettings", "Feedback access denied", error)
-                Toast.makeText(context, "打开问题反馈页面失败：${error.message ?: "系统拒绝启动"}", Toast.LENGTH_LONG).show()
-            }
         }
     }
 }
@@ -559,6 +623,7 @@ private fun GestureFeedbackPreference(
 private fun gestureSettingDefault(key: String, fallback: Int): Int = when (key) {
     C.KEY_HOT_WIDTH_PERCENT -> C.DEFAULT_HOT_WIDTH_PERCENT
     C.KEY_HOT_HEIGHT_PERCENT -> C.DEFAULT_HOT_HEIGHT_PERCENT
+    C.KEY_HOT_BOTTOM_GAP_DP -> C.DEFAULT_HOT_BOTTOM_GAP_DP
     C.KEY_TRIGGER_PERCENT -> C.DEFAULT_TRIGGER_PERCENT
     C.KEY_SELECTION_RADIUS_PERCENT -> C.DEFAULT_SELECTION_RADIUS_PERCENT
     C.KEY_BOTTOM_HONEYCOMB_SETTLE_MS -> C.DEFAULT_BOTTOM_HONEYCOMB_SETTLE_MS
@@ -566,14 +631,6 @@ private fun gestureSettingDefault(key: String, fallback: Int): Int = when (key) 
     C.KEY_FAN_MAX_TARGETS -> C.DEFAULT_FAN_MAX_TARGETS
     C.KEY_FAN_CUSTOM_INNER_COUNT -> C.DEFAULT_FAN_CUSTOM_INNER_COUNT
     C.KEY_FAN_CUSTOM_MIDDLE_COUNT -> C.DEFAULT_FAN_CUSTOM_MIDDLE_COUNT
-    C.KEY_FAN_CUSTOM_OUTER_COUNT -> C.DEFAULT_FAN_CUSTOM_OUTER_COUNT
-    C.KEY_SIDE_TOP_SAFE_MARGIN_PERCENT -> C.DEFAULT_SIDE_TOP_SAFE_MARGIN_PERCENT
-    C.KEY_SIDE_TRIGGER_PERCENT -> C.DEFAULT_SIDE_TRIGGER_PERCENT
-    C.KEY_SIDE_REVERSE_CANCEL_PERCENT -> C.DEFAULT_SIDE_REVERSE_CANCEL_PERCENT
-    C.KEY_SIDE_HOLD_DELAY_MS -> C.DEFAULT_SIDE_HOLD_DELAY_MS
-    C.KEY_SIDE_MAX_TARGETS -> C.DEFAULT_SIDE_MAX_TARGETS
-    C.KEY_SIDE_ICON_SIZE_DP -> C.DEFAULT_SIDE_ICON_SIZE_DP
-    C.KEY_SIDE_RING_SIZE_PERCENT -> C.DEFAULT_SIDE_RING_SIZE_PERCENT
     C.KEY_HONEYCOMB_FIXED_X_PERCENT -> C.DEFAULT_HONEYCOMB_FIXED_X_PERCENT
     C.KEY_HONEYCOMB_FIXED_Y_PERCENT -> C.DEFAULT_HONEYCOMB_FIXED_Y_PERCENT
     C.KEY_HONEYCOMB_MAX_TARGETS -> C.DEFAULT_HONEYCOMB_MAX_TARGETS
@@ -589,14 +646,6 @@ private fun gestureSettingDefault(key: String, fallback: Int): Int = when (key) 
     C.KEY_HONEYCOMB_CENTER_SCALE -> C.DEFAULT_HONEYCOMB_CENTER_SCALE
     C.KEY_HONEYCOMB_EDGE_SCALE -> C.DEFAULT_HONEYCOMB_EDGE_SCALE
     C.KEY_HONEYCOMB_SELECTION_SCALE -> C.DEFAULT_HONEYCOMB_SELECTION_SCALE
-    C.KEY_SIDE_TASK_MAX_COUNT -> C.DEFAULT_SIDE_TASK_MAX_COUNT
-    C.KEY_SIDE_TASK_CARD_WIDTH_DP -> C.DEFAULT_SIDE_TASK_CARD_WIDTH_DP
-    C.KEY_SIDE_TASK_CARD_HEIGHT_DP -> C.DEFAULT_SIDE_TASK_CARD_HEIGHT_DP
-    C.KEY_SIDE_TASK_CARD_CORNER_DP -> C.DEFAULT_SIDE_TASK_CARD_CORNER_DP
-    C.KEY_SIDE_TASK_ICON_SIZE_DP -> C.DEFAULT_SIDE_TASK_ICON_SIZE_DP
-    C.KEY_SIDE_TASK_ICON_GAP_DP -> C.DEFAULT_SIDE_TASK_ICON_GAP_DP
-    C.KEY_SIDE_TASK_FINGER_OFFSET_DP -> C.DEFAULT_SIDE_TASK_FINGER_OFFSET_DP
-    C.KEY_SIDE_TASK_SWIPE_SPEED_PERCENT -> C.DEFAULT_SIDE_TASK_SWIPE_SPEED_PERCENT
     C.KEY_WIDTH_PERCENT -> C.DEFAULT_WIDTH_PERCENT
     C.KEY_HEIGHT_PERCENT -> C.DEFAULT_HEIGHT_PERCENT
     C.KEY_POSITION_X -> C.DEFAULT_POSITION_X
@@ -609,12 +658,8 @@ private fun gestureSettingDefault(key: String, fallback: Int): Int = when (key) 
     C.KEY_LANDSCAPE_NATIVE_SCALE_PERCENT -> C.DEFAULT_NATIVE_WINDOW_SCALE_PERCENT
     C.KEY_OUTSIDE_TAP_WINDOW_MS -> C.DEFAULT_OUTSIDE_TAP_WINDOW_MS
     C.KEY_BOTTOM_ANIMATION_SPEED -> C.DEFAULT_BOTTOM_ANIMATION_SPEED
-    C.KEY_SIDE_ANIMATION_SPEED -> C.DEFAULT_SIDE_ANIMATION_SPEED
     C.KEY_FAN_REVEAL_AMOUNT -> C.DEFAULT_FAN_REVEAL_AMOUNT
-    C.KEY_SIDE_REVEAL_AMOUNT -> C.DEFAULT_SIDE_REVEAL_AMOUNT
     C.KEY_FAN_ROTATION_DEGREES -> C.DEFAULT_FAN_ROTATION_DEGREES
-    C.KEY_SIDE_ROTATION_DEGREES -> C.DEFAULT_SIDE_ROTATION_DEGREES
     C.KEY_FAN_SELECTION_SCALE_PERCENT -> C.DEFAULT_FAN_SELECTION_SCALE_PERCENT
-    C.KEY_SIDE_SELECTION_SCALE_PERCENT -> C.DEFAULT_SIDE_SELECTION_SCALE_PERCENT
     else -> fallback
 }

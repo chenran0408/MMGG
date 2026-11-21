@@ -7,18 +7,32 @@ import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 
 import android.graphics.Rect;
+import android.graphics.Bitmap;
+import android.app.UiAutomation;
+import android.os.Bundle;
+import android.os.Handler;
+import android.os.Looper;
 import android.view.accessibility.AccessibilityWindowInfo;
+import android.view.accessibility.AccessibilityNodeInfo;
 import java.util.ArrayList;
 import java.util.List;
+import org.json.JSONArray;
+import org.json.JSONObject;
 import org.junit.Test;
 import org.junit.runner.RunWith;
+import org.robolectric.annotation.Implementation;
+import org.robolectric.annotation.Implements;
+import org.robolectric.annotation.LooperMode;
 import org.robolectric.RobolectricTestRunner;
 import org.robolectric.annotation.Config;
 import org.robolectric.shadow.api.Shadow;
 import org.robolectric.shadows.ShadowAccessibilityWindowInfo;
+import org.robolectric.shadows.ShadowAccessibilityNodeInfo;
+import org.robolectric.shadows.ShadowUiAutomation;
 
 @RunWith(RobolectricTestRunner.class)
-@Config(manifest = Config.NONE)
+@Config(manifest = Config.NONE, shadows = RootImageSelectionTest.AutomationShadow.class)
+@LooperMode(LooperMode.Mode.PAUSED)
 public final class RootImageSelectionTest {
     private final AccessibilityNodeClassifier classifier = new AccessibilityNodeClassifier(1f, 1080, 2400);
 
@@ -30,11 +44,265 @@ public final class RootImageSelectionTest {
 
     @Test public void recordingDescriptionAndClickableParentAreBothRecognized() {
         AccessibilityNodeSnapshot control = node("android.view.ViewGroup", "reader")
-                .clickable(true).leaf(false).build();
+                .clickable(true).leaf(false).depth(0).build();
         AccessibilityNodeSnapshot label = node("android.widget.TextView", "reader")
-                .bounds(new Rect(20, 20, 200, 100)).contentDescription("Hold to talk").build();
+                .bounds(new Rect(20, 20, 200, 100)).contentDescription("Hold to talk")
+                .depth(1).build();
         assertTrue(RootNodeCaptureMain.holdControlAtPoint(List.of(control, label), 30, 30, "reader"));
         assertFalse(RootNodeCaptureMain.holdControlAtPoint(List.of(control, label), 250, 150, "reader"));
+    }
+
+    @Test public void holdNormalizationRetainsCaseWhitespaceAndNullSemantics() {
+        for (String prompt : List.of(" HOLD\tTO\nTALK ", "按\r住 说\t话")) {
+            AccessibilityNodeSnapshot button = node("android.widget.Button", "reader")
+                    .text(prompt).clickable(true).build();
+            assertTrue(RootNodeCaptureMain.holdControlAtPoint(List.of(button), 30, 30, "reader"));
+        }
+        AccessibilityNodeSnapshot description = node("android.widget.Button", "reader")
+                .text(null).contentDescription("PRESS AND HOLD TO SPEAK").clickable(true).build();
+        assertTrue(RootNodeCaptureMain.holdControlAtPoint(List.of(description), 30, 30, "reader"));
+        AccessibilityNodeSnapshot empty = node("android.widget.Button", "reader")
+                .text(null).contentDescription(null).clickable(true).build();
+        assertFalse(RootNodeCaptureMain.holdControlAtPoint(List.of(empty), 30, 30, "reader"));
+    }
+
+    @Test public void combinedVoicePromptOnEditableInputIsExcluded() {
+        AccessibilityNodeSnapshot input = node("android.widget.EditText", "reader")
+                .text("发消息或按住说话...").editable(true).build();
+        assertTrue(RootNodeCaptureMain.holdControlAtPoint(List.of(input), 30, 30, "reader"));
+    }
+
+    @Test public void voicePromptChildOfEditableInputIsExcluded() {
+        AccessibilityNodeSnapshot input = node("android.view.ViewGroup", "reader")
+                .editable(true).leaf(false).depth(0).build();
+        AccessibilityNodeSnapshot hint = node("android.widget.TextView", "reader")
+                .bounds(new Rect(20, 20, 200, 100)).text("发消息或按住说话...")
+                .depth(1).build();
+        assertTrue(RootNodeCaptureMain.holdControlAtPoint(List.of(input, hint), 30, 30, "reader"));
+    }
+
+    @Test public void compositeVoicePromptChildOfGenericInteractiveParentIsExcluded() {
+        AccessibilityNodeSnapshot input = node("android.view.ViewGroup", "reader")
+                .clickable(true).leaf(false).depth(0).build();
+        AccessibilityNodeSnapshot hint = node("android.widget.TextView", "reader")
+                .bounds(new Rect(20, 20, 200, 100)).text("发消息或按住说话...")
+                .depth(1).build();
+        assertTrue(RootNodeCaptureMain.holdControlAtPoint(List.of(input, hint), 30, 30, "reader"));
+
+        // A clickable prose node with the same words is still ordinary text.
+        AccessibilityNodeSnapshot prose = node("android.widget.TextView", "reader")
+                .text("按住语音说话可以开始录音，这是帮助说明。")
+                .clickable(true).build();
+        assertFalse(RootNodeCaptureMain.holdControlAtPoint(List.of(prose), 30, 30, "reader"));
+    }
+
+    @Test public void explicitVideoSpeedHoldLabelsRequireAnInteractiveControl() {
+        AccessibilityNodeSnapshot speedControl = node("android.widget.TextView", "reader")
+                .text("长按倍速播放").longClickable(true).build();
+        assertTrue(RootNodeCaptureMain.holdControlAtPoint(List.of(speedControl), 30, 30, "reader"));
+
+        AccessibilityNodeSnapshot label = node("android.widget.TextView", "reader")
+                .text("按住倍速").bounds(new Rect(20, 20, 200, 100)).depth(1).build();
+        AccessibilityNodeSnapshot parent = node("android.view.ViewGroup", "reader")
+                .clickable(true).leaf(false).depth(0).build();
+        assertTrue(RootNodeCaptureMain.holdControlAtPoint(List.of(parent, label), 30, 30, "reader"));
+
+        AccessibilityNodeSnapshot inert = node("android.widget.TextView", "reader")
+                .text("按住倍速").build();
+        assertFalse(RootNodeCaptureMain.holdControlAtPoint(List.of(inert), 30, 30, "reader"));
+    }
+
+    @Test public void compactVideoSpeedLabelsBlockOnlyTheirScopedInteractiveControl() {
+        for (String labelText : List.of("倍速", "2x", "2.0x", "2倍速", "长按快进2x")) {
+            AccessibilityNodeSnapshot label = node("android.widget.TextView", "reader")
+                    .bounds(new Rect(20, 20, 200, 100)).text(labelText).depth(1).build();
+            AccessibilityNodeSnapshot control = node("android.view.ViewGroup", "reader")
+                    .clickable(true).leaf(false).depth(0).build();
+            assertTrue(labelText, RootNodeCaptureMain.holdControlAtPoint(
+                    List.of(control, label), 30, 30, "reader"));
+        }
+
+        AccessibilityNodeSnapshot explanatoryText = node("android.widget.TextView", "reader")
+                .text("本段介绍视频可用2x倍速播放。普通正文仍可选取。")
+                .clickable(true).build();
+        AccessibilityNodeSnapshot oversizedParent = node("android.view.ViewGroup", "reader")
+                .bounds(new Rect(0, 0, 1080, 2400)).clickable(true).leaf(false).depth(0).build();
+        AccessibilityNodeSnapshot compactLabel = node("android.widget.TextView", "reader")
+                .bounds(new Rect(20, 20, 200, 100)).text("2x").depth(1).build();
+        AccessibilityNodeSnapshot foreignControl = node("android.widget.Button", "other")
+                .text("2x").clickable(true).build();
+        assertFalse(RootNodeCaptureMain.holdControlAtPoint(
+                List.of(explanatoryText), 30, 30, "reader"));
+        assertFalse(RootNodeCaptureMain.holdControlAtPoint(
+                List.of(oversizedParent, compactLabel), 30, 30, "reader"));
+        assertFalse(RootNodeCaptureMain.holdControlAtPoint(
+                List.of(foreignControl), 30, 30, "reader"));
+    }
+
+    @Test public void actionButtonsAndExactMenuActionsAreAvoidedButMessageTextIsNot() {
+        for (String action : List.of("复制", "回复", "转发", "评论", "收藏")) {
+            AccessibilityNodeSnapshot button = node("android.widget.Button", "reader")
+                    .text(action).clickable(true).build();
+            assertTrue(action, RootNodeCaptureMain.holdControlAtPoint(
+                    List.of(button), 30, 30, "reader"));
+
+            AccessibilityNodeSnapshot customMenuItem = node("android.widget.TextView", "reader")
+                    .text(action).clickable(true).build();
+            assertFalse("bare TextView must not be treated as a menu item: " + action,
+                    RootNodeCaptureMain.holdControlAtPoint(
+                    List.of(customMenuItem), 30, 30, "reader"));
+        }
+
+        AccessibilityNodeSnapshot menuItem = node(
+                "androidx.appcompat.view.menu.ListMenuItemView", "reader")
+                .clickable(true).leaf(false).depth(0).build();
+        AccessibilityNodeSnapshot menuLabel = node("android.widget.TextView", "reader")
+                .bounds(new Rect(20, 20, 200, 100)).text("转发").depth(1).build();
+        assertTrue(RootNodeCaptureMain.holdControlAtPoint(
+                List.of(menuItem, menuLabel), 30, 30, "reader"));
+
+        AccessibilityNodeSnapshot message = node("android.widget.TextView", "reader")
+                .text("这条评论提到可以转发，也可以回复，但这是正常消息正文。")
+                .longClickable(true).build();
+        AccessibilityNodeSnapshot nonInteractiveActionWord = node("android.widget.TextView", "reader")
+                .text("转发").build();
+        AccessibilityNodeSnapshot longClickableMessageWithActionWord = node("android.widget.TextView", "reader")
+                .text("转发").clickable(true).longClickable(true).build();
+        AccessibilityNodeSnapshot ordinaryButtonText = node("android.widget.TextView", "reader")
+                .text("这里是普通评论内容").clickable(true).build();
+        AccessibilityNodeSnapshot disabledAction = node("android.widget.Button", "reader")
+                .text("转发").clickable(true).enabled(false).build();
+        assertFalse(RootNodeCaptureMain.holdControlAtPoint(List.of(message), 30, 30, "reader"));
+        assertFalse(RootNodeCaptureMain.holdControlAtPoint(
+                List.of(nonInteractiveActionWord), 30, 30, "reader"));
+        assertFalse(RootNodeCaptureMain.holdControlAtPoint(
+                List.of(longClickableMessageWithActionWord), 30, 30, "reader"));
+        assertFalse(RootNodeCaptureMain.holdControlAtPoint(
+                List.of(ordinaryButtonText), 30, 30, "reader"));
+        assertFalse(RootNodeCaptureMain.holdControlAtPoint(
+                List.of(disabledAction), 30, 30, "reader"));
+
+        AccessibilityNodeSnapshot imageButton = node("android.widget.ImageButton", "reader")
+                .text(null).contentDescription("图片").clickable(true).build();
+        assertFalse(RootNodeCaptureMain.holdControlAtPoint(List.of(imageButton), 30, 30, "reader"));
+        assertNotNull(select(imageButton, List.of(), true, true));
+        AccessibilityNodeSnapshot forwardImageButton = node("android.widget.ImageButton", "reader")
+                .text(null).contentDescription("转发").clickable(true).build();
+        assertTrue(RootNodeCaptureMain.holdControlAtPoint(List.of(forwardImageButton), 30, 30, "reader"));
+    }
+
+    @Test public void actionButtonPressIsRejectedWhileLongPressingMessageTextStillCaptures() throws Exception {
+        AccessibilityNodeInfo forwardButton = pressRoot("android.widget.Button", "转发");
+        forwardButton.setClickable(true);
+        try {
+            JSONObject result = capturePress(forwardButton);
+            assertFalse(result.getBoolean("found"));
+            assertEquals("excluded_hold_control", result.getString("reason"));
+        } finally { recyclePressRoot(forwardButton); }
+
+        AccessibilityNodeInfo message = pressRoot("android.widget.TextView", "我会把这条内容转发给朋友。普通消息正文。");
+        message.setLongClickable(true);
+        try {
+            JSONObject result = capturePress(message);
+            assertTrue(result.getBoolean("found"));
+            assertEquals("text", result.getString("kind"));
+        } finally { recyclePressRoot(message); }
+    }
+
+    @Test public void disabledExplicitHoldControlsStillYieldAtPressEntry() throws Exception {
+        for (String prompt : List.of("长按倍速播放", "按住说话", "松开发送")) {
+            AccessibilityNodeInfo control = pressRoot("android.widget.Button", prompt);
+            control.setLongClickable(true);
+            control.setEnabled(false);
+            try {
+                JSONObject result = capturePress(control);
+                assertEquals(prompt, "excluded_hold_control", result.optString("reason"));
+                assertFalse(result.getBoolean("found"));
+            } finally { recyclePressRoot(control); }
+        }
+    }
+
+    @Test public void disabledParentAndLabelPreserveExplicitSpeedAvoidance() {
+        AccessibilityNodeSnapshot parent = node("android.view.ViewGroup", "reader")
+                .enabled(false).longClickable(true).leaf(false).depth(0).build();
+        AccessibilityNodeSnapshot label = node("android.widget.TextView", "reader")
+                .enabled(false).bounds(new Rect(20, 20, 200, 100))
+                .text("按住倍速").depth(1).build();
+        assertTrue(RootNodeCaptureMain.holdControlAtPoint(List.of(parent, label), 30, 30, "reader"));
+        assertFalse(RootNodeCaptureMain.holdControlAtPoint(List.of(parent, label), 250, 150, "reader"));
+    }
+
+    @Test public void speedPhraseInOrdinaryTextDoesNotBlockCaptureAndImagesStillSelect() {
+        AccessibilityNodeSnapshot paragraph = node("android.widget.TextView", "reader")
+                .text("这个视频可以长按倍速播放，普通介绍文字仍可读取。")
+                .clickable(true).build();
+        assertFalse(RootNodeCaptureMain.holdControlAtPoint(List.of(paragraph), 30, 30, "reader"));
+
+        AccessibilityNodeSnapshot image = node("android.widget.ImageView", "reader").build();
+        assertFalse(RootNodeCaptureMain.holdControlAtPoint(List.of(image), 30, 30, "reader"));
+        assertNotNull(select(image, List.of(), true, true));
+    }
+
+    @Test public void verifiedPressOcrImageNodeCropIsMarkedAsThumbnail() throws Exception {
+        Rect bounds = new Rect(40, 60, 180, 220);
+        Bitmap cropped = Bitmap.createBitmap(4, 5, Bitmap.Config.ARGB_8888);
+        Bundle captured = new Bundle();
+        captured.putParcelable("bitmap", cropped);
+        captured.putParcelable("bounds", bounds);
+        captured.putBoolean("image_cropped", true);
+        Bundle node = new Bundle();
+        node.putString("package", "com.tencent.mm");
+        node.putParcelable("bounds", bounds);
+        node.putBoolean("image", true);
+        node.putBoolean("press_ocr_region", false);
+        node.putInt("window_id", 4);
+
+        CapturedContent content = RootNodeCaptureClient.contentFromNode(
+                org.robolectric.RuntimeEnvironment.getApplication(), node,
+                (source, windowId, requested) -> new Rect(requested),
+                null,
+                (source, windowId, requested) -> captured);
+        try {
+            assertNotNull(content);
+            assertEquals(CapturedContent.ImageOrigin.NODE_CAPTURE, content.imageOrigin);
+            assertEquals(bounds, content.sourceBounds);
+            assertTrue(content.bitmapOwnedByDragShare);
+            assertFalse(cropped.isRecycled());
+        } finally {
+            if (content != null && content.bitmap != null && !content.bitmap.isRecycled()) {
+                content.bitmap.recycle();
+            }
+        }
+    }
+
+    @Test public void genericPressOcrCropRemainsOrdinaryScreenshot() throws Exception {
+        Rect bounds = new Rect(40, 60, 180, 220);
+        Bitmap cropped = Bitmap.createBitmap(4, 5, Bitmap.Config.ARGB_8888);
+        Bundle captured = new Bundle();
+        captured.putParcelable("bitmap", cropped);
+        captured.putParcelable("bounds", bounds);
+        captured.putBoolean("image_cropped", true);
+        Bundle node = new Bundle();
+        node.putString("package", "com.tencent.mm");
+        node.putParcelable("bounds", bounds);
+        node.putBoolean("image", true);
+        node.putBoolean("press_ocr_region", true);
+        node.putInt("window_id", 4);
+
+        CapturedContent content = RootNodeCaptureClient.contentFromNode(
+                org.robolectric.RuntimeEnvironment.getApplication(), node,
+                (source, windowId, requested) -> new Rect(requested),
+                (source, windowId, requested) -> captured,
+                null);
+        try {
+            assertNotNull(content);
+            assertEquals(CapturedContent.ImageOrigin.SCREEN_CAPTURE, content.imageOrigin);
+            assertTrue(content.pressOcrRegion);
+        } finally {
+            if (content != null && content.bitmap != null && !content.bitmap.isRecycled()) {
+                content.bitmap.recycle();
+            }
+        }
     }
 
     @Test public void ordinaryTextAndUnrelatedRecordingControlsRemainReadable() {
@@ -51,12 +319,125 @@ public final class RootImageSelectionTest {
         assertFalse(RootNodeCaptureMain.holdControlAtPoint(List.of(hidden), 30, 30, "reader"));
     }
 
+    @Test public void voiceInputPromptsCoverDifferentAppsWithoutBlockingProse() {
+        AccessibilityNodeSnapshot editablePrompt = node("android.widget.EditText", "reader")
+                .text("按住语音输入以提问").editable(true).build();
+        assertTrue(RootNodeCaptureMain.holdControlAtPoint(
+                List.of(editablePrompt), 30, 30, "reader"));
+
+        AccessibilityNodeSnapshot buttonPrompt = node("android.widget.Button", "reader")
+                .text("语音输入，按住说话").clickable(true).build();
+        assertTrue(RootNodeCaptureMain.holdControlAtPoint(
+                List.of(buttonPrompt), 30, 30, "reader"));
+
+        AccessibilityNodeSnapshot largeClickablePage = node("android.view.ViewGroup", "reader")
+                .bounds(new Rect(0, 0, 1080, 2400)).clickable(true).depth(0).build();
+        AccessibilityNodeSnapshot ordinaryLabel = node("android.widget.TextView", "reader")
+                .bounds(new Rect(20, 20, 200, 100)).text("按住说话").depth(1).build();
+        assertFalse(RootNodeCaptureMain.holdControlAtPoint(
+                List.of(largeClickablePage, ordinaryLabel), 30, 30, "reader"));
+    }
+
+    @Test public void adjustableRangeControlIsExcludedAtActualPressCaptureEntry() throws Exception {
+        AccessibilityNodeInfo range = pressRoot("android.view.View", null);
+        range.setRangeInfo(AccessibilityNodeInfo.RangeInfo.obtain(
+                AccessibilityNodeInfo.RangeInfo.RANGE_TYPE_FLOAT, 0f, 100f, 35f));
+        range.setScrollable(true);
+        try {
+            JSONObject result = capturePress(range);
+            assertFalse(result.getBoolean("found"));
+            assertEquals("excluded_hold_control", result.getString("reason"));
+        } finally { recyclePressRoot(range); }
+
+        AccessibilityNodeInfo progressAction = pressRoot("android.view.View", null);
+        progressAction.setRangeInfo(AccessibilityNodeInfo.RangeInfo.obtain(
+                AccessibilityNodeInfo.RangeInfo.RANGE_TYPE_FLOAT, 0f, 100f, 35f));
+        progressAction.addAction(AccessibilityNodeInfo.AccessibilityAction.ACTION_SET_PROGRESS);
+        try {
+            JSONObject result = capturePress(progressAction);
+            assertEquals("excluded_hold_control", result.getString("reason"));
+        } finally { recyclePressRoot(progressAction); }
+    }
+
+    @Test public void readOnlyProgressAndDisabledSliderDoNotBlockPressCapture() throws Exception {
+        AccessibilityNodeInfo readOnlyProgress = pressRoot("android.widget.ProgressBar", "播放进度 01:20");
+        readOnlyProgress.setRangeInfo(AccessibilityNodeInfo.RangeInfo.obtain(
+                AccessibilityNodeInfo.RangeInfo.RANGE_TYPE_FLOAT, 0f, 100f, 35f));
+        try {
+            JSONObject result = capturePress(readOnlyProgress);
+            assertTrue(result.getBoolean("found"));
+            assertEquals("text", result.getString("kind"));
+            assertFalse("read-only progress metadata is not hold-control avoidance",
+                    "excluded_hold_control".equals(result.optString("reason")));
+        } finally { recyclePressRoot(readOnlyProgress); }
+
+        AccessibilityNodeInfo disabledSlider = pressRoot("android.widget.SeekBar", null);
+        disabledSlider.setEnabled(false);
+        disabledSlider.setClickable(true);
+        disabledSlider.setRangeInfo(AccessibilityNodeInfo.RangeInfo.obtain(
+                AccessibilityNodeInfo.RangeInfo.RANGE_TYPE_FLOAT, 0f, 1f, .5f));
+        try {
+            JSONObject result = capturePress(disabledSlider);
+            assertFalse(result.getBoolean("found"));
+            assertFalse("disabled controls do not enter hold-control avoidance",
+                    "excluded_hold_control".equals(result.optString("reason")));
+        } finally { recyclePressRoot(disabledSlider); }
+    }
+
+    @Test public void standardInteractiveSeekBarAndExplicitCameraControlAreExcluded() throws Exception {
+        AccessibilityNodeInfo seekBar = pressRoot("android.widget.SeekBar", null);
+        seekBar.setClickable(true);
+        try {
+            JSONObject result = capturePress(seekBar);
+            assertEquals("excluded_hold_control", result.getString("reason"));
+        } finally { recyclePressRoot(seekBar); }
+
+        AccessibilityNodeInfo camera = pressRoot("android.widget.Button", "拍摄");
+        camera.setClickable(true);
+        try {
+            JSONObject result = capturePress(camera);
+            assertEquals("excluded_hold_control", result.getString("reason"));
+        } finally { recyclePressRoot(camera); }
+
+        AccessibilityNodeInfo disabledCamera = pressRoot("android.widget.Button", "拍摄");
+        disabledCamera.setClickable(true);
+        disabledCamera.setEnabled(false);
+        try {
+            JSONObject result = capturePress(disabledCamera);
+            assertTrue(result.getBoolean("found"));
+            assertEquals("text", result.getString("kind"));
+            assertFalse("disabled camera controls are not hold-control exclusions",
+                    "excluded_hold_control".equals(result.optString("reason")));
+        } finally { recyclePressRoot(disabledCamera); }
+
+        AccessibilityNodeInfo prose = pressRoot("android.widget.TextView", "这段视频拍摄了日落过程，仍是普通正文。");
+        prose.setClickable(true);
+        try {
+            JSONObject result = capturePress(prose);
+            assertTrue(result.getBoolean("found"));
+            assertEquals("text", result.getString("kind"));
+        } finally { recyclePressRoot(prose); }
+    }
+
     @Test public void imageRequiresEnabledTypeAndExplicitImageNode() {
         AccessibilityNodeSnapshot image = node("android.widget.ImageView", "reader").build();
         assertTrue(select(image, List.of(), true, true).isImage());
         assertNull(select(image, List.of(), true, false));
         assertNull(select(node("android.view.View", "reader").build(), List.of(), true, true));
         assertNull(select(node("android.widget.ImageView", "other").build(), List.of(), true, true));
+    }
+
+    @Test public void overlappingStickerImageWinsOverItsPlaceholderText() {
+        AccessibilityNodeSnapshot sticker = node("android.widget.ImageView", "reader")
+                .bounds(new Rect(20, 20, 220, 220)).build();
+        AccessibilityNodeSnapshot placeholder = node("android.widget.TextView", "reader")
+                .bounds(new Rect(20, 20, 220, 220)).text("表情").build();
+        AccessibilityCandidateSelector.Selection selection = RootNodeCaptureMain.selectContent(
+                new AccessibilityNodeClassifier(1f, 1000, 2000),
+                new java.util.ArrayList<>(List.of(sticker, placeholder)), List.of(),
+                100, 100, "reader", true, true);
+        assertNotNull(selection);
+        assertTrue(selection.isImage());
     }
 
     @Test public void overlappingPasswordExcludesWholeImageEvenWhenTouchIsOutsidePassword() {
@@ -144,5 +525,48 @@ public final class RootImageSelectionTest {
     private static AccessibilityNodeSnapshot.Builder node(String className, String packageName) {
         return new AccessibilityNodeSnapshot.Builder().bounds(new Rect(0, 0, 300, 200))
                 .className(className).packageName(packageName).visible(true).leaf(true).traversalOrder(1);
+    }
+
+    private static AccessibilityNodeInfo pressRoot(String className, String text) {
+        AccessibilityWindowInfo window = window(AccessibilityWindowInfo.TYPE_APPLICATION,
+                new Rect(0, 0, 1000, 2000));
+        AccessibilityNodeInfo root = AccessibilityNodeInfo.obtain();
+        root.setPackageName("reader");
+        root.setClassName(className);
+        root.setText(text);
+        root.setVisibleToUser(true);
+        root.setEnabled(true);
+        root.setBoundsInScreen(new Rect(0, 0, 300, 200));
+        Shadow.<ShadowAccessibilityNodeInfo>extract(root).setAccessibilityWindowInfo(window);
+        return root;
+    }
+
+    private static JSONObject capturePress(AccessibilityNodeInfo root) throws Exception {
+        UiAutomation automation = Shadow.newInstanceOf(UiAutomation.class);
+        AutomationShadow automationShadow = Shadow.extract(automation);
+        automationShadow.root = root;
+        JSONObject request = new JSONObject().put("x", 30).put("y", 30)
+                .put("density", 1).put("width", 1000).put("height", 2000)
+                .put("blocked", new JSONArray()).put("press_lookup", true)
+                .put("allow_text", true).put("allow_images", false);
+        return RootNodeCaptureMain.captureRequest(request, automation,
+                new Object(), new int[]{0}, new Handler(Looper.getMainLooper()));
+    }
+
+    private static void recyclePressRoot(AccessibilityNodeInfo root) {
+        AccessibilityWindowInfo window = root.getWindow();
+        root.recycle();
+        if (window != null) window.recycle();
+    }
+
+    @Implements(UiAutomation.class)
+    public static class AutomationShadow extends ShadowUiAutomation {
+        AccessibilityNodeInfo root;
+
+        @Implementation protected void clearCache() {}
+        @Implementation protected List<AccessibilityWindowInfo> getWindows() { return List.of(); }
+        @Implementation protected AccessibilityNodeInfo getRootInActiveWindow() {
+            return root == null ? null : AccessibilityNodeInfo.obtain(root);
+        }
     }
 }

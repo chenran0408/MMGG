@@ -28,6 +28,8 @@ import java.util.UUID;
 public final class ShareImageProvider extends ContentProvider {
     private static final String TAG = "DragShareProvider";
     private static final long MAX_FILE_BYTES = 32L * 1024L * 1024L;
+    static final String METHOD_CLASSIFY_SOURCE_APP = "classify_source_app";
+    static final String EXTRA_SOURCE_PACKAGE = "source_package";
 
     private File shareDirectory;
 
@@ -42,6 +44,9 @@ public final class ShareImageProvider extends ContentProvider {
 
     @Override
     public Bundle call(String method, String arg, Bundle extras) {
+        if (METHOD_CLASSIFY_SOURCE_APP.equals(method)) {
+            return classifySourceApp(extras);
+        }
         if (NativeSidebarState.REPORT.equals(method)) {
             enforcePackageCaller("com.miui.securitycenter", "native sidebar region report");
             try {
@@ -70,7 +75,7 @@ public final class ShareImageProvider extends ContentProvider {
             long identity = Binder.clearCallingIdentity();
             try {
                 return SharedRootNodeCapture.acquire(contextOrThrow(), extras.getBinder("owner"), uid,
-                        extras.getBoolean("manual"));
+                        extras.getBoolean("manual"), extras.getString("attempt_id"));
             } finally { Binder.restoreCallingIdentity(identity); }
         }
         if (ImageOcrOverlay.METHOD_RECOGNIZE.equals(method)) {
@@ -78,10 +83,14 @@ public final class ShareImageProvider extends ContentProvider {
             Uri uri = extras == null ? null : extras.getParcelable("image", Uri.class);
             if (uri == null) throw new IllegalArgumentException("缺少识别图片");
             resolveFile(uri);
+            String operation = OperationTrace.read(extras);
+            OperationTrace.event(operation, "image_ocr", "requested", uri);
             long identity = Binder.clearCallingIdentity();
             try {
                 Bundle result = new Bundle();
-                result.putBoolean("accepted", ImageOcrOverlay.startFromPress(contextOrThrow(), uri, extras.getLong("press_confirmed_at")));
+                boolean accepted = ImageOcrOverlay.startFromPress(contextOrThrow(), uri,
+                        extras.getLong("press_confirmed_at"), operation);
+                result.putBoolean("accepted", accepted);
                 return result;
             } finally {
                 Binder.restoreCallingIdentity(identity);
@@ -112,6 +121,7 @@ public final class ShareImageProvider extends ContentProvider {
         }
         if (BigBangOverlayLauncher.METHOD_OPEN.equals(method)) {
             enforcePortalCaller();
+            OperationTrace.event(OperationTrace.read(extras), "text_window", "provider_requested");
             long identity = Binder.clearCallingIdentity();
             try {
                 return BigBangOverlayLauncher.request(contextOrThrow(), extras);
@@ -123,10 +133,13 @@ public final class ShareImageProvider extends ContentProvider {
             enforcePortalCaller();
             return putInStash(extras);
         }
+
         if (ModuleActivation.METHOD_REPORT_INJECTED.equals(method)) {
             enforcePortalCaller();
             ModuleActivation.recordInjected(contextOrThrow(), extras);
-            return Bundle.EMPTY;
+            Bundle response = new Bundle();
+            response.putInt(ModuleActivation.EXTRA_MODULE_UID, Process.myUid());
+            return response;
         }
         if (DragShareSettings.METHOD_GET_SETTINGS.equals(method)) {
             enforcePortalCaller();
@@ -142,6 +155,9 @@ public final class ShareImageProvider extends ContentProvider {
             result.putBoolean(
                     IntegrationSettings.EXTRA_COPY_DIRECT_ENABLED,
                     IntegrationSettings.isCopyDirectEnabled(contextOrThrow()));
+            result.putBoolean(
+                    IntegrationSettings.EXTRA_AICR_GLOBAL_SIGNATURE_ACCESS_ENABLED,
+                    IntegrationSettings.isAicrGlobalSignatureAccessEnabled(contextOrThrow()));
             return result;
         }
         if (IntegrationSettings.METHOD_GET_TRUST_SERVICE_SETTINGS.equals(method)) {
@@ -188,6 +204,67 @@ public final class ShareImageProvider extends ContentProvider {
         return stageImage(extras);
     }
 
+    private Bundle classifySourceApp(Bundle extras) {
+        int callingUid = Binder.getCallingUid();
+        int providerUid = Process.myUid();
+        enforcePortalCaller();
+        if (!sameAndroidUser(callingUid, providerUid)) {
+            throw new SecurityException("Source app classification is limited to the caller's Android user");
+        }
+        String packageName = extras == null ? null : extras.getString(EXTRA_SOURCE_PACKAGE);
+        if (!isValidPackageName(packageName)) {
+            throw new IllegalArgumentException("Invalid source package name");
+        }
+
+        Bundle result = new Bundle();
+        long identity = Binder.clearCallingIdentity();
+        try {
+            android.content.pm.ApplicationInfo application = contextOrThrow().getPackageManager()
+                    .getApplicationInfo(packageName, 0);
+            result.putBoolean("known", true);
+            result.putInt("category", application.category);
+        } catch (PackageManager.NameNotFoundException | SecurityException error) {
+            // Return only an unknown result. Never expose an installed-app list or lookup details.
+            result.putBoolean("known", false);
+            result.putInt("category", android.content.pm.ApplicationInfo.CATEGORY_UNDEFINED);
+        } finally {
+            Binder.restoreCallingIdentity(identity);
+        }
+        return result;
+    }
+
+    static boolean isTrustedPortalCaller(int callingUid, int moduleUid, String[] packages) {
+        if (callingUid == moduleUid) return true;
+        if (packages == null) return false;
+        for (String packageName : packages) {
+            if (MainHook.TAPLUS_PACKAGE.equals(packageName)) return true;
+        }
+        return false;
+    }
+
+    static boolean sameAndroidUser(int firstUid, int secondUid) {
+        return androidUserId(firstUid) == androidUserId(secondUid);
+    }
+
+    private static int androidUserId(int uid) {
+        // Android allocates application UIDs in fixed 100,000-UID user ranges.
+        return uid / 100_000;
+    }
+
+    private static boolean isValidPackageName(String packageName) {
+        if (packageName == null || packageName.length() > 255 || packageName.trim().isEmpty()) return false;
+        String[] parts = packageName.split("\\.", -1);
+        if (parts.length < 2) return false;
+        for (String part : parts) {
+            if (part.isEmpty() || !Character.isJavaIdentifierStart(part.charAt(0))) return false;
+            for (int i = 1; i < part.length(); i++) {
+                char value = part.charAt(i);
+                if (!Character.isJavaIdentifierPart(value)) return false;
+            }
+        }
+        return true;
+    }
+
     private Bundle putInStash(Bundle extras) {
         if (extras == null) throw new IllegalArgumentException("Missing stash content");
         Uri image = extras.getParcelable(StashClient.EXTRA_IMAGE, Uri.class);
@@ -217,6 +294,29 @@ public final class ShareImageProvider extends ContentProvider {
     }
 
     private Bundle stageImage(Bundle extras) {
+        String operation = OperationTrace.read(extras);
+        OperationTrace.event(operation, "stage", "provider_started");
+        Bundle result;
+        try {
+            result = stageImageData(extras);
+        } catch (RuntimeException error) {
+            OperationTrace.event(operation, "stage", "provider_failed_" + error.getClass().getSimpleName());
+            throw error;
+        }
+        // Extracting an optional trace address is diagnostic only; never turn a stored image
+        // into a failed stage because the trace metadata is missing or malformed.
+        try {
+            String value = result.getString(ImageStagingClient.RESULT_URI);
+            if (value != null) {
+                OperationTrace.event(operation, "stage", "provider_completed", Uri.parse(value));
+            }
+        } catch (RuntimeException ignored) {
+            // The original result remains the successful business response.
+        }
+        return result;
+    }
+
+    private Bundle stageImageData(Bundle extras) {
         if (extras == null) {
             throw new IllegalArgumentException("Missing image data");
         }
@@ -228,7 +328,6 @@ public final class ShareImageProvider extends ContentProvider {
             throw new IllegalArgumentException("图片为空或超过32 MiB");
         }
 
-        SharedImageCleanupJob.cleanupBeforeImport(contextOrThrow());
         String token = UUID.randomUUID().toString();
         File temporary = new File(shareDirectory, token + ".tmp");
         long written;
@@ -310,6 +409,7 @@ public final class ShareImageProvider extends ContentProvider {
     @Override
     public ParcelFileDescriptor openFile(Uri uri, String mode) throws FileNotFoundException {
         if (!"r".equals(mode)) {
+            OperationTrace.imageAccess(uri, "rejected_mode", Binder.getCallingUid());
             throw new FileNotFoundException("Read-only provider");
         }
         try {
@@ -317,12 +417,16 @@ public final class ShareImageProvider extends ContentProvider {
             if (!file.isFile()) {
                 throw new FileNotFoundException("Staged image is missing");
             }
+            ParcelFileDescriptor descriptor = ParcelFileDescriptor.open(file, ParcelFileDescriptor.MODE_READ_ONLY);
+            OperationTrace.imageAccess(uri, "descriptor_opened", Binder.getCallingUid());
             DragShareLog.i(TAG, "open uid=" + Binder.getCallingUid()
                     + " bytes=" + file.length());
-            return ParcelFileDescriptor.open(file, ParcelFileDescriptor.MODE_READ_ONLY);
+            return descriptor;
         } catch (FileNotFoundException | RuntimeException error) {
+            String reason = error.getClass().getSimpleName();
+            OperationTrace.imageAccess(uri, "failed_" + reason, Binder.getCallingUid());
             DragShareLog.w(TAG, "open failed uid=" + Binder.getCallingUid()
-                    + " uri=" + describeUri(uri), error);
+                    + " reason=" + reason + " uri=" + describeUri(uri));
             throw error;
         }
     }
@@ -348,7 +452,8 @@ public final class ShareImageProvider extends ContentProvider {
             file = resolveFile(uri);
         } catch (RuntimeException error) {
             DragShareLog.w(TAG, "query failed uid=" + Binder.getCallingUid()
-                    + " uri=" + describeUri(uri), error);
+                    + " reason=" + error.getClass().getSimpleName()
+                    + " uri=" + describeUri(uri));
             throw error;
         }
         DragShareLog.d(TAG, "query uid=" + Binder.getCallingUid()
@@ -451,12 +556,8 @@ public final class ShareImageProvider extends ContentProvider {
         }
         PackageManager packageManager = contextOrThrow().getPackageManager();
         String[] packages = packageManager.getPackagesForUid(callingUid);
-        if (packages != null) {
-            for (String packageName : packages) {
-                if (MainHook.TAPLUS_PACKAGE.equals(packageName)) {
-                    return;
-                }
-            }
+        if (isTrustedPortalCaller(callingUid, Process.myUid(), packages)) {
+            return;
         }
         throw new SecurityException("Only Taplus can stage share images");
     }
@@ -526,12 +627,7 @@ public final class ShareImageProvider extends ContentProvider {
     }
 
     private static String describeUri(Uri uri) {
-        if (uri == null) {
-            return "null";
-        }
-        return uri.getScheme() + "://" + uri.getAuthority()
-                + "/" + (uri.getPathSegments().isEmpty()
-                ? "" : uri.getPathSegments().get(0)) + "/<redacted>";
+        return "asset:" + OperationTrace.asset(uri);
     }
 
     private File fileForToken(String token, String suffix) {

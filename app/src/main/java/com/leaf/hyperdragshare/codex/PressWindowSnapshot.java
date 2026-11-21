@@ -111,13 +111,6 @@ final class PressWindowSnapshot {
                 focused.frame, occlusions));
     }
 
-    static boolean isSupportedWeChatWindow(String packageName, String windowName) {
-        if (!"com.tencent.mm".equals(packageName) || windowName == null
-                || !windowName.startsWith("com.tencent.mm/")) return false;
-        String component = windowName.substring("com.tencent.mm/".length());
-        return component.startsWith(".") || component.startsWith("com.tencent.mm.");
-    }
-
     private static java.util.Map<String, WindowHandle> readVisibleHandles(String dump) {
         java.util.Map<String, WindowHandle> handles = new java.util.HashMap<>();
         int start = dump.indexOf(" visible windows: [");

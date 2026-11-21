@@ -94,9 +94,12 @@ public final class DragShareSettings {
     public static final boolean DEFAULT_CLOSE_MENU_WHEN_POINTER_LEAVES = true;
     public static final boolean DEFAULT_ACCESSIBILITY_LANDSCAPE_RECOGNITION_ENABLED = false;
     public static final int MIN_ACCESSIBILITY_LONG_PRESS_TIMEOUT_MILLIS = 250;
-    /** Uses the platform long-press delay until the user moves the setting slider. */
-    public static final int DEFAULT_ACCESSIBILITY_LONG_PRESS_TIMEOUT_MILLIS = 0;
-    public static final int MAX_ACCESSIBILITY_LONG_PRESS_TIMEOUT_MILLIS = 1200;
+    public static final int DEFAULT_ACCESSIBILITY_LONG_PRESS_TIMEOUT_MILLIS = 600;
+    public static final int MAX_ACCESSIBILITY_LONG_PRESS_TIMEOUT_MILLIS = 3000;
+    public static final int MIN_TWO_FINGER_LONG_PRESS_TIMEOUT_MILLIS = 250;
+    public static final int DEFAULT_TWO_FINGER_LONG_PRESS_TIMEOUT_MILLIS = 600;
+    public static final int MAX_TWO_FINGER_LONG_PRESS_TIMEOUT_MILLIS = 3000;
+    public static final boolean DEFAULT_DISABLE_SINGLE_FINGER_IN_LANDSCAPE = true;
     public static final int MIN_ACCESSIBILITY_RECOGNITION_SENSITIVITY_PERCENT = 50;
     public static final int DEFAULT_ACCESSIBILITY_RECOGNITION_SENSITIVITY_PERCENT = 100;
     public static final int MAX_ACCESSIBILITY_RECOGNITION_SENSITIVITY_PERCENT = 200;
@@ -144,10 +147,15 @@ public final class DragShareSettings {
             "accessibility_blacklisted_packages";
     private static final String KEY_ACCESSIBILITY_LONG_PRESS_TIMEOUT_MILLIS =
             "accessibility_long_press_timeout_millis";
+    private static final String KEY_TWO_FINGER_LONG_PRESS_TIMEOUT_MILLIS =
+            "two_finger_long_press_timeout_millis";
+    private static final String KEY_DISABLE_SINGLE_FINGER_IN_LANDSCAPE =
+            "disable_single_finger_in_landscape";
     private static final String KEY_ACCESSIBILITY_RECOGNITION_SENSITIVITY_PERCENT =
             "accessibility_recognition_sensitivity_percent";
     private static final String KEY_LOG_LEVEL = "log_level";
     private static final String KEY_LOG_DESTINATION = "log_destination";
+    private static final String KEY_FULL_DIAGNOSTICS = "full_diagnostics";
     private static final String KEY_PAUSE_AUTOMATIC_IN_GAMES = "pause_automatic_in_games";
 
     public final int colorMode;
@@ -171,6 +179,8 @@ public final class DragShareSettings {
     public final boolean accessibilityLandscapeRecognitionEnabled;
     public final Set<String> accessibilityBlacklistedPackages;
     public final int accessibilityLongPressTimeoutMillis;
+    public final int twoFingerLongPressTimeoutMillis;
+    public final boolean disableSingleFingerInLandscape;
     public final int accessibilityRecognitionSensitivityPercent;
     public final int logLevel;
     public final int logDestination;
@@ -638,6 +648,40 @@ public final class DragShareSettings {
             int logDestination,
             boolean pauseAutomaticInGames,
             Set<String> manualGamePackages) {
+        this(colorMode, uiStyle, edgeTriggerDp, scrollSpeedDpPerSecond, blockBackgroundScroll, textSharingEnabled, imageSharingEnabled, simpleMenuPosition, simpleMenuOpacityPercent, simpleMenuCornerRadiusDp, simpleMenuEdgeDistanceDp, iconOpacityPercent, closeMenuWhenPointerLeaves, hiddenTargetKeys, targetOrder, contentCaptureMode, accessibilityLandscapeRecognitionEnabled, accessibilityBlacklistedPackages, accessibilityLongPressTimeoutMillis, accessibilityRecognitionSensitivityPercent, modernBlurRadiusDp, modernGlassOpacityPercent, logLevel, logDestination, pauseAutomaticInGames, manualGamePackages,
+                DEFAULT_TWO_FINGER_LONG_PRESS_TIMEOUT_MILLIS,
+                DEFAULT_DISABLE_SINGLE_FINGER_IN_LANDSCAPE);
+    }
+
+    public DragShareSettings(
+            int colorMode,
+            int uiStyle,
+            int edgeTriggerDp,
+            int scrollSpeedDpPerSecond,
+            boolean blockBackgroundScroll,
+            boolean textSharingEnabled,
+            boolean imageSharingEnabled,
+            int simpleMenuPosition,
+            int simpleMenuOpacityPercent,
+            int simpleMenuCornerRadiusDp,
+            int simpleMenuEdgeDistanceDp,
+            int iconOpacityPercent,
+            boolean closeMenuWhenPointerLeaves,
+            Set<String> hiddenTargetKeys,
+            List<String> targetOrder,
+            int contentCaptureMode,
+            boolean accessibilityLandscapeRecognitionEnabled,
+            Set<String> accessibilityBlacklistedPackages,
+            int accessibilityLongPressTimeoutMillis,
+            int accessibilityRecognitionSensitivityPercent,
+            int modernBlurRadiusDp,
+            int modernGlassOpacityPercent,
+            int logLevel,
+            int logDestination,
+            boolean pauseAutomaticInGames,
+            Set<String> manualGamePackages,
+            int twoFingerLongPressTimeoutMillis,
+            boolean disableSingleFingerInLandscape) {
         this.colorMode = colorMode == COLOR_DARK || colorMode == COLOR_SYSTEM
                 ? colorMode : COLOR_LIGHT;
         this.contentCaptureMode = normalizeContentCaptureMode(contentCaptureMode);
@@ -699,6 +743,269 @@ public final class DragShareSettings {
         this.logDestination = normalizeLogDestination(logDestination);
         this.pauseAutomaticInGames = pauseAutomaticInGames;
         this.manualGamePackages = immutableKeys(manualGamePackages);
+        this.twoFingerLongPressTimeoutMillis = clamp(twoFingerLongPressTimeoutMillis,
+                MIN_TWO_FINGER_LONG_PRESS_TIMEOUT_MILLIS,
+                MAX_TWO_FINGER_LONG_PRESS_TIMEOUT_MILLIS);
+        this.disableSingleFingerInLandscape = disableSingleFingerInLandscape;
+    }
+
+    /** Starts a settings builder populated with the current defaults. */
+    public static Builder builder() {
+        return new Builder(defaults());
+    }
+
+    /** Copies this immutable settings value into a builder. */
+    public Builder toBuilder() {
+        return new Builder(this);
+    }
+
+    /**
+     * Mutable copy used to create one immutable {@link DragShareSettings} value.
+     * Collection setters take a snapshot immediately; validation remains in the
+     * existing full constructor invoked by {@link #build()}.
+     */
+    public static final class Builder {
+        private int colorMode;
+        private int contentCaptureMode;
+        private int uiStyle;
+        private int edgeTriggerDp;
+        private int scrollSpeedDpPerSecond;
+        private boolean blockBackgroundScroll;
+        private boolean textSharingEnabled;
+        private boolean imageSharingEnabled;
+        private int simpleMenuPosition;
+        private int simpleMenuOpacityPercent;
+        private int simpleMenuCornerRadiusDp;
+        private int simpleMenuEdgeDistanceDp;
+        private int iconOpacityPercent;
+        private int modernBlurRadiusDp;
+        private int modernGlassOpacityPercent;
+        private boolean closeMenuWhenPointerLeaves;
+        private Set<String> hiddenTargetKeys;
+        private List<String> targetOrder;
+        private boolean accessibilityLandscapeRecognitionEnabled;
+        private Set<String> accessibilityBlacklistedPackages;
+        private int accessibilityLongPressTimeoutMillis;
+        private int twoFingerLongPressTimeoutMillis;
+        private boolean disableSingleFingerInLandscape;
+        private int accessibilityRecognitionSensitivityPercent;
+        private int logLevel;
+        private int logDestination;
+        private boolean pauseAutomaticInGames;
+        private Set<String> manualGamePackages;
+
+        private Builder(DragShareSettings source) {
+            colorMode = source.colorMode;
+            contentCaptureMode = source.contentCaptureMode;
+            uiStyle = source.uiStyle;
+            edgeTriggerDp = source.edgeTriggerDp;
+            scrollSpeedDpPerSecond = source.scrollSpeedDpPerSecond;
+            blockBackgroundScroll = source.blockBackgroundScroll;
+            textSharingEnabled = source.textSharingEnabled;
+            imageSharingEnabled = source.imageSharingEnabled;
+            simpleMenuPosition = source.simpleMenuPosition;
+            simpleMenuOpacityPercent = source.simpleMenuOpacityPercent;
+            simpleMenuCornerRadiusDp = source.simpleMenuCornerRadiusDp;
+            simpleMenuEdgeDistanceDp = source.simpleMenuEdgeDistanceDp;
+            iconOpacityPercent = source.iconOpacityPercent;
+            modernBlurRadiusDp = source.modernBlurRadiusDp;
+            modernGlassOpacityPercent = source.modernGlassOpacityPercent;
+            closeMenuWhenPointerLeaves = source.closeMenuWhenPointerLeaves;
+            hiddenTargetKeys = copySet(source.hiddenTargetKeys);
+            targetOrder = copyList(source.targetOrder);
+            accessibilityLandscapeRecognitionEnabled =
+                    source.accessibilityLandscapeRecognitionEnabled;
+            accessibilityBlacklistedPackages = copySet(source.accessibilityBlacklistedPackages);
+            accessibilityLongPressTimeoutMillis = source.accessibilityLongPressTimeoutMillis;
+            twoFingerLongPressTimeoutMillis = source.twoFingerLongPressTimeoutMillis;
+            disableSingleFingerInLandscape = source.disableSingleFingerInLandscape;
+            accessibilityRecognitionSensitivityPercent =
+                    source.accessibilityRecognitionSensitivityPercent;
+            logLevel = source.logLevel;
+            logDestination = source.logDestination;
+            pauseAutomaticInGames = source.pauseAutomaticInGames;
+            manualGamePackages = copySet(source.manualGamePackages);
+        }
+
+        private static Set<String> copySet(Set<String> values) {
+            return values == null ? null : new LinkedHashSet<>(values);
+        }
+
+        private static List<String> copyList(List<String> values) {
+            return values == null ? null : new ArrayList<>(values);
+        }
+
+        public Builder setColorMode(int value) {
+            colorMode = value;
+            return this;
+        }
+
+        public Builder setContentCaptureMode(int value) {
+            contentCaptureMode = value;
+            return this;
+        }
+
+        public Builder setUiStyle(int value) {
+            uiStyle = value;
+            return this;
+        }
+
+        public Builder setEdgeTriggerDp(int value) {
+            edgeTriggerDp = value;
+            return this;
+        }
+
+        public Builder setScrollSpeedDpPerSecond(int value) {
+            scrollSpeedDpPerSecond = value;
+            return this;
+        }
+
+        public Builder setBlockBackgroundScroll(boolean value) {
+            blockBackgroundScroll = value;
+            return this;
+        }
+
+        public Builder setTextSharingEnabled(boolean value) {
+            textSharingEnabled = value;
+            return this;
+        }
+
+        public Builder setImageSharingEnabled(boolean value) {
+            imageSharingEnabled = value;
+            return this;
+        }
+
+        public Builder setSimpleMenuPosition(int value) {
+            simpleMenuPosition = value;
+            return this;
+        }
+
+        public Builder setSimpleMenuOpacityPercent(int value) {
+            simpleMenuOpacityPercent = value;
+            return this;
+        }
+
+        public Builder setSimpleMenuCornerRadiusDp(int value) {
+            simpleMenuCornerRadiusDp = value;
+            return this;
+        }
+
+        public Builder setSimpleMenuEdgeDistanceDp(int value) {
+            simpleMenuEdgeDistanceDp = value;
+            return this;
+        }
+
+        public Builder setIconOpacityPercent(int value) {
+            iconOpacityPercent = value;
+            return this;
+        }
+
+        public Builder setModernBlurRadiusDp(int value) {
+            modernBlurRadiusDp = value;
+            return this;
+        }
+
+        public Builder setModernGlassOpacityPercent(int value) {
+            modernGlassOpacityPercent = value;
+            return this;
+        }
+
+        public Builder setCloseMenuWhenPointerLeaves(boolean value) {
+            closeMenuWhenPointerLeaves = value;
+            return this;
+        }
+
+        public Builder setHiddenTargetKeys(Set<String> values) {
+            hiddenTargetKeys = copySet(values);
+            return this;
+        }
+
+        public Builder setTargetOrder(List<String> values) {
+            targetOrder = copyList(values);
+            return this;
+        }
+
+        public Builder setAccessibilityLandscapeRecognitionEnabled(boolean value) {
+            accessibilityLandscapeRecognitionEnabled = value;
+            return this;
+        }
+
+        public Builder setAccessibilityBlacklistedPackages(Set<String> values) {
+            accessibilityBlacklistedPackages = copySet(values);
+            return this;
+        }
+
+        public Builder setAccessibilityLongPressTimeoutMillis(int value) {
+            accessibilityLongPressTimeoutMillis = value;
+            return this;
+        }
+
+        public Builder setTwoFingerLongPressTimeoutMillis(int value) {
+            twoFingerLongPressTimeoutMillis = value;
+            return this;
+        }
+
+        public Builder setDisableSingleFingerInLandscape(boolean value) {
+            disableSingleFingerInLandscape = value;
+            return this;
+        }
+
+        public Builder setAccessibilityRecognitionSensitivityPercent(int value) {
+            accessibilityRecognitionSensitivityPercent = value;
+            return this;
+        }
+
+        public Builder setLogLevel(int value) {
+            logLevel = value;
+            return this;
+        }
+
+        public Builder setLogDestination(int value) {
+            logDestination = value;
+            return this;
+        }
+
+        public Builder setPauseAutomaticInGames(boolean value) {
+            pauseAutomaticInGames = value;
+            return this;
+        }
+
+        public Builder setManualGamePackages(Set<String> values) {
+            manualGamePackages = copySet(values);
+            return this;
+        }
+
+        public DragShareSettings build() {
+            return new DragShareSettings(
+                    colorMode,
+                    uiStyle,
+                    edgeTriggerDp,
+                    scrollSpeedDpPerSecond,
+                    blockBackgroundScroll,
+                    textSharingEnabled,
+                    imageSharingEnabled,
+                    simpleMenuPosition,
+                    simpleMenuOpacityPercent,
+                    simpleMenuCornerRadiusDp,
+                    simpleMenuEdgeDistanceDp,
+                    iconOpacityPercent,
+                    closeMenuWhenPointerLeaves,
+                    hiddenTargetKeys,
+                    targetOrder,
+                    contentCaptureMode,
+                    accessibilityLandscapeRecognitionEnabled,
+                    accessibilityBlacklistedPackages,
+                    accessibilityLongPressTimeoutMillis,
+                    accessibilityRecognitionSensitivityPercent,
+                    modernBlurRadiusDp,
+                    modernGlassOpacityPercent,
+                    logLevel,
+                    logDestination,
+                    pauseAutomaticInGames,
+                    manualGamePackages,
+                    twoFingerLongPressTimeoutMillis,
+                    disableSingleFingerInLandscape);
+        }
     }
 
     public static DragShareSettings defaults() {
@@ -728,6 +1035,15 @@ public final class DragShareSettings {
         SharedPreferences preferences = context.getSharedPreferences(
                 PREFS_NAME,
                 Context.MODE_PRIVATE);
+        int longPressTimeoutMillis = preferences.getInt(
+                KEY_ACCESSIBILITY_LONG_PRESS_TIMEOUT_MILLIS,
+                DEFAULT_ACCESSIBILITY_LONG_PRESS_TIMEOUT_MILLIS);
+        if (longPressTimeoutMillis == 0) {
+            longPressTimeoutMillis = DEFAULT_ACCESSIBILITY_LONG_PRESS_TIMEOUT_MILLIS;
+            preferences.edit()
+                    .putInt(KEY_ACCESSIBILITY_LONG_PRESS_TIMEOUT_MILLIS, longPressTimeoutMillis)
+                    .apply();
+        }
         Set<String> hiddenTargetKeys = migrateLegacyCopyTargetVisibility(
                 preferences.getStringSet(KEY_HIDDEN_TARGETS, Collections.emptySet()),
                 preferences.getBoolean(KEY_TEXT_COPY_ENABLED, true),
@@ -777,9 +1093,7 @@ public final class DragShareSettings {
                 preferences.getStringSet(
                         KEY_ACCESSIBILITY_BLACKLISTED_PACKAGES,
                         Collections.emptySet()),
-                preferences.getInt(
-                        KEY_ACCESSIBILITY_LONG_PRESS_TIMEOUT_MILLIS,
-                        DEFAULT_ACCESSIBILITY_LONG_PRESS_TIMEOUT_MILLIS),
+                longPressTimeoutMillis,
                 preferences.getInt(
                         KEY_ACCESSIBILITY_RECOGNITION_SENSITIVITY_PERCENT,
                         DEFAULT_ACCESSIBILITY_RECOGNITION_SENSITIVITY_PERCENT),
@@ -792,7 +1106,23 @@ public final class DragShareSettings {
                 preferences.getInt(KEY_LOG_LEVEL, DEFAULT_LOG_LEVEL),
                 preferences.getInt(KEY_LOG_DESTINATION, DEFAULT_LOG_DESTINATION),
                 preferences.getBoolean(KEY_PAUSE_AUTOMATIC_IN_GAMES, false),
-                preferences.getStringSet(KEY_MANUAL_GAME_PACKAGES, Collections.emptySet()));
+                preferences.getStringSet(KEY_MANUAL_GAME_PACKAGES, Collections.emptySet()),
+                preferences.getInt(KEY_TWO_FINGER_LONG_PRESS_TIMEOUT_MILLIS,
+                        DEFAULT_TWO_FINGER_LONG_PRESS_TIMEOUT_MILLIS),
+                preferences.getBoolean(KEY_DISABLE_SINGLE_FINGER_IN_LANDSCAPE,
+                        DEFAULT_DISABLE_SINGLE_FINGER_IN_LANDSCAPE));
+    }
+
+    /** Export-only switch; not part of the provider settings bundle or hooked processes. */
+    static boolean readFullDiagnostics(Context context) {
+        return context != null && context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+                .getBoolean(KEY_FULL_DIAGNOSTICS, false);
+    }
+
+    static void writeFullDiagnostics(Context context, boolean enabled) {
+        if (context == null) return;
+        context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).edit()
+                .putBoolean(KEY_FULL_DIAGNOSTICS, enabled).apply();
     }
 
     public void saveLocal(Context context) {
@@ -839,6 +1169,10 @@ public final class DragShareSettings {
                 .putInt(KEY_LOG_DESTINATION, logDestination)
                 .putBoolean(KEY_PAUSE_AUTOMATIC_IN_GAMES, pauseAutomaticInGames)
                 .putStringSet(KEY_MANUAL_GAME_PACKAGES, new LinkedHashSet<>(manualGamePackages))
+                .putInt(KEY_TWO_FINGER_LONG_PRESS_TIMEOUT_MILLIS,
+                        twoFingerLongPressTimeoutMillis)
+                .putBoolean(KEY_DISABLE_SINGLE_FINGER_IN_LANDSCAPE,
+                        disableSingleFingerInLandscape)
                 .apply();
         DragShareLog.configure(this);
         DragShareLog.i("DragShare/Settings", "logging configured level=" + logLevel
@@ -907,6 +1241,10 @@ public final class DragShareSettings {
         result.putInt(KEY_LOG_DESTINATION, logDestination);
         result.putBoolean(KEY_PAUSE_AUTOMATIC_IN_GAMES, pauseAutomaticInGames);
         result.putStringArrayList(KEY_MANUAL_GAME_PACKAGES, new ArrayList<>(manualGamePackages));
+        result.putInt(KEY_TWO_FINGER_LONG_PRESS_TIMEOUT_MILLIS,
+                twoFingerLongPressTimeoutMillis);
+        result.putBoolean(KEY_DISABLE_SINGLE_FINGER_IN_LANDSCAPE,
+                disableSingleFingerInLandscape);
         return result;
     }
 
@@ -986,7 +1324,11 @@ public final class DragShareSettings {
                 bundle.getBoolean(KEY_PAUSE_AUTOMATIC_IN_GAMES, false),
                 bundle.containsKey(KEY_MANUAL_GAME_PACKAGES)
                         ? new LinkedHashSet<>(bundle.getStringArrayList(KEY_MANUAL_GAME_PACKAGES))
-                        : Collections.emptySet());
+                        : Collections.emptySet(),
+                bundle.getInt(KEY_TWO_FINGER_LONG_PRESS_TIMEOUT_MILLIS,
+                        DEFAULT_TWO_FINGER_LONG_PRESS_TIMEOUT_MILLIS),
+                bundle.getBoolean(KEY_DISABLE_SINGLE_FINGER_IN_LANDSCAPE,
+                        DEFAULT_DISABLE_SINGLE_FINGER_IN_LANDSCAPE));
     }
 
     public boolean isDarkTheme(Context context) {
@@ -1023,20 +1365,12 @@ public final class DragShareSettings {
                 || orientation != Configuration.ORIENTATION_LANDSCAPE;
     }
 
-    public int resolveAccessibilityLongPressTimeoutMillis(int systemTimeoutMillis) {
-        if (accessibilityLongPressTimeoutMillis
-                != DEFAULT_ACCESSIBILITY_LONG_PRESS_TIMEOUT_MILLIS) {
-            return accessibilityLongPressTimeoutMillis;
-        }
-        return clamp(
-                systemTimeoutMillis,
-                MIN_ACCESSIBILITY_LONG_PRESS_TIMEOUT_MILLIS,
-                MAX_ACCESSIBILITY_LONG_PRESS_TIMEOUT_MILLIS);
+    public int resolvePressConfirmationTimeoutMillis() {
+        return accessibilityLongPressTimeoutMillis;
     }
 
-    public int resolvePressConfirmationTimeoutMillis() {
-        return accessibilityLongPressTimeoutMillis == DEFAULT_ACCESSIBILITY_LONG_PRESS_TIMEOUT_MILLIS
-                ? 300 : accessibilityLongPressTimeoutMillis;
+    public int resolveTwoFingerPressConfirmationTimeoutMillis() {
+        return twoFingerLongPressTimeoutMillis;
     }
 
     public float accessibilityTouchSlopMultiplier() {
@@ -1134,7 +1468,9 @@ public final class DragShareSettings {
     }
 
     private static int normalizeSimpleMenuPosition(int position) {
-        return SIMPLE_MENU_POSITION_DRAG_EDGE;
+        return position >= SIMPLE_MENU_POSITION_TOP && position <= SIMPLE_MENU_POSITION_DRAG_EDGE
+                ? position
+                : DEFAULT_SIMPLE_MENU_POSITION;
     }
 
     private static int normalizeContentCaptureMode(int mode) {
@@ -1144,9 +1480,8 @@ public final class DragShareSettings {
     }
 
     private static int normalizeAccessibilityLongPressTimeout(int timeoutMillis) {
-        if (timeoutMillis == DEFAULT_ACCESSIBILITY_LONG_PRESS_TIMEOUT_MILLIS) {
-            return timeoutMillis;
-        }
+        // Older builds persisted 0 as a "follow system" sentinel.
+        if (timeoutMillis == 0) return DEFAULT_ACCESSIBILITY_LONG_PRESS_TIMEOUT_MILLIS;
         return clamp(
                 timeoutMillis,
                 MIN_ACCESSIBILITY_LONG_PRESS_TIMEOUT_MILLIS,

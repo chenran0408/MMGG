@@ -1,5 +1,7 @@
 package com.leaf.hyperdragshare.gestures.xposed;
 
+import com.leaf.hyperdragshare.codex.HookFeatureFlags;
+
 import android.app.ActivityManager;
 import android.app.ActivityOptions;
 import android.content.ComponentName;
@@ -16,9 +18,9 @@ import android.view.Surface;
 import android.view.WindowInsets;
 import android.view.WindowManager;
 import android.view.WindowMetrics;
+import android.view.SurfaceControl;
 
 import com.leaf.hyperdragshare.gestures.config.ConfigContract;
-import com.leaf.hyperdragshare.gestures.config.WindowSizePolicy;
 
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -27,7 +29,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.concurrent.Executor;
 
-import de.robv.android.xposed.XposedHelpers;
+import com.leaf.hyperdragshare.compat.xposed.XposedHelpers;
 
 final class HyperOsFreeformBridge {
     static final class ImeState {
@@ -51,8 +53,10 @@ final class HyperOsFreeformBridge {
     private final Context context;
     private final ClassLoader classLoader;
     private final Handler mainHandler;
+    private final FullscreenLaunchAfterClose fullscreenLaunchAfterClose;
     private final Object taskLock = new Object();
     private final FreeformTaskRegistry tasks = new FreeformTaskRegistry();
+    private final FreeformStormGuard stormGuard = FreeformStormGuard.processWide;
     private final LinkedHashSet<Integer> visibleFreeformTaskIds = new LinkedHashSet<>();
     private final LinkedHashSet<Integer> normalFreeformTaskIds = new LinkedHashSet<>();
     private final LinkedHashSet<Integer> edgePinnedTaskIds = new LinkedHashSet<>();
@@ -65,6 +69,8 @@ final class HyperOsFreeformBridge {
     private volatile String pendingPackage;
     private volatile int pendingUserId;
     private volatile long pendingSince;
+    private volatile long pendingLaunchGeneration;
+    private volatile long pendingEvidenceGeneration;
     private volatile Rect pendingLaunchVisualBounds;
     private volatile Rect pendingNativeLaunchBounds;
     private volatile long launchInputProtectionUntil;
@@ -88,21 +94,16 @@ final class HyperOsFreeformBridge {
     private volatile int lastShortcutPreparedTaskId = -1;
     private volatile long lastShortcutPreparedAt;
     private volatile GestureConfig latestConfig = GestureConfig.defaults();
-    private volatile RuntimeTarget queuedLaunchTarget;
-    private volatile GestureConfig queuedLaunchConfig;
-    private volatile Runnable queuedLaunchArmedCallback;
-    private volatile int queuedAfterSuspendTaskId = -1;
-    private volatile long queuedLaunchGeneration;
-    private volatile String queuedExternalPackage;
-    private volatile Intent queuedExternalIntent;
-    private volatile GestureConfig queuedExternalConfig;
-    private volatile Runnable queuedExternalCallback;
-    private int queuedLaunchRetries;
+    private final QueuedLaunchQueue queuedLaunchQueue = new QueuedLaunchQueue();
+    private final FreeformLaunchEvidencePolicy launchEvidencePolicy =
+            new FreeformLaunchEvidencePolicy();
+    private volatile long queuedEvidenceGeneration;
 
     HyperOsFreeformBridge(Context context, ClassLoader classLoader, Handler mainHandler) {
         this.context = context;
         this.classLoader = classLoader;
         this.mainHandler = mainHandler;
+        fullscreenLaunchAfterClose = new FullscreenLaunchAfterClose(mainHandler);
     }
 
     void setController(Object controller) {
@@ -121,7 +122,8 @@ final class HyperOsFreeformBridge {
     }
 
     boolean launch(RuntimeTarget target, GestureConfig config, Runnable onLaunchArmed) {
-        if (queueLaunchAfterSuspendingCurrent(target, config, onLaunchArmed)) return true;
+        if (HookFeatureFlags.startup().freeform()
+                && queueLaunchAfterSuspendingCurrent(target, config, onLaunchArmed)) return true;
         return launchNow(target, config, onLaunchArmed);
     }
 
@@ -145,14 +147,11 @@ final class HyperOsFreeformBridge {
         }
         long generation;
         synchronized (taskLock) {
-            queuedLaunchTarget = null;
-            queuedExternalPackage = packageName;
-            queuedExternalIntent = intent;
-            queuedExternalConfig = config;
-            queuedExternalCallback = onLaunchArmed;
-            queuedAfterSuspendTaskId = taskId;
-            queuedLaunchRetries = 0;
-            generation = ++queuedLaunchGeneration;
+            generation = queuedLaunchQueue.beginExternal(packageName, intent, config,
+                    onLaunchArmed, taskId);
+            FreeformLaunchEvidencePolicy.Transition evidence = launchEvidencePolicy.queued();
+            queuedEvidenceGeneration = evidence.generation;
+            logLaunchEvidence(evidence, "queued until suspend");
         }
         if (!miniTask(taskId, info)) {
             clearQueuedExternalLaunch(generation);
@@ -167,55 +166,37 @@ final class HyperOsFreeformBridge {
 
     private void runQueuedExternalLaunchAfterSuspend(int taskId, long generation,
                                                      String reason) {
-        String packageName;
-        Intent intent;
-        GestureConfig config;
-        Runnable callback;
-        synchronized (taskLock) {
-            if (generation != queuedLaunchGeneration
-                    || taskId != queuedAfterSuspendTaskId
-                    || queuedExternalPackage == null) return;
-            packageName = queuedExternalPackage;
-            intent = queuedExternalIntent;
-            config = queuedExternalConfig;
-            callback = queuedExternalCallback;
-        }
+        QueuedLaunchQueue.Request pending = queuedLaunchQueue.current(generation, taskId);
+        if (pending == null || pending.externalPackage == null) return;
+        String packageName = pending.externalPackage;
+        Intent intent = pending.externalIntent;
+        GestureConfig config = pending.config;
+        Runnable callback = pending.armedCallback;
         Object info = taskInfo(taskId);
         if (info == null || !booleanCall(info, "isMiniState", false)) {
-            if (queuedLaunchRetries >= 6) {
+            int retry = queuedLaunchQueue.nextRetry(generation, taskId);
+            if (retry < 0 && queuedLaunchQueue.isCurrent(generation, taskId)) {
                 clearQueuedExternalLaunch(generation);
+            }
+            if (retry < 0) {
                 Log.i("Queued external freeform abandoned after retries task=" + taskId);
                 return;
             }
-            queuedLaunchRetries++;
             mainHandler.postDelayed(() -> runQueuedExternalLaunchAfterSuspend(taskId,
-                    generation, "suspend retry " + queuedLaunchRetries), 300L);
+                    generation, "suspend retry " + retry), 300L);
             return;
         }
-        synchronized (taskLock) {
-            if (generation != queuedLaunchGeneration
-                    || taskId != queuedAfterSuspendTaskId || queuedExternalPackage == null) return;
-            queuedExternalPackage = null;
-            queuedExternalIntent = null;
-            queuedExternalConfig = null;
-            queuedExternalCallback = null;
-            queuedAfterSuspendTaskId = -1;
-            queuedLaunchRetries = 0;
-        }
+        QueuedLaunchQueue.Request ready = queuedLaunchQueue.consumeExternal(generation, taskId);
+        if (ready == null) return;
         Log.i("Starting queued external freeform reason=" + reason
                 + " target=" + packageName);
         launchIntentNow(packageName, intent, config, callback, false, null);
     }
 
     private void clearQueuedExternalLaunch(long generation) {
-        synchronized (taskLock) {
-            if (generation != queuedLaunchGeneration) return;
-            queuedExternalPackage = null;
-            queuedExternalIntent = null;
-            queuedExternalConfig = null;
-            queuedExternalCallback = null;
-            queuedAfterSuspendTaskId = -1;
-            queuedLaunchRetries = 0;
+        if (queuedLaunchQueue.clear(generation)) {
+            logLaunchEvidence(launchEvidencePolicy.unknown(queuedEvidenceGeneration),
+                    "queued launch abandoned; no task observed");
         }
     }
 
@@ -233,16 +214,10 @@ final class HyperOsFreeformBridge {
         }
         long generation;
         synchronized (taskLock) {
-            queuedLaunchTarget = target;
-            queuedLaunchConfig = config;
-            queuedLaunchArmedCallback = onLaunchArmed;
-            queuedAfterSuspendTaskId = taskId;
-            queuedExternalPackage = null;
-            queuedExternalIntent = null;
-            queuedExternalConfig = null;
-            queuedExternalCallback = null;
-            queuedLaunchRetries = 0;
-            generation = ++queuedLaunchGeneration;
+            generation = queuedLaunchQueue.beginTarget(target, config, onLaunchArmed, taskId);
+            FreeformLaunchEvidencePolicy.Transition evidence = launchEvidencePolicy.queued();
+            queuedEvidenceGeneration = evidence.generation;
+            logLaunchEvidence(evidence, "queued until suspend");
         }
         if (!miniTask(taskId, info)) {
             clearQueuedLaunch(generation);
@@ -272,6 +247,9 @@ final class HyperOsFreeformBridge {
     private boolean launchIntentNow(String packageName, Intent intent, GestureConfig config,
                                     Runnable onLaunchArmed, boolean shortcutLaunch,
                                     RuntimeTarget shortcutTarget) {
+        FreeformLaunchEvidencePolicy.Transition requested = launchEvidencePolicy.requested();
+        long evidenceGeneration = requested.generation;
+        logLaunchEvidence(requested, "launch request issued");
         try {
             Class<?> manager = XposedHelpers.findClass("miui.app.MiuiFreeFormManager", classLoader);
             Object result = XposedHelpers.callStaticMethod(manager, "getActivityOptions",
@@ -292,7 +270,7 @@ final class HyperOsFreeformBridge {
                             isRotationLockedToPortrait(), requestedOrientation);
             Rect display = context.getSystemService(WindowManager.class)
                     .getCurrentWindowMetrics().getBounds();
-            boolean customBoundsEnabled = config.customWindowBoundsEnabledFor(
+            boolean customBoundsEnabled = HookFeatureFlags.startup().freeform() && config.customWindowBoundsEnabledFor(
                     display.width() > display.height());
             Rect launchBounds = customBoundsEnabled && !nativeLandscapeLaunch
                     ? customLaunchBounds(config, scale, nativeLaunchBounds) : null;
@@ -319,7 +297,7 @@ final class HyperOsFreeformBridge {
             ActivityManager.RunningTaskInfo existing = shortcutLaunch
                     && !HyperOsProfile.CURRENT.shortcutFreeformAlignment ? null
                     : findRunningTask(packageName, userId);
-            if (existing != null) {
+            if (existing != null && HookFeatureFlags.startup().freeform()) {
                 forceTaskResizable(existing.taskId);
                 if (HyperOsProfile.CURRENT.shortcutFreeformAlignment && shortcutLaunch
                         && launchBounds != null && !launchBounds.isEmpty()) {
@@ -327,10 +305,11 @@ final class HyperOsFreeformBridge {
                 }
             }
             Bundle launchOptions = options.toBundle();
-            beginPendingMatch(packageName, userId,
-                    launchBounds == null ? null : visualBounds(launchBounds, scale),
+            long pendingGeneration = beginPendingMatch(packageName, userId,
+                    launchBounds == null
+                            ? null : FreeformLaunchGeometryPolicy.visualBounds(launchBounds, scale),
                     launchBounds, nativeLaunchBounds,
-                    intent, launchOptions, shortcutLaunch);
+                    intent, launchOptions, shortcutLaunch, evidenceGeneration);
             notifyLaunchArmed(onLaunchArmed);
             if (shortcutLaunch) {
                 if (!HyperOsProfile.CURRENT.directShortcutLaunch
@@ -359,10 +338,12 @@ final class HyperOsFreeformBridge {
                     + " scale=" + scale
                     + " nativeBounds=" + nativeLaunchBounds
                     + " nativeLandscape=" + nativeLandscapeLaunch);
-            scheduleScans();
+            scheduleScans(pendingGeneration);
             return true;
         } catch (Throwable error) {
-            clearPendingMatch();
+            logLaunchEvidence(launchEvidencePolicy.unknown(evidenceGeneration),
+                    "request exception; no task observed");
+            clearPendingMatch(evidenceGeneration);
             Log.e("Native freeform launch failed", error);
             return false;
         }
@@ -485,7 +466,14 @@ final class HyperOsFreeformBridge {
 
     void onTaskAppeared(int taskId) {
         Object info = taskInfo(taskId);
-        if (info != null) onTaskInfo(info);
+        if (info != null) {
+            String packageName = packageName(info);
+            if (stormGuard.record(packageName)) {
+                Log.i("Freeform storm cooldown started package=" + packageName
+                        + " cooldownMs=" + stormGuard.remainingCooldownMs(packageName));
+            }
+            onTaskInfo(info);
+        }
     }
 
     void onNativeFreeformTouchDown(int taskId) {
@@ -528,6 +516,8 @@ final class HyperOsFreeformBridge {
                     && recentShortcutPackage.equals(actual)
                     && recentShortcutUserId == userId(info);
             if (matchesPending && pendingLaunchDismissRequested && (normal || mini)) {
+                logLaunchEvidence(launchEvidencePolicy.observed(pendingEvidenceGeneration),
+                        "matching task observed before requested close");
                 tasks.put(taskId, actual, normal
                         ? FreeformTaskRegistry.State.NORMAL
                         : FreeformTaskRegistry.State.SUSPENDED);
@@ -557,12 +547,16 @@ final class HyperOsFreeformBridge {
 
                 if (matchesPending) {
                     if (mini) {
+                        logLaunchEvidence(launchEvidencePolicy.observed(pendingEvidenceGeneration),
+                                "matching mini task observed");
                         rememberPendingNativeBoundsLocked(taskId);
                         tasks.put(taskId, actual, FreeformTaskRegistry.State.SUSPENDED);
                         trackedTaskId = -1;
                         finishPendingMatchLocked();
                         Log.i("Fan-selected task remains in native mini state task=" + taskId);
                     } else if (normal) {
+                        logLaunchEvidence(launchEvidencePolicy.observed(pendingEvidenceGeneration),
+                                "matching normal task observed");
                         rememberPendingNativeBoundsLocked(taskId);
                         alignShortcutTask = pendingShortcutLaunch || matchesRecentShortcut;
                         tasks.put(taskId, actual, FreeformTaskRegistry.State.NORMAL);
@@ -602,15 +596,44 @@ final class HyperOsFreeformBridge {
             return;
         }
         if (mini) {
-            if (queuedExternalPackage != null) {
-                runQueuedExternalLaunchAfterSuspend(taskId, queuedLaunchGeneration,
-                        "current task entered mini state");
-            } else {
-                runQueuedLaunchAfterSuspend(taskId, queuedLaunchGeneration,
-                        "current task entered mini state");
+            QueuedLaunchQueue.Request queued = queuedLaunchQueue.peek();
+            if (queued != null) {
+                if (queued.externalPackage != null) {
+                    runQueuedExternalLaunchAfterSuspend(queued.taskId, queued.generation,
+                            "current task entered mini state");
+                } else {
+                    runQueuedLaunchAfterSuspend(queued.taskId, queued.generation,
+                            "current task entered mini state");
+                }
             }
         }
         if (retainTransition) retainOwnershipDuringModeTransition(taskId);
+    }
+
+    /** Applies the same rounded clipping to a vendor task leash when HyperOS exposes it. */
+    void updateMiniSurfaceDecoration(Object info) {
+        if (info == null || !booleanCall(info, "isMiniState", false)) return;
+        Object leash = null;
+        for (String method : new String[]{"getLeash", "getSurfaceControl", "getTaskLeash"}) {
+            try {
+                leash = XposedHelpers.callMethod(info, method);
+                if (leash != null) break;
+            } catch (Throwable ignored) { }
+        }
+        if (!(leash instanceof SurfaceControl)) return;
+        SurfaceControl surface = (SurfaceControl) leash;
+        try {
+            if (!surface.isValid()) return;
+            SurfaceControl.Transaction transaction = new SurfaceControl.Transaction();
+            java.lang.reflect.Method setter = transaction.getClass().getMethod(
+                    "setCornerRadius", SurfaceControl.class, float.class);
+            setter.invoke(transaction, surface,
+                    Math.max(1f, 16f * context.getResources().getDisplayMetrics().density));
+            transaction.apply();
+        } catch (Throwable error) {
+            Log.i("Mini task leash does not support rounded clipping: "
+                    + error.getClass().getSimpleName());
+        }
     }
 
     void onTaskVanished(int taskId) {
@@ -622,9 +645,10 @@ final class HyperOsFreeformBridge {
             nativeLaunchBoundsByTaskId.remove(taskId);
             removeTaskLocked(taskId, "task vanished");
         }
+        fullscreenLaunchAfterClose.onTaskVanished(taskId);
     }
 
-    Rect trackedBounds() {
+    Rect trackedBounds(boolean includeImeResizedContent) {
         int taskId = interactionTaskId();
         if (taskId < 0) return null;
         boolean owned;
@@ -670,11 +694,25 @@ final class HyperOsFreeformBridge {
         }
         try {
             Object bounds = XposedHelpers.callMethod(info, "getScaledBounds");
-            return bounds instanceof Rect ? new Rect((Rect) bounds) : null;
+            Rect current = bounds instanceof Rect ? new Rect((Rect) bounds) : null;
+            if (!includeImeResizedContent || current == null) return current;
+            Rect restore = rectCall(info, "getRestoreNormalBounds");
+            float scale = numberCall(info, "getFreeformScale", 1f);
+            return includeRestoreBounds(current, restore, scale, true);
         } catch (Throwable error) {
             Log.e("Cannot read tracked task bounds", error);
             return null;
         }
+    }
+
+    static Rect includeRestoreBounds(Rect current, Rect restore, float scale,
+                                     boolean includeRestore) {
+        Rect result = current == null ? null : new Rect(current);
+        if (!includeRestore || restore == null || restore.isEmpty()) return result;
+        Rect visualRestore = FreeformLaunchGeometryPolicy.visualBounds(restore, scale);
+        if (result == null) return visualRestore;
+        result.union(visualRestore);
+        return result;
     }
 
     List<Rect> visibleFreeformBounds() {
@@ -731,7 +769,8 @@ final class HyperOsFreeformBridge {
                     if (restoreValue instanceof Rect && !((Rect) restoreValue).isEmpty()) {
                         float scale = numberCall(info, "getFreeformScale", 1f);
                         addUniqueVisibleBounds(bounds,
-                                visualBounds((Rect) restoreValue, scale), display);
+                                FreeformLaunchGeometryPolicy.visualBounds(
+                                        (Rect) restoreValue, scale), display);
                     }
                 }
             } catch (Throwable error) {
@@ -757,6 +796,81 @@ final class HyperOsFreeformBridge {
         if (!bounds.contains(copy)) bounds.add(copy);
     }
 
+    boolean isMiniEnlarged(Object info) {
+        try {
+            Rect base = rectCall(info, "getBounds");
+            float normal = normalMiniScale(info, base);
+            return normal > 0f && numberCall(info, "getFreeformScale", 0f) > normal * 1.05f;
+        } catch (RuntimeException | LinkageError | XposedHelpers.ClassNotFoundError
+                 | XposedHelpers.InvocationTargetError error) {
+            return false;
+        }
+    }
+
+    private float normalMiniScale(Object info, Rect base) {
+        if (base == null || base.isEmpty()) return 0f;
+        Class<?> utils = XposedHelpers.findClass("android.util.MiuiMultiWindowUtils", classLoader);
+        Object scale = XposedHelpers.callStaticMethod(utils, "getMiniFreeformScale", context,
+                booleanCall(info, "isLandscapeFreeform", false), base, packageName(info));
+        return scale instanceof Number ? ((Number) scale).floatValue() : 0f;
+    }
+
+    void toggleMiniScale(int taskId, Runnable unavailable) {
+        Object owner = controller;
+        if (owner == null) {
+            unavailable.run();
+            return;
+        }
+        try {
+            Executor shell = (Executor) XposedHelpers.getObjectField(owner, "mMainExecutor");
+            shell.execute(() -> {
+                Object info = taskInfo(taskId);
+                if (!MiniMediaControls.isTouchableMini(info)) return;
+                try {
+                    Rect base = rectCall(info, "getBounds");
+                    Rect visual = rectCall(info, "getScaledBounds");
+                    float normal = normalMiniScale(info, base);
+                    float current = numberCall(info, "getFreeformScale", 0f);
+                    if (base == null || visual == null || !(normal > 0f) || !(current > 0f)) {
+                        mainHandler.post(unavailable);
+                        return;
+                    }
+                    Rect display = context.getSystemService(WindowManager.class)
+                            .getCurrentWindowMetrics().getBounds();
+                    int margin = Math.round(8 * context.getResources().getDisplayMetrics().density);
+                    Rect frame = display.width() > 2 * margin && display.height() > 2 * margin
+                            ? new Rect(display.left + margin, display.top + margin,
+                            display.right - margin, display.bottom - margin) : display;
+                    float scale = Math.min(current > normal * 1.05f ? normal : normal * 1.5f,
+                            Math.min((float) frame.width() / base.width(),
+                                    (float) frame.height() / base.height()));
+                    int nextWidth = Math.round(base.width() * scale);
+                    int anchor = visual.centerX() > display.centerX() ? visual.right - nextWidth : visual.left;
+                    int left = Math.max(frame.left, Math.min(anchor, frame.right - nextWidth));
+                    int top = Math.max(frame.top, Math.min(visual.top,
+                            frame.bottom - Math.round(base.height() * scale)));
+                    Class<?> type = XposedHelpers.findClass(
+                            "com.android.wm.shell.multitasking.common.animation.MultiTaskingAnimTarget",
+                            classLoader);
+                    Object target = type.getDeclaredConstructor().newInstance();
+                    XposedHelpers.callMethod(target, "setAnimParam",
+                            new Rect(left, top, left + base.width(), top + base.height()),
+                            scale, scale, 0f);
+                    Object animation = XposedHelpers.getObjectField(owner, "mMiuiFreeformModeAnimation");
+                    // HyperOS mini transition used by MeiWindow v1.4.7.
+                    XposedHelpers.callMethod(animation, "startGestureAnimation", 11, info, target);
+                } catch (ReflectiveOperationException | RuntimeException | LinkageError
+                         | XposedHelpers.ClassNotFoundError | XposedHelpers.InvocationTargetError error) {
+                    Log.e("Cannot scale mini task=" + taskId, error);
+                    mainHandler.post(unavailable);
+                }
+            });
+        } catch (RuntimeException | LinkageError error) {
+            Log.e("Cannot dispatch mini task resize=" + taskId, error);
+            unavailable.run();
+        }
+    }
+
     private boolean isTaskAnimating(int taskId) {
         Object owner = controller;
         if (owner == null) return false;
@@ -776,8 +890,11 @@ final class HyperOsFreeformBridge {
         }
     }
 
-    boolean dismissTracked() {
-        int taskId = interactionTaskId();
+    void launchFullscreenAfterClose(Runnable launch) {
+        fullscreenLaunchAfterClose.launch(interactionTaskId(), this::dismissTask, launch);
+    }
+
+    boolean dismissTask(int taskId) {
         if (taskId < 0 || controller == null) return false;
         synchronized (taskLock) {
             clearInteractiveTaskLocked(taskId, "native close requested");
@@ -967,59 +1084,36 @@ final class HyperOsFreeformBridge {
     }
 
     private void runQueuedLaunchAfterSuspend(int taskId, long generation, String reason) {
-        RuntimeTarget target;
-        GestureConfig config;
-        Runnable callback;
-        synchronized (taskLock) {
-            if (generation != queuedLaunchGeneration
-                    || taskId != queuedAfterSuspendTaskId
-                    || queuedLaunchTarget == null) return;
-            target = queuedLaunchTarget;
-            config = queuedLaunchConfig;
-            callback = queuedLaunchArmedCallback;
-        }
+        QueuedLaunchQueue.Request pending = queuedLaunchQueue.current(generation, taskId);
+        if (pending == null || pending.target == null) return;
+        RuntimeTarget target = pending.target;
+        GestureConfig config = pending.config;
+        Runnable callback = pending.armedCallback;
         Object info = taskInfo(taskId);
         if (info == null || !booleanCall(info, "isMiniState", false)) {
-            if (queuedLaunchRetries >= 6) {
+            int retry = queuedLaunchQueue.nextRetry(generation, taskId);
+            if (retry < 0 && queuedLaunchQueue.isCurrent(generation, taskId)) {
                 clearQueuedLaunch(generation);
+            }
+            if (retry < 0) {
                 Log.i("Queued second freeform abandoned after retries task=" + taskId);
                 return;
             }
-            queuedLaunchRetries++;
             mainHandler.postDelayed(() -> runQueuedLaunchAfterSuspend(taskId, generation,
-                    "suspend retry " + queuedLaunchRetries), 300L);
+                    "suspend retry " + retry), 300L);
             return;
         }
-        synchronized (taskLock) {
-            if (generation != queuedLaunchGeneration
-                    || taskId != queuedAfterSuspendTaskId || queuedLaunchTarget == null) return;
-            queuedLaunchTarget = null;
-            queuedLaunchConfig = null;
-            queuedLaunchArmedCallback = null;
-            queuedExternalPackage = null;
-            queuedExternalIntent = null;
-            queuedExternalConfig = null;
-            queuedExternalCallback = null;
-            queuedAfterSuspendTaskId = -1;
-            queuedLaunchRetries = 0;
-        }
+        QueuedLaunchQueue.Request ready = queuedLaunchQueue.consumeTarget(generation, taskId);
+        if (ready == null) return;
         Log.i("Starting queued second freeform reason=" + reason
                 + " target=" + target.packageName);
         launchNow(target, config, callback);
     }
 
     private void clearQueuedLaunch(long generation) {
-        synchronized (taskLock) {
-            if (generation != queuedLaunchGeneration) return;
-            queuedLaunchTarget = null;
-            queuedLaunchConfig = null;
-            queuedLaunchArmedCallback = null;
-            queuedExternalPackage = null;
-            queuedExternalIntent = null;
-            queuedExternalConfig = null;
-            queuedExternalCallback = null;
-            queuedAfterSuspendTaskId = -1;
-            queuedLaunchRetries = 0;
+        if (queuedLaunchQueue.clear(generation)) {
+            logLaunchEvidence(launchEvidencePolicy.unknown(queuedEvidenceGeneration),
+                    "queued launch cleared; no task observed");
         }
     }
 
@@ -1233,7 +1327,10 @@ final class HyperOsFreeformBridge {
     }
 
     boolean fullscreenTracked() {
-        int taskId = interactionTaskId();
+        return fullscreenTask(interactionTaskId());
+    }
+
+    boolean fullscreenTask(int taskId) {
         if (taskId < 0 || controller == null) return false;
         try {
             synchronized (taskLock) {
@@ -1398,11 +1495,13 @@ final class HyperOsFreeformBridge {
         }
     }
 
-    private void beginPendingMatch(String packageName, int userId, Rect visualBounds,
+    private long beginPendingMatch(String packageName, int userId, Rect visualBounds,
                                    Rect launchBounds, Rect nativeLaunchBounds,
                                    Intent intent, Bundle options,
-                                   boolean shortcutLaunch) {
+                                   boolean shortcutLaunch, long evidenceGeneration) {
         synchronized (taskLock) {
+            long generation = ++pendingLaunchGeneration;
+            pendingEvidenceGeneration = evidenceGeneration;
             pendingPackage = packageName;
             pendingUserId = userId;
             pendingSince = SystemClock.elapsedRealtime();
@@ -1438,6 +1537,7 @@ final class HyperOsFreeformBridge {
                 recentShortcutLaunchBounds = launchBounds == null
                         ? null : new Rect(launchBounds);
             }
+            return generation;
         }
     }
 
@@ -1450,8 +1550,25 @@ final class HyperOsFreeformBridge {
         }
     }
 
-    private void clearPendingMatch() {
+    private void logLaunchEvidence(FreeformLaunchEvidencePolicy.Transition transition,
+                                  String reason) {
+        if (transition == null) return;
+        String verdict = transition.stage == FreeformLaunchEvidencePolicy.Stage.UNKNOWN
+                ? " outcome=unconfirmed" : "";
+        Log.i("Freeform launch evidence generation=" + transition.generation
+                + " previous=" + transition.previous + " stage=" + transition.stage
+                + verdict + " reason=" + reason);
+    }
+
+    static boolean shouldClearPendingMatchForEvidence(long pendingGeneration,
+                                                       long failedGeneration) {
+        return pendingGeneration == failedGeneration;
+    }
+
+    private void clearPendingMatch(long evidenceGeneration) {
         synchronized (taskLock) {
+            if (!shouldClearPendingMatchForEvidence(
+                    pendingEvidenceGeneration, evidenceGeneration)) return;
             clearPendingMatchLocked();
         }
     }
@@ -1489,24 +1606,32 @@ final class HyperOsFreeformBridge {
         }
     }
 
-    private void scheduleScans() {
-        mainHandler.postDelayed(this::scanPendingTasks, 40);
-        mainHandler.postDelayed(this::scanPendingTasks, 120);
-        mainHandler.postDelayed(this::scanPendingTasks, 250);
-        mainHandler.postDelayed(this::scanPendingTasks, 900);
-        mainHandler.postDelayed(this::scanPendingTasks, 2200);
+    private void scheduleScans(long generation) {
+        mainHandler.postDelayed(() -> scanPendingTasks(generation), 40);
+        mainHandler.postDelayed(() -> scanPendingTasks(generation), 120);
+        mainHandler.postDelayed(() -> scanPendingTasks(generation), 250);
+        mainHandler.postDelayed(() -> scanPendingTasks(generation), 900);
+        mainHandler.postDelayed(() -> scanPendingTasks(generation), 2200);
         mainHandler.postDelayed(() -> {
-            if (pendingPackage != null
-                    && SystemClock.elapsedRealtime() - pendingSince >= MATCH_WINDOW_MS) {
+            synchronized (taskLock) {
+                if (generation != pendingLaunchGeneration || pendingPackage == null
+                        || SystemClock.elapsedRealtime() - pendingSince < MATCH_WINDOW_MS) {
+                    return;
+                }
                 Log.i("No matching freeform task appeared for " + pendingPackage);
-                clearPendingMatch();
+                logLaunchEvidence(launchEvidencePolicy.unknown(pendingEvidenceGeneration),
+                        "match window expired; no task observed");
+                clearPendingMatchLocked();
             }
         }, MATCH_WINDOW_MS + 100);
     }
 
     @SuppressWarnings("unchecked")
-    private void scanPendingTasks() {
-        if (pendingPackage == null || controller == null) return;
+    private void scanPendingTasks(long generation) {
+        synchronized (taskLock) {
+            if (generation != pendingLaunchGeneration || pendingPackage == null) return;
+        }
+        if (controller == null) return;
         try {
             Object repository = XposedHelpers.getObjectField(controller,
                     "mMultiTaskingTaskRepository");
@@ -1516,7 +1641,9 @@ final class HyperOsFreeformBridge {
                 if (item instanceof Number) {
                     Object info = taskInfo(((Number) item).intValue());
                     if (info != null) onTaskInfo(info);
-                    if (pendingPackage == null) return;
+                    synchronized (taskLock) {
+                        if (generation != pendingLaunchGeneration || pendingPackage == null) return;
+                    }
                 }
             }
             retryNonResizableTaskIfNeeded();
@@ -1796,62 +1923,17 @@ final class HyperOsFreeformBridge {
         Insets insets = metrics.getWindowInsets().getInsetsIgnoringVisibility(
                 WindowInsets.Type.systemBars() | WindowInsets.Type.displayCutout());
         int edge = Math.round(12 * context.getResources().getDisplayMetrics().density);
-        Rect safe = new Rect(display.left + insets.left + edge,
-                display.top + insets.top + edge,
-                display.right - insets.right - edge,
-                display.bottom - insets.bottom - edge);
-        if (safe.width() <= 0 || safe.height() <= 0) safe.set(display);
-        boolean landscape = display.width() > display.height();
-
-        // In landscape the system-bar insets take a much larger share of the short edge.
-        // Using the inset-safe rectangle as the percentage reference made the configured
-        // window look wider and shorter than the settings preview. Keep the safe rectangle
-        // for placement, but interpret landscape width/height as percentages of the physical
-        // display, exactly as the preview presents them. Portrait behavior stays unchanged.
-        Rect sizeReference = landscape ? display : safe;
-        Rect placement = landscape
-                ? new Rect(display.left + edge, display.top + edge,
-                display.right - edge, display.bottom - edge)
-                : safe;
-        int visualWidth;
-        int visualHeight;
-        int logicalWidth;
-        int logicalHeight;
-        if (config.nativeWindowScalingEnabled(landscape)) {
-            if (nativeLaunchBounds == null || nativeLaunchBounds.isEmpty()) {
-                Log.i("Preserved HyperOS native freeform bounds because launch bounds"
-                        + " are unavailable landscape=" + landscape);
-                return null;
-            }
-            int[] logicalSize = WindowSizePolicy.scaleNativeLogicalPixels(
-                    nativeLaunchBounds.width(), nativeLaunchBounds.height(),
-                    placement.width(), placement.height(), scale,
-                    config.nativeWindowScalePercent(landscape));
-            logicalWidth = logicalSize[0];
-            logicalHeight = logicalSize[1];
-            visualWidth = Math.max(1, Math.round(logicalWidth * scale));
-            visualHeight = Math.max(1, Math.round(logicalHeight * scale));
-        } else {
-            visualWidth = Math.max(1,
-                    Math.round(sizeReference.width()
-                            * config.windowWidthPercent(landscape) / 100f));
-            visualHeight = Math.max(1,
-                    Math.round(sizeReference.height()
-                            * config.windowHeightPercent(landscape) / 100f));
-            logicalWidth = Math.max(1, Math.round(visualWidth / scale));
-            logicalHeight = Math.max(1, Math.round(visualHeight / scale));
+        FreeformLaunchGeometryPolicy.Result result = FreeformLaunchGeometryPolicy.calculate(
+                config, display, insets, edge, scale, nativeLaunchBounds);
+        if (result.logicalBounds == null) {
+            Log.i("Preserved HyperOS native freeform bounds because launch bounds"
+                    + " are unavailable landscape=" + (display.width() > display.height()));
         }
-        int visualLeft = placement.left
-                + Math.round((placement.width() - visualWidth)
-                * config.windowPositionX(landscape) / 100f);
-        int visualTop = placement.top
-                + Math.round((placement.height() - visualHeight)
-                * config.windowPositionY(landscape) / 100f);
-        return new Rect(visualLeft, visualTop,
-                visualLeft + logicalWidth, visualTop + logicalHeight);
+        return result.logicalBounds;
     }
 
     private boolean customWindowBoundsEnabledForCurrentDisplay() {
+        if (!HookFeatureFlags.startup().freeform()) return false;
         Rect display = context.getSystemService(WindowManager.class)
                 .getCurrentWindowMetrics().getBounds();
         return latestConfig.customWindowBoundsEnabledFor(
@@ -1941,12 +2023,6 @@ final class HyperOsFreeformBridge {
         } catch (Throwable ignored) {
             return null;
         }
-    }
-
-    private static Rect visualBounds(Rect logicalBounds, float scale) {
-        return new Rect(logicalBounds.left, logicalBounds.top,
-                logicalBounds.left + Math.round(logicalBounds.width() * scale),
-                logicalBounds.top + Math.round(logicalBounds.height() * scale));
     }
 
     private static boolean booleanCall(Object target, String method, boolean fallback) {

@@ -85,6 +85,13 @@ public final class GestureMathTest {
     }
 
     @Test
+    public void unchangedPreviewCoordinatesCanSkipWindowLayoutUpdate() {
+        assertTrue(GestureMath.samePosition(24, 48, 24, 48));
+        assertFalse(GestureMath.samePosition(24, 48, 25, 48));
+        assertFalse(GestureMath.samePosition(24, 48, 24, 49));
+    }
+
+    @Test
     public void previewTracksPointerAndClampsAtScreenEdges() {
         assertEquals(8, GestureMath.previewLeft(20, 100, 1080, 8));
         assertEquals(490, GestureMath.previewLeft(540, 100, 1080, 8));
@@ -110,9 +117,13 @@ public final class GestureMathTest {
     }
 
     @Test
-    public void nearHandMenuUsesTheLowerSideOfTheDevice() {
-        assertTrue(GestureMath.nearHandMenuOnRight(0.2f));
-        assertFalse(GestureMath.nearHandMenuOnRight(-0.2f));
+    public void nearHandMenuUsesDragDirectionAndIgnoresSmallMovement() {
+        int left = DragShareSettings.SIMPLE_MENU_POSITION_LEFT;
+        int right = DragShareSettings.SIMPLE_MENU_POSITION_RIGHT;
+        assertEquals(right, GestureMath.nearHandMenuPosition(100f, 140f, 12f, left));
+        assertEquals(left, GestureMath.nearHandMenuPosition(900f, 860f, 12f, right));
+        assertEquals(right, GestureMath.nearHandMenuPosition(500f, 494f, 12f, right));
+        assertEquals(left, GestureMath.nearHandMenuPosition(500f, 512f, 12f, left));
     }
 
     @Test

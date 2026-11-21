@@ -31,8 +31,8 @@ import top.yukonga.miuix.kmp.theme.MiuixTheme
 internal fun stashBatches(entries: List<StashStore.Entry>): List<List<StashStore.Entry>> =
     entries.groupBy { it.batchId }.values.map { it.sortedBy { entry -> entry.batchOrder } }
 
-internal fun stashGroupedEntryIds(entries: List<StashStore.Entry>): Set<String> =
-    stashBatches(entries).filter { it.size > 1 }.flatten().map { it.id }.toSet()
+internal fun stashGroupedEntryIds(batches: List<List<StashStore.Entry>>): Set<String> =
+    batches.asSequence().filter { it.size > 1 }.flatten().map { it.id }.toSet()
 
 internal fun stashBatchLabel(entries: List<StashStore.Entry>): String = when {
     entries.all { it.kind == StashStore.KIND_IMAGE } -> "${entries.size} 张图片"

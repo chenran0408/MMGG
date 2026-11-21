@@ -9,7 +9,6 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -19,10 +18,14 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.layout.imePadding
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
@@ -35,15 +38,16 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.Alignment
-import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
-import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.StrokeCap
@@ -57,8 +61,11 @@ import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.viewinterop.AndroidView
 import top.yukonga.miuix.kmp.theme.MiuixTheme
 import top.yukonga.miuix.kmp.basic.Text
@@ -67,7 +74,6 @@ import top.yukonga.miuix.kmp.basic.BasicComponent
 import top.yukonga.miuix.kmp.basic.Card
 import top.yukonga.miuix.kmp.basic.Icon
 import top.yukonga.miuix.kmp.basic.IconButton
-import top.yukonga.miuix.kmp.basic.SmallTitle
 import top.yukonga.miuix.kmp.basic.TooltipBox
 import top.yukonga.miuix.kmp.basic.ButtonDefaults
 import top.yukonga.miuix.kmp.basic.CircularProgressIndicator
@@ -84,13 +90,27 @@ import top.yukonga.miuix.kmp.icon.extended.More
 import top.yukonga.miuix.kmp.icon.extended.Tasks
 import top.yukonga.miuix.kmp.icon.extended.Tune
 import top.yukonga.miuix.kmp.icon.extended.Folder
+import top.yukonga.miuix.kmp.icon.extended.Share
 import top.yukonga.miuix.kmp.overlay.OverlayDialog
+
+internal fun selectionToolbarVisibleAfterGesture(
+    currentVisible: Boolean,
+    hasSelection: Boolean,
+    gestureActive: Boolean,
+): Boolean = if (gestureActive) currentVisible else hasSelection
+
+// Each side of the inline header needs two 48 dp buttons plus their gap.
+internal fun bigBangHeaderNeedsStack(panelWidth: Dp, horizontalInsets: Dp, fontScale: Float): Boolean {
+    val columnWidth = (panelWidth - horizontalInsets - 28.dp) / 3
+    return columnWidth < maxOf(104.dp, (80f * fontScale).dp)
+}
 
 internal enum class BigBangMoreAction {
     Dictionary,
     Direct,
     Split,
     Merge,
+    Share,
     Translate,
     UndoEdit,
     TextSize,
@@ -122,6 +142,7 @@ internal fun BigBangOverlayContent(
     onSearch: () -> Unit,
     onStash: () -> Unit,
     directAction: DirectEntityDestination?,
+    onOpenDirect: (DirectEntityDestination) -> Unit,
     copying: Boolean,
     stashing: Boolean,
     canSplit: Boolean,
@@ -129,6 +150,10 @@ internal fun BigBangOverlayContent(
     totalCharacterCount: Int,
     selectedCharacterCount: Int,
     hasTextSelection: Boolean,
+    dragPreviewEnabled: Boolean,
+    selectedDragText: String,
+    onDragSelectedText: (String) -> Unit,
+    selectionToolbarVisible: Boolean,
     allTextSelected: Boolean,
     isSegmenting: Boolean,
     isRecognizing: Boolean,
@@ -146,7 +171,8 @@ internal fun BigBangOverlayContent(
     val words = remember(contentView) { contentView.findViewById<View>(R.id.boom_content) }
     val table = remember(contentView) { contentView.findViewById<View>(R.id.boom_table) }
     val scroller = remember(contentView) { contentView.findViewById<View>(R.id.boom_scroller) }
-    fun naturalBodyHeight() = words.height + table.paddingTop + table.paddingBottom +
+    fun naturalBodyHeight() = (words.height - words.paddingBottom).coerceAtLeast(0) +
+        table.paddingTop + table.paddingBottom +
         scroller.paddingTop + scroller.paddingBottom
     var bodyHeightPx by remember(contentView) { mutableIntStateOf(naturalBodyHeight()) }
     DisposableEffect(contentView) {
@@ -156,13 +182,11 @@ internal fun BigBangOverlayContent(
         words.addOnLayoutChangeListener(listener)
         onDispose { words.removeOnLayoutChangeListener(listener) }
     }
-    // 52dp header + two 44dp action rows, padding, spacing, and the native body's 8dp.
-    val naturalPanelHeight = (bodyHeightPx / density).dp + 162.dp +
-        (if (isRecognizing) 88.dp else 0.dp) +
-        (if (copyFeedback == null) 0.dp else 24.dp)
-    val panelMetrics = if (maximumMetrics.fullScreen) maximumMetrics else maximumMetrics.copy(
-        height = minOf(maximumMetrics.height, naturalPanelHeight),
-    )
+    val actionReady = !isSegmenting && totalCharacterCount > 0
+    val showDragHandle = dragPreviewEnabled || selectionToolbarVisible
+    // Reserve the header, a 44 dp selection handle, and one action row to keep both bars anchored.
+    val naturalPanelHeight = (bodyHeightPx / density).dp + 170.dp +
+        (if (isRecognizing) 88.dp else 0.dp)
     var dragOffsetXdp by remember(panelOffsetXdp) { mutableFloatStateOf(panelOffsetXdp) }
     var dragOffsetYdp by remember(panelOffsetYdp) { mutableFloatStateOf(panelOffsetYdp) }
     val panelBackground = MiuixTheme.colorScheme.background
@@ -174,14 +198,21 @@ internal fun BigBangOverlayContent(
     val legacySummaryColor = MiuixTheme.colorScheme.onSurfaceVariantSummary.toArgb()
     val legacySurfaceColor = MiuixTheme.colorScheme.surfaceContainer.copy(alpha = panelOpacity).toArgb()
     val legacySelectionColor = MiuixTheme.colorScheme.primary.copy(alpha = 0.16f).toArgb()
+    val selectionRegionTint = androidx.compose.runtime.remember(legacySelectionColor) {
+        android.content.res.ColorStateList.valueOf(legacySelectionColor)
+    }
     val legacyActionColor = MiuixTheme.colorScheme.onSurfaceVariantActions.toArgb()
     val scrimColor = Color.Black.copy(alpha = if (dark) 0.62f else 0.48f)
     val shadowColor = Color.Black.copy(alpha = 0.5f)
-    val panelShape = androidx.compose.foundation.shape.RoundedCornerShape(panelMetrics.cornerRadius)
+    val panelShape = RoundedCornerShape(maximumMetrics.cornerRadius)
     var panelVisible by remember { mutableStateOf(false) }
-    var showMoreMenu by remember { mutableStateOf(false) }
+    var showAppearance by remember { mutableStateOf(false) }
+    var textDragStarted by remember { mutableStateOf(false) }
+    val hapticFeedback = LocalHapticFeedback.current
+    var showActions by remember { mutableStateOf(false) }
     var showEditor by remember { mutableStateOf(false) }
     var editorText by remember { mutableStateOf("") }
+    val editorFocus = remember { FocusRequester() }
     val focusManager = LocalFocusManager.current
     val keyboard = LocalSoftwareKeyboardController.current
     var dismissing by remember { mutableStateOf(false) }
@@ -227,7 +258,8 @@ internal fun BigBangOverlayContent(
                 showEditor = false
             }
             directVisible -> onDismissDirect()
-            showMoreMenu -> showMoreMenu = false
+            showAppearance -> showAppearance = false
+            showActions -> showActions = false
             !dismissing -> { collapsing = true; closePanel() }
         }
     }
@@ -249,22 +281,44 @@ internal fun BigBangOverlayContent(
         )
         onDispose { }
     }
+    DisposableEffect(contentView, selectionRegionTint) {
+        contentView.findViewById<View>(R.id.boom_selection_region)?.backgroundTintList = selectionRegionTint
+        onDispose { }
+    }
 
     BackHandler(onBack = requestDismiss)
     ApplyOverlaySystemBars(
-        statusBarColor = if (panelMetrics.fullScreen) topBarColor else Color.Transparent,
-        navigationBarColor = if (panelMetrics.fullScreen) bottomBarColor else Color.Transparent,
+        statusBarColor = if (maximumMetrics.fullScreen) topBarColor else Color.Transparent,
+        navigationBarColor = if (maximumMetrics.fullScreen) bottomBarColor else Color.Transparent,
         darkIcons = !dark,
     )
     BoxWithConstraints(Modifier.fillMaxSize()) {
       val availableWidth = maxWidth
       val availableHeight = maxHeight
-      val sideMargin = if (panelMetrics.fullScreen) 0.dp else 12.dp
-      val placedMetrics = panelMetrics.copy(
-          width = minOf(panelMetrics.width, (availableWidth - sideMargin * 2).coerceAtLeast(0.dp)),
-          height = minOf(panelMetrics.height, availableHeight),
+      val sideMargin = if (maximumMetrics.fullScreen) 0.dp else 12.dp
+      val panelWidth = minOf(maximumMetrics.width, (availableWidth - sideMargin * 2).coerceAtLeast(0.dp))
+      val stackedTitle = bigBangHeaderNeedsStack(panelWidth,
+          maximumMetrics.leftSystemInset + maximumMetrics.rightSystemInset, configuration.fontScale)
+      val compactHeight = availableHeight < 360.dp
+      val extraHeaderRoom = if (stackedTitle && !maximumMetrics.fullScreen) 48.dp else 0.dp
+      val preferredHeight = if (maximumMetrics.fullScreen) maximumMetrics.height
+          else naturalPanelHeight + extraHeaderRoom
+      val placedMetrics = maximumMetrics.copy(
+          width = panelWidth,
+          height = minOf(preferredHeight, maximumMetrics.height + extraHeaderRoom,
+              maximumMetrics.safeHeight, availableHeight),
           offsetY = 0.dp,
       )
+      DisposableEffect(scroller, compactHeight, density) {
+          val top = scroller.paddingTop
+          val bottom = scroller.paddingBottom
+          if (compactHeight) scroller.setPadding(scroller.paddingLeft,
+              (8 * density).toInt(), scroller.paddingRight, (8 * density).toInt())
+          onDispose {
+              if (compactHeight) scroller.setPadding(scroller.paddingLeft, top,
+                  scroller.paddingRight, bottom)
+          }
+      }
       val maxOffsetX = ((availableWidth - placedMetrics.width) / 2 - sideMargin).coerceAtLeast(0.dp)
       val maxOffsetY = ((availableHeight - placedMetrics.height) / 2).coerceAtLeast(0.dp)
       val placedOffsetX = dragOffsetXdp.dp.coerceIn(-maxOffsetX, maxOffsetX)
@@ -289,7 +343,7 @@ internal fun BigBangOverlayContent(
             shape = panelShape,
             backgroundColor = panelBackground.copy(alpha = panelOpacity),
             borderColor = panelBorder.copy(alpha = panelOpacity),
-            shadowColor = if (panelMetrics.multiWindow) null else shadowColor,
+            shadowColor = if (maximumMetrics.multiWindow) null else shadowColor,
         ) {
             OverlayPanelScaffold(
                 topBar = {
@@ -310,17 +364,34 @@ internal fun BigBangOverlayContent(
                         topInset = placedMetrics.topSystemInset,
                         leftInset = placedMetrics.leftSystemInset,
                         rightInset = placedMetrics.rightSystemInset,
+                        stackedTitle = stackedTitle,
                         leading = {
-                            Text(
-                                text = stringResource(R.string.bigbang_overlay_title),
-                                color = MiuixTheme.colorScheme.onSurface,
-                                fontSize = 18.sp,
-                                fontWeight = FontWeight.SemiBold,
-                                maxLines = 1,
-                            )
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                BigBangIconAction(
+                                    icon = MiuixIcons.Edit,
+                                    label = "编辑原文",
+                                    enabled = actionReady,
+                                    onClick = { editorText = originalText(); showEditor = true },
+                                )
+                                BigBangIconAction(
+                                    icon = MiuixIcons.Tasks,
+                                    label = if (allTextSelected) "取消全选" else "全选",
+                                    enabled = actionReady,
+                                    onClick = onSelectAll,
+                                    toggled = allTextSelected,
+                                )
+                            }
                         },
                         center = {
                             Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                Text(
+                                    text = stringResource(R.string.bigbang_overlay_title),
+                                    color = MiuixTheme.colorScheme.onSurface,
+                                    fontSize = 18.sp,
+                                    fontWeight = FontWeight.SemiBold,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                )
                                 Text(
                                     text = if (isRecognizing) "正在识别…"
                                         else if (isSegmenting) "正在分词…"
@@ -330,21 +401,29 @@ internal fun BigBangOverlayContent(
                                     color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
                                     fontSize = 11.sp,
                                     maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
                                 )
                             }
                         },
                         trailing = {
-                            BigBangIconAction(
-                                icon = MiuixIcons.More,
-                                label = "窗口外观",
-                                enabled = !isSegmenting,
-                                onClick = { showMoreMenu = true },
-                            )
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                BigBangIconAction(
+                                    icon = MiuixIcons.Undo,
+                                    label = "撤销上次拆分、合并或编辑",
+                                    enabled = actionReady && canUndoEdit,
+                                    onClick = { onMoreAction(BigBangMoreAction.UndoEdit) },
+                                )
+                                BigBangIconAction(
+                                    icon = MiuixIcons.Tune,
+                                    label = "窗口外观",
+                                    enabled = !isSegmenting,
+                                    onClick = { showAppearance = true },
+                                )
+                            }
                         },
                     )
                 },
                 bottomBar = {
-                    val ready = !isSegmenting && totalCharacterCount > 0
                     Column(
                         modifier = Modifier.fillMaxWidth()
                             .background(bottomBarColor.copy(alpha = panelOpacity))
@@ -353,35 +432,74 @@ internal fun BigBangOverlayContent(
                                 top = 6.dp, bottom = 6.dp + placedMetrics.bottomSystemInset),
                         verticalArrangement = Arrangement.spacedBy(2.dp),
                     ) {
-                        Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                            BigBangToolbarAction(Modifier.weight(1f), MiuixIcons.Tasks,
-                                if (allTextSelected) "取消全选" else "全选", onSelectAll, ready,
-                                toggled = allTextSelected)
-                            BigBangToolbarAction(Modifier.weight(1f), MiuixIcons.Cut,
-                                "拆分选中词语", { onMoreAction(BigBangMoreAction.Split) }, ready && canSplit)
-                            BigBangToolbarAction(Modifier.weight(1f), MiuixIcons.Merge,
-                                "合并选中词语", { onMoreAction(BigBangMoreAction.Merge) }, ready && canMerge)
-                            BigBangToolbarAction(Modifier.weight(1f), MiuixIcons.Copy,
-                                if (copying) "正在复制" else "复制选中内容或原文", onCopy,
-                                ready && !copying, primary = true)
-                            BigBangToolbarAction(Modifier.weight(1f), MiuixIcons.Search,
-                                "搜索选中内容或原文", onSearch, ready)
+                        if (showDragHandle) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth().height(44.dp)
+                                    .background(MiuixTheme.colorScheme.surfaceContainer,
+                                        RoundedCornerShape(10.dp))
+                                    .graphicsLayer {
+                                        val lift = if (textDragStarted) 3.dp.toPx() else 0f
+                                        translationY = -lift
+                                        scaleX = if (textDragStarted) 1.025f else 1f
+                                        scaleY = if (textDragStarted) 1.025f else 1f
+                                        shadowElevation = lift
+                                    }
+                                    .then(if (hasTextSelection) Modifier.pointerInput(
+                                        selectedDragText, hasTextSelection) {
+                                        detectDragGestures(
+                                            onDragStart = {
+                                                if (selectedDragText.isNotBlank()) {
+                                                    textDragStarted = true
+                                                    hapticFeedback.performHapticFeedback(
+                                                        HapticFeedbackType.LongPress)
+                                                    onDragSelectedText(selectedDragText)
+                                                }
+                                            },
+                                            onDragEnd = { textDragStarted = false },
+                                            onDragCancel = { textDragStarted = false },
+                                            onDrag = { change, _ -> change.consume() },
+                                        )
+                                    } else Modifier)
+                                    .semantics {
+                                        contentDescription = if (hasTextSelection) {
+                                            "按住并移动以拖出所选文字"
+                                        } else "先选择词语后拖出"
+                                    }
+                                    .padding(horizontal = 12.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                Text(
+                                    text = if (hasTextSelection) selectedDragText else "先选择词语后拖出",
+                                    modifier = Modifier.weight(1f),
+                                    color = MiuixTheme.colorScheme.onSurface,
+                                    fontSize = 13.sp,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                )
+                                if (hasTextSelection) {
+                                    Text(
+                                        text = "按住拖动",
+                                        color = MiuixTheme.colorScheme.primary,
+                                        fontSize = 12.sp,
+                                    )
+                                }
+                            }
                         }
-                        Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                            BigBangToolbarAction(Modifier.weight(1f), MiuixIcons.Edit,
-                                "编辑原文", { editorText = originalText(); showEditor = true }, ready)
-                            BigBangToolbarAction(Modifier.weight(1f), MiuixIcons.Undo,
-                                "撤销上次拆分、合并或编辑", { onMoreAction(BigBangMoreAction.UndoEdit) }, ready && canUndoEdit)
-                            BigBangToolbarAction(Modifier.weight(1f), DictionaryIcon,
-                                "用词典查询选中内容", { onMoreAction(BigBangMoreAction.Dictionary) }, ready)
-                            BigBangToolbarAction(Modifier.weight(1f), MiuixIcons.Translate,
-                                "翻译选中内容或原文", { onMoreAction(BigBangMoreAction.Translate) }, ready)
-                            BigBangToolbarAction(Modifier.weight(1f), MiuixIcons.Link,
-                                "链接、邮箱与电话直达", {
-                                    onMoreAction(BigBangMoreAction.Direct)
-                                }, ready, primary = directAction != null)
-                            BigBangToolbarAction(Modifier.weight(1f), MiuixIcons.Folder,
-                                if (stashing) "正在加入中转站" else "加入中转站", onStash, ready && !stashing)
+                        val target = if (hasTextSelection) "选中内容" else "全文"
+                        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                            BigBangToolbarAction(Modifier.weight(1f), MiuixIcons.Copy, "复制",
+                                if (copying) "正在复制" else "复制$target", onCopy, actionReady && !copying, primary = true)
+                            BigBangToolbarAction(Modifier.weight(1f), MiuixIcons.Search, "搜索",
+                                "搜索$target", onSearch, actionReady)
+                            if (directAction == null) {
+                                BigBangToolbarAction(Modifier.weight(1f), DictionaryIcon, "词典",
+                                    "用词典查询$target", { onMoreAction(BigBangMoreAction.Dictionary) }, actionReady)
+                            } else {
+                                BigBangToolbarAction(Modifier.weight(1f), directAction.icon, directAction.label,
+                                    directAction.label, { onOpenDirect(directAction) }, actionReady)
+                            }
+                            BigBangToolbarAction(Modifier.weight(1f), MiuixIcons.More, "更多",
+                                "更多操作", { showActions = true }, actionReady)
                         }
                     }
                 },
@@ -396,15 +514,12 @@ internal fun BigBangOverlayContent(
                         ) {
                             CircularProgressIndicator(modifier = Modifier.size(24.dp))
                             Spacer(modifier = Modifier.height(10.dp))
-                            Text("正在识别微信文字…", color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
+                            Text("正在识别文字…", color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
                                 fontSize = 13.sp)
                         }
                     } else {
                         AndroidView(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .weight(1f)
-                                .padding(bottom = 4.dp),
+                            modifier = Modifier.fillMaxWidth().weight(1f).padding(bottom = 4.dp),
                             factory = { contentView },
                         )
                     }
@@ -431,18 +546,26 @@ internal fun BigBangOverlayContent(
             showEditor = false
         },
     ) {
-        Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
+        Column(
+            modifier = Modifier.imePadding().verticalScroll(rememberScrollState()),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
             BasicTextField(
                 value = editorText,
                 onValueChange = { editorText = it },
                 modifier = Modifier
                     .fillMaxWidth()
+                    .focusRequester(editorFocus)
                     .heightIn(min = 100.dp, max = 240.dp)
                     .background(MiuixTheme.colorScheme.surfaceContainer, RoundedCornerShape(16.dp))
                     .padding(16.dp),
                 textStyle = TextStyle(color = MiuixTheme.colorScheme.onSurface, fontSize = 16.sp),
                 cursorBrush = SolidColor(MiuixTheme.colorScheme.primary),
             )
+            LaunchedEffect(Unit) {
+                editorFocus.requestFocus()
+                keyboard?.show()
+            }
             Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                 TextButton(
                     text = stringResource(android.R.string.cancel),
@@ -470,9 +593,9 @@ internal fun BigBangOverlayContent(
     }
 
     OverlayDialog(
-        show = showMoreMenu,
-        title = "更多",
-        onDismissRequest = { showMoreMenu = false },
+        show = showAppearance,
+        title = "窗口外观",
+        onDismissRequest = { showAppearance = false },
     ) {
         Column(
             modifier = Modifier
@@ -480,7 +603,6 @@ internal fun BigBangOverlayContent(
                 .verticalScroll(rememberScrollState()),
         ) {
             val ready = !isSegmenting && totalCharacterCount > 0
-            SmallTitle("窗口外观", insideMargin = PaddingValues(start = 8.dp))
             Card {
                 Column {
                     BigBangMoreRow(
@@ -520,35 +642,91 @@ internal fun BigBangOverlayContent(
             }
         }
     }
+
+    OverlayDialog(
+        show = showActions,
+        title = "更多操作",
+        onDismissRequest = { showActions = false },
+    ) {
+        fun runAction(action: BigBangMoreAction) {
+            showActions = false
+            onMoreAction(action)
+        }
+        Column(
+            modifier = Modifier
+                .heightIn(max = (configuration.screenHeightDp * 0.55f).dp)
+                .verticalScroll(rememberScrollState()),
+        ) {
+            Card {
+                Column {
+                    BigBangMoreRow(MiuixIcons.Translate, "翻译", actionReady) { runAction(BigBangMoreAction.Translate) }
+                    BigBangMoreRow(MiuixIcons.Share, "分享", actionReady) { runAction(BigBangMoreAction.Share) }
+                    BigBangMoreRow(MiuixIcons.Folder,
+                        if (stashing) "正在加入中转站" else "加入中转站", actionReady && !stashing) {
+                        showActions = false
+                        onStash()
+                    }
+                    if (directAction != null) {
+                        BigBangMoreRow(DictionaryIcon, "查词", actionReady) { runAction(BigBangMoreAction.Dictionary) }
+                    } else {
+                        BigBangMoreRow(MiuixIcons.Link, "识别链接、邮箱和电话", actionReady) {
+                            runAction(BigBangMoreAction.Direct)
+                        }
+                    }
+                    if (hasTextSelection) {
+                        BigBangMoreRow(MiuixIcons.Cut, "拆分选中词语", canSplit) { runAction(BigBangMoreAction.Split) }
+                        BigBangMoreRow(MiuixIcons.Merge, "合并选中词语", canMerge) { runAction(BigBangMoreAction.Merge) }
+                    }
+                }
+            }
+        }
+    }
 }
 
 @Composable
 private fun BigBangToolbarAction(
     modifier: Modifier,
     icon: ImageVector,
+    shortLabel: String,
     label: String,
     onClick: () -> Unit,
     enabled: Boolean,
     primary: Boolean = false,
-    toggled: Boolean = false,
 ) {
-    Box(modifier = modifier.height(44.dp), contentAlignment = Alignment.Center) {
+    Box(modifier = modifier.height(56.dp), contentAlignment = Alignment.Center) {
         TooltipBox(text = label, enabled = enabled) {
-            IconButton(
-                onClick = onClick,
-                enabled = enabled,
-                modifier = Modifier.size(44.dp).background(
-                color = if (enabled && (primary || toggled)) MiuixTheme.colorScheme.primary.copy(alpha = 0.13f)
-                    else Color.Transparent,
-                shape = RoundedCornerShape(12.dp),
-                ).semantics { selected = toggled },
-                minWidth = 44.dp,
-                minHeight = 44.dp,
-                cornerRadius = 12.dp,
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(54.dp)
+                    .background(
+                        color = if (enabled && primary) {
+                            MiuixTheme.colorScheme.primary.copy(alpha = 0.13f)
+                        } else Color.Transparent,
+                        shape = RoundedCornerShape(12.dp),
+                    )
+                    .clickable(enabled = enabled, role = androidx.compose.ui.semantics.Role.Button,
+                        onClick = onClick)
+                    .semantics { contentDescription = label },
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.Center,
             ) {
-                Icon(icon, label, modifier = Modifier.size(22.dp),
-                    tint = (if (primary || toggled) MiuixTheme.colorScheme.primary
-                        else MiuixTheme.colorScheme.onSurface).copy(alpha = if (enabled) 1f else 0.38f))
+                Icon(
+                    imageVector = icon,
+                    contentDescription = null,
+                    modifier = Modifier.size(19.dp),
+                    tint = (if (primary) MiuixTheme.colorScheme.primary
+                        else MiuixTheme.colorScheme.onSurface)
+                        .copy(alpha = if (enabled) 1f else 0.38f),
+                )
+                Text(
+                    text = shortLabel,
+                    fontSize = 11.sp,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    color = MiuixTheme.colorScheme.onSurface
+                        .copy(alpha = if (enabled) 1f else 0.38f),
+                )
             }
         }
     }
@@ -620,15 +798,15 @@ private fun BigBangIconAction(
             onClick = onClick,
             enabled = enabled,
             modifier = modifier
-                .size(44.dp)
+                .size(48.dp)
                 .background(
                     color = if (enabled && (primary || toggled)) {
                         MiuixTheme.colorScheme.primary.copy(alpha = 0.13f)
                     } else Color.Transparent,
                     shape = RoundedCornerShape(12.dp),
                 ),
-            minWidth = 44.dp,
-            minHeight = 44.dp,
+            minWidth = 48.dp,
+            minHeight = 48.dp,
             cornerRadius = 12.dp,
         ) {
             Icon(

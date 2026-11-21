@@ -2,9 +2,29 @@ package com.leaf.hyperdragshare.gestures.xposed;
 
 import com.leaf.hyperdragshare.gestures.config.ConfigContract;
 
-final class GestureGeometry {
+public final class GestureGeometry {
     enum Corner { LEFT, RIGHT }
     enum OutsideRegion { INSIDE, OUTSIDE }
+
+    /** Bounds for one bottom-corner trigger area, in display pixels. */
+    public static final class HotZoneBounds {
+        public final int left;
+        public final int top;
+        public final int right;
+        public final int bottom;
+
+        HotZoneBounds(int left, int top, int right, int bottom) {
+            this.left = left;
+            this.top = top;
+            this.right = right;
+            this.bottom = bottom;
+        }
+
+        public boolean contains(float x, float y) {
+            return right > left && bottom > top
+                    && x >= left && x <= right && y >= top && y <= bottom;
+        }
+    }
 
     static final class Point {
         final float x;
@@ -60,6 +80,52 @@ final class GestureGeometry {
     }
 
     private GestureGeometry() {}
+
+    /**
+     * Computes one bottom-corner trigger rectangle shared by settings preview and runtime.
+     * A zero gap deliberately keeps the historical full-display bottom baseline; this keeps
+     * existing configurations in the same place even when a system bottom inset is reported.
+     * The configured gap is measured from the physical display bottom. Height remains the
+     * configured percentage of display height; a very large gap is clamped so that it does
+     * not consume the trigger area's height. Top safe areas clip only when the requested height
+     * would cross them; bottom system bars do not create a discontinuity in the gap.
+     */
+    public static HotZoneBounds hotZoneBounds(int width, int height,
+                                               int leftInset, int rightInset,
+                                               int topInset,
+                                               int hotWidthPercent,
+                                               int hotHeightPercent,
+                                               int bottomGapPx,
+                                               boolean rightCorner) {
+        int safeWidth = Math.max(0, width);
+        int safeHeight = Math.max(0, height);
+        int leftSafe = Math.min(safeWidth, Math.max(0, leftInset));
+        int rightSafe = Math.min(safeWidth, Math.max(0, rightInset));
+        int zoneWidth = Math.round(safeWidth * clampPercent(hotWidthPercent, 5, 20) / 100f);
+        int desiredHeight = Math.round(safeHeight * clampPercent(hotHeightPercent, 3,
+                ConfigContract.MAX_HOT_HEIGHT_PERCENT) / 100f);
+        int safeTop = Math.min(safeHeight, Math.max(0, topInset));
+        int actualHeight = Math.min(desiredHeight, Math.max(0, safeHeight - safeTop));
+        int maximumGap = Math.max(0, safeHeight - actualHeight - safeTop);
+        int effectiveGap = Math.min(Math.max(0, bottomGapPx), maximumGap);
+        int bottom = safeHeight - effectiveGap;
+        int top = Math.max(safeTop, bottom - actualHeight);
+        int left;
+        int right;
+        if (rightCorner) {
+            right = Math.max(leftSafe, safeWidth - rightSafe);
+            left = Math.max(leftSafe, right - zoneWidth);
+        } else {
+            left = leftSafe;
+            right = Math.min(safeWidth - rightSafe, left + zoneWidth);
+        }
+        if (right < left) right = left;
+        return new HotZoneBounds(left, top, right, bottom);
+    }
+
+    private static int clampPercent(int value, int minimum, int maximum) {
+        return Math.max(minimum, Math.min(maximum, value));
+    }
 
     static Corner cornerAt(float x, float y, int width, int height,
                            float hotWidth, float hotHeight) {
@@ -305,236 +371,6 @@ final class GestureGeometry {
         return distance(originX, height, x, y) >= Math.max(0f, minimumDistance);
     }
 
-    static Point sideIconCenter(Corner side, int index, int itemCount,
-                                int width, float originY, float radius) {
-        double degrees = itemCount <= 1 ? 0.0 : -55.0 + (110.0 * index / (itemCount - 1));
-        double radians = Math.toRadians(degrees);
-        float horizontal = (float) (radius * Math.cos(radians));
-        float vertical = (float) (radius * Math.sin(radians));
-        return new Point(side == Corner.LEFT ? horizontal : width - horizontal,
-                originY + vertical);
-    }
-
-    static float adjustedSideOriginY(float requestedY, int height, float radius,
-                                     float iconDiameter, float safeTop, float safeBottom) {
-        float span = (float) (radius * Math.sin(Math.toRadians(55.0)))
-                + iconDiameter / 2f + 8f;
-        float minimum = safeTop + span;
-        float maximum = height - safeBottom - span;
-        if (minimum > maximum) return (safeTop + height - safeBottom) / 2f;
-        return Math.max(minimum, Math.min(maximum, requestedY));
-    }
-
-    static int sideSelection(Corner side, float x, float y, int width,
-                             int itemCount, float originY, float radius,
-                             float iconDiameter, float tolerance) {
-        if (itemCount <= 0) return -1;
-        float hitRadius = iconDiameter / 2f + tolerance;
-        float hitRadiusSquared = hitRadius * hitRadius;
-        for (int index = 0; index < itemCount; index++) {
-            Point center = sideIconCenter(side, index, itemCount, width, originY, radius);
-            if (squaredDistance(x, y, center.x, center.y) <= hitRadiusSquared) return index;
-        }
-        return -1;
-    }
-
-    static float sideListTop(float requestedCenterY, int itemCount, float rowHeight,
-                             float safeTop, float safeBottom) {
-        if (itemCount <= 0 || rowHeight <= 0f) return safeTop;
-        float listHeight = itemCount * rowHeight;
-        if (listHeight >= safeBottom - safeTop) return safeTop;
-        return Math.max(safeTop,
-                Math.min(safeBottom - listHeight, requestedCenterY - listHeight / 2f));
-    }
-
-    static float sideListTopForAnchor(float requestedY, int itemCount, int anchorIndex,
-                                      float rowHeight, float safeTop, float safeBottom) {
-        if (itemCount <= 0 || rowHeight <= 0f) return safeTop;
-        int anchor = Math.max(0, Math.min(itemCount - 1, anchorIndex));
-        float listHeight = itemCount * rowHeight;
-        if (listHeight >= safeBottom - safeTop) return safeTop;
-        float requestedTop = requestedY - (anchor + 0.5f) * rowHeight;
-        return Math.max(safeTop, Math.min(safeBottom - listHeight, requestedTop));
-    }
-
-    static float sideListCenterX(Corner side, float pointerX, int width,
-                                 float iconDiameter, float edgeMargin,
-                                 boolean followFinger) {
-        float minimum = edgeMargin + iconDiameter / 2f;
-        float maximum = width - minimum;
-        if (!followFinger) return side == Corner.LEFT ? minimum : maximum;
-        return Math.max(minimum, Math.min(maximum, pointerX));
-    }
-
-    static Point sideListIconCenter(Corner side, int index, int width, float listTop,
-                                    float rowHeight, float iconDiameter, float edgeMargin) {
-        float x = edgeMargin + iconDiameter / 2f;
-        return new Point(side == Corner.LEFT ? x : width - x,
-                listTop + (index + 0.5f) * rowHeight);
-    }
-
-    static Point sideListIconCenter(int index, float centerX, float listTop,
-                                    float rowHeight) {
-        return new Point(centerX, listTop + (index + 0.5f) * rowHeight);
-    }
-
-    static Point sideFanIconCenter(Corner side, int index, int itemCount, int width,
-                                   float apexX, float centerY, float radius) {
-        if (itemCount <= 0) return new Point(apexX, centerY);
-        int anchor = (itemCount - 1) / 2;
-        float maximumOffset = Math.max(1f, Math.max(anchor, itemCount - 1 - anchor));
-        double degrees = 58.0 * (index - anchor) / maximumOffset;
-        double radians = Math.toRadians(degrees);
-        float horizontal = (float) (radius * Math.cos(radians));
-        float vertical = (float) (radius * Math.sin(radians));
-        return new Point(side == Corner.LEFT ? horizontal : width - horizontal,
-                centerY + vertical);
-    }
-
-    static float sideFanCenterY(float requestedY, int itemCount, float radius,
-                                float iconDiameter, float safeTop, float safeBottom) {
-        if (itemCount <= 0) return requestedY;
-        int anchor = (itemCount - 1) / 2;
-        float maximumOffset = Math.max(1f, Math.max(anchor, itemCount - 1 - anchor));
-        float minOffset = 0f;
-        float maxOffset = 0f;
-        for (int index = 0; index < itemCount; index++) {
-            double degrees = 58.0 * (index - anchor) / maximumOffset;
-            float offset = (float) (radius * Math.sin(Math.toRadians(degrees)));
-            minOffset = Math.min(minOffset, offset);
-            maxOffset = Math.max(maxOffset, offset);
-        }
-        float halfIcon = iconDiameter / 2f + 8f;
-        float minimum = safeTop + halfIcon - minOffset;
-        float maximum = safeBottom - halfIcon - maxOffset;
-        if (minimum > maximum) return (safeTop + safeBottom) / 2f;
-        return Math.max(minimum, Math.min(maximum, requestedY));
-    }
-
-    static int sideFanSelection(Corner side, float x, float y, int width,
-                                int itemCount, float apexX, float centerY, float radius,
-                                float iconDiameter, float tolerance) {
-        if (itemCount <= 0) return -1;
-        float hitRadius = iconDiameter / 2f + tolerance;
-        float hitRadiusSquared = hitRadius * hitRadius;
-        int nearest = -1;
-        float nearestDistance = Float.MAX_VALUE;
-        for (int index = 0; index < itemCount; index++) {
-            Point center = sideFanIconCenter(side, index, itemCount, width,
-                    apexX, centerY, radius);
-            float distance = squaredDistance(x, y, center.x, center.y);
-            if (distance <= hitRadiusSquared && distance < nearestDistance) {
-                nearest = index;
-                nearestDistance = distance;
-            }
-        }
-        return nearest;
-    }
-
-    static float sideRingRadius(int itemCount, float iconDiameter, float gap) {
-        if (itemCount <= 1) return iconDiameter * 1.45f;
-        double halfStep = Math.PI / itemCount;
-        float required = (float) ((iconDiameter + gap) / (2.0 * Math.sin(halfStep)));
-        return Math.max(iconDiameter * 1.45f, required);
-    }
-
-    static float scaledSideRingRadius(float automaticRadius, int sizePercent,
-                                      float maximumRadius) {
-        float scale = Math.max(0.6f, Math.min(1.8f, sizePercent / 100f));
-        return Math.max(1f, Math.min(Math.max(1f, maximumRadius),
-                Math.max(1f, automaticRadius) * scale));
-    }
-
-    static Point sideRingCenter(float requestedX, float requestedY, float radius,
-                                float iconDiameter, float safeLeft, float safeTop,
-                                float safeRight, float safeBottom) {
-        float outer = radius + iconDiameter / 2f;
-        float minX = safeLeft + outer;
-        float maxX = safeRight - outer;
-        float minY = safeTop + outer;
-        float maxY = safeBottom - outer;
-        float x = minX > maxX ? (safeLeft + safeRight) / 2f
-                : Math.max(minX, Math.min(maxX, requestedX));
-        float y = minY > maxY ? (safeTop + safeBottom) / 2f
-                : Math.max(minY, Math.min(maxY, requestedY));
-        return new Point(x, y);
-    }
-
-    static Point sideRingIconCenter(int index, int itemCount,
-                                    float centerX, float centerY, float radius) {
-        if (itemCount <= 0) return new Point(centerX, centerY);
-        double radians = -Math.PI / 2.0 + 2.0 * Math.PI * index / itemCount;
-        return new Point(centerX + (float) (radius * Math.cos(radians)),
-                centerY + (float) (radius * Math.sin(radians)));
-    }
-
-    static int sideRingSelection(float x, float y, int itemCount,
-                                 float centerX, float centerY, float radius,
-                                 float iconDiameter, float tolerance) {
-        if (itemCount <= 0) return -1;
-        float hitRadius = iconDiameter / 2f + tolerance;
-        float hitRadiusSquared = hitRadius * hitRadius;
-        int nearest = -1;
-        float nearestDistance = Float.MAX_VALUE;
-        for (int index = 0; index < itemCount; index++) {
-            Point center = sideRingIconCenter(index, itemCount, centerX, centerY, radius);
-            float distance = squaredDistance(x, y, center.x, center.y);
-            if (distance <= hitRadiusSquared && distance < nearestDistance) {
-                nearest = index;
-                nearestDistance = distance;
-            }
-        }
-        return nearest;
-    }
-
-    static int sideListSelection(float y, int itemCount, float listTop, float rowHeight) {
-        if (itemCount <= 0 || rowHeight <= 0f || y < listTop
-                || y >= listTop + itemCount * rowHeight) return -1;
-        int index = (int) ((y - listTop) / rowHeight);
-        return index >= 0 && index < itemCount ? index : -1;
-    }
-
-    static boolean insideSideList(float x, float y, float centerX, float hitWidth,
-                                  int itemCount, float listTop, float rowHeight) {
-        if (itemCount <= 0 || hitWidth <= 0f || rowHeight <= 0f) return false;
-        return Math.abs(x - centerX) <= hitWidth / 2f
-                && y >= listTop && y < listTop + itemCount * rowHeight;
-    }
-
-    static float sideReverseDistance(Corner side, float activationX, float pointerX) {
-        return side == Corner.LEFT
-                ? Math.max(0f, activationX - pointerX)
-                : Math.max(0f, pointerX - activationX);
-    }
-
-    static float sideListOuterBoundary(Corner side, float centerX, float hitWidth) {
-        float half = Math.max(0f, hitWidth) / 2f;
-        return side == Corner.LEFT ? centerX - half : centerX + half;
-    }
-
-    static float sideListOpacity(float reverseDistance, float cancelDistance) {
-        if (cancelDistance <= 0f) return 0f;
-        float progress = Math.max(0f, Math.min(1f, reverseDistance / cancelDistance));
-        return 1f - progress;
-    }
-
-    static boolean outsideSideListVertically(float y, int itemCount,
-                                             float listTop, float rowHeight) {
-        return itemCount <= 0 || rowHeight <= 0f || y < listTop
-                || y >= listTop + itemCount * rowHeight;
-    }
-
-    static boolean beyondSideListInward(Corner side, float x, float centerX,
-                                        float hitWidth) {
-        float half = hitWidth / 2f;
-        return side == Corner.LEFT ? x > centerX + half : x < centerX - half;
-    }
-
-    static int wheelSelection(float position, int itemCount) {
-        if (itemCount <= 0) return -1;
-        return Math.max(0, Math.min(itemCount - 1, Math.round(position)));
-    }
-
     static float effectiveRadius(int itemCount, float configuredRadius,
                                  float minimumDiameter, float gap) {
         return effectiveRadius(itemCount, configuredRadius, minimumDiameter, gap, false);
@@ -629,27 +465,19 @@ final class GestureGeometry {
                 secondRight, secondBottom) == OutsideRegion.INSIDE;
     }
 
-    static boolean inSideGestureReserve(float x, int width, float leftReserve, float rightReserve) {
+    static boolean inSystemEdgeReserve(float x, int width, float leftReserve, float rightReserve) {
         return x <= leftReserve || x >= width - rightReserve;
     }
 
-    static boolean shouldYieldSideTap(boolean fromLeft, float downX, float downY,
-                                      float x, float y, float swipeDecisionDistance,
-                                      float tapRetentionDistance) {
+    static boolean shouldYieldSystemBackEdge(boolean fromLeft, float downX, float downY,
+                                             float x, float y, float swipeDecisionDistance,
+                                             float tapRetentionDistance) {
         float horizontal = fromLeft ? x - downX : downX - x;
         float vertical = Math.abs(y - downY);
         if (horizontal >= swipeDecisionDistance && horizontal >= vertical * 1.1f) {
             return true;
         }
         return distance(downX, downY, x, y) > tapRetentionDistance;
-    }
-
-    static boolean isIntentionalSideSwipe(Corner side, float downX, float downY,
-                                           float x, float y, float decisionDistance) {
-        if (side == null) return false;
-        float inward = side == Corner.LEFT ? x - downX : downX - x;
-        float vertical = Math.abs(y - downY);
-        return inward >= decisionDistance && inward >= vertical * 1.1f;
     }
 
     private static float squaredDistance(float x1, float y1, float x2, float y2) {

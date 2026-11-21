@@ -3,6 +3,7 @@ package com.leaf.hyperdragshare.codex
 import android.content.Context
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.runtime.Composable
@@ -28,6 +29,7 @@ internal fun FirstRunGuide(
     showOnFirstRun: Boolean = true,
     requested: Boolean = false,
     onDismiss: () -> Unit = {},
+    onOpenDiagnostics: (() -> Unit)? = null,
 ) {
     val preferences = remember(context) {
         context.getSharedPreferences(GUIDE_PREFERENCES, Context.MODE_PRIVATE)
@@ -41,7 +43,6 @@ internal fun FirstRunGuide(
     OverlayDialog(
         show = show,
         title = "开始使用 MMGG",
-        summary = "MMGG（Make Mi Great Genesis）是 Root + LSPosed 模块，功能在当前页面使用。",
         onDismissRequest = {
             show = false
             onDismiss()
@@ -52,27 +53,32 @@ internal fun FirstRunGuide(
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
             Text(
-                text = "1. 启用推荐作用域并授权。首次重启；更新后可在设置中重载。",
+                text = "在 LSPosed 启用模块和推荐作用域，分别给 MMGG 和小米传送门授予 Root 权限，再重启。可在运行诊断检查授权。",
                 color = MiuixTheme.colorScheme.onSurface,
             )
             Text(
-                text = "2. 按住文字取词，选中后复制、搜索或拆词；按住选区直接拖出。",
+                text = "单指按住文字或图片，看到预览就拖动，未拖就松手会取消。双指按到设定时长即打开分词，图片先识字。",
                 color = MiuixTheme.colorScheme.onSurface,
             )
             Text(
-                text = "3. 灰色侧条展开中转站，拖动标题移动，按住内容拖出。微信接收后可能直接发送。",
+                text = "从中转站把内容拖到聊天时，接收应用可能直接发送。",
                 color = MiuixTheme.colorScheme.onSurface,
             )
-            TextButton(
-                text = "知道了",
-                onClick = {
-                    preferences.edit().putBoolean(KEY_CONFIRMED, true).apply()
-                    show = false
-                    onDismiss()
-                },
-                modifier = Modifier.fillMaxWidth().padding(top = 2.dp),
-                colors = ButtonDefaults.textButtonColorsPrimary(),
-            )
+            val dismissGuide = {
+                preferences.edit().putBoolean(KEY_CONFIRMED, true).apply()
+                show = false
+                onDismiss()
+            }
+            Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                TextButton(text = if (onOpenDiagnostics == null) "知道了" else "稍后",
+                    onClick = dismissGuide, modifier = Modifier.weight(1f))
+                if (onOpenDiagnostics != null) TextButton(
+                    text = "运行诊断",
+                    onClick = { dismissGuide(); onOpenDiagnostics() },
+                    modifier = Modifier.weight(1f),
+                    colors = ButtonDefaults.textButtonColorsPrimary(),
+                )
+            }
         }
     }
 }

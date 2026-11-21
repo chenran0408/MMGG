@@ -29,6 +29,10 @@ final class SharedRootNodeCapture {
 
     /** Opens the lease through a short-lived unstable Provider handshake. */
     static Connection open(Context context, boolean manual) throws IOException {
+        return open(context, manual, RootConnectionDiagnostics.newAttempt());
+    }
+
+    static Connection open(Context context, boolean manual, String attemptId) throws IOException {
         ContentProviderClient provider = context.getContentResolver()
                 .acquireUnstableContentProviderClient(ImageStagingClient.BASE_URI);
         if (provider == null) throw new IOException("无法连接模块取词服务");
@@ -37,16 +41,19 @@ final class SharedRootNodeCapture {
             Bundle request = new Bundle();
             request.putBinder("owner", owner);
             request.putBoolean("manual", manual);
+            request.putString("attempt_id", RootConnectionDiagnostics.validAttempt(attemptId)
+                    ? attemptId : RootConnectionDiagnostics.newAttempt());
             int moduleUid = context.getPackageManager().getApplicationInfo(BuildConfig.APPLICATION_ID, 0).uid;
             Bundle response = provider.call(METHOD_OPEN, null, request);
             if (response == null) throw new IOException("取词服务未返回租赁句柄");
             IBinder leaseBinder = response.getBinder("lease");
             if (leaseBinder == null) throw new IOException("取词服务未返回租赁句柄");
-            return new Connection(context, owner, moduleUid, IRootNodeLease.Stub.asInterface(leaseBinder));
+            return new Connection(context, owner, moduleUid, IRootNodeLease.Stub.asInterface(leaseBinder),
+                    response.getString("attempt_id"));
         } catch (android.content.pm.PackageManager.NameNotFoundException error) {
             throw new IOException("模块已不可用", error);
         } catch (RemoteException | IllegalStateException error) {
-            throw new IOException("连接取词服务失败：" + error.getMessage(), error);
+            throw new IOException("无法连接取词服务，请稍后重试");
         } finally {
             releaseProvider(provider);
         }
@@ -56,28 +63,33 @@ final class SharedRootNodeCapture {
     private static void releaseProvider(ContentProviderClient provider) {
         try {
             provider.close();
-        } catch (RuntimeException error) {
-            DragShareLog.w("DragShare/SharedNodes", "Unable to release unstable Provider handshake", error);
+        } catch (RuntimeException ignored) {
+            DragShareLog.w("DragShare/SharedNodes", "Unable to release unstable Provider handshake");
         }
     }
 
     // Called only after the Provider verifies the module/Portal caller and clears Binder identity.
     static synchronized Bundle acquire(Context context, IBinder owner, int uid, boolean manual) {
+        return acquire(context, owner, uid, manual, RootConnectionDiagnostics.newAttempt());
+    }
+
+    static synchronized Bundle acquire(Context context, IBinder owner, int uid, boolean manual, String attemptId) {
         if (owner == null) throw new IllegalArgumentException("Missing capture lease owner");
         try {
-            if (session == null) session = RootNodeCaptureClient.open(context.getApplicationContext());
+            if (session == null) session = RootNodeCaptureClient.open(context.getApplicationContext(), attemptId);
             Lease lease = new Lease(session, owner, uid, manual);
             owner.linkToDeath(lease, 0);
             leases.add(lease);
             DragShareLog.i("DragShare/SharedNodes", "lease acquired manual=" + manual + " clients=" + leases.size());
             Bundle response = new Bundle();
             response.putBinder("lease", lease);
+            response.putString("attempt_id", session.connectionAttemptId());
             return response;
         } catch (IOException | InterruptedException | RemoteException error) {
             if (error instanceof InterruptedException) Thread.currentThread().interrupt();
             if (leases.isEmpty() && session != null) { session.close(); session = null; }
-            DragShareLog.w("DragShare/SharedNodes", "Unable to acquire Root lease", error);
-            throw new IllegalStateException(error.getMessage());
+            DragShareLog.w("DragShare/SharedNodes", "Unable to acquire Root lease");
+            throw new IllegalStateException("无法连接取词服务，请稍后重试");
         }
     }
 
@@ -133,7 +145,7 @@ final class SharedRootNodeCapture {
             } catch (IOException | InterruptedException error) {
                 if (error instanceof InterruptedException) Thread.currentThread().interrupt();
                 invalidate(root);
-                DragShareLog.w("DragShare/SharedNodes", "Root lookup failed", error);
+                DragShareLog.w("DragShare/SharedNodes", "Root lookup failed");
                 throw new IllegalStateException(error.getMessage());
             } finally { Binder.restoreCallingIdentity(identity); io.unlock(); }
         }
@@ -148,7 +160,7 @@ final class SharedRootNodeCapture {
             } catch (IOException | InterruptedException error) {
                 if (error instanceof InterruptedException) Thread.currentThread().interrupt();
                 invalidate(root);
-                DragShareLog.w("DragShare/SharedNodes", "Root text insertion transport failed", error);
+                DragShareLog.w("DragShare/SharedNodes", "Root text insertion transport failed");
                 throw new IllegalStateException(error.getMessage());
             } finally { Binder.restoreCallingIdentity(identity); io.unlock(); }
         }
@@ -168,7 +180,7 @@ final class SharedRootNodeCapture {
             catch (IOException | InterruptedException error) {
                 if (error instanceof InterruptedException) Thread.currentThread().interrupt();
                 invalidate(root);
-                DragShareLog.w("DragShare/SharedNodes", "Root window check failed", error);
+                DragShareLog.w("DragShare/SharedNodes", "Root window check failed");
                 throw new IllegalStateException(error.getMessage());
             } finally { Binder.restoreCallingIdentity(identity); io.unlock(); }
         }
@@ -183,7 +195,7 @@ final class SharedRootNodeCapture {
             } catch (IOException | InterruptedException error) {
                 if (error instanceof InterruptedException) Thread.currentThread().interrupt();
                 invalidate(root);
-                DragShareLog.w("DragShare/SharedNodes", "Root screenshot failed", error);
+                DragShareLog.w("DragShare/SharedNodes", "Root screenshot failed");
                 throw new IllegalStateException(error.getMessage());
             } finally { Binder.restoreCallingIdentity(identity); io.unlock(); }
         }
@@ -198,7 +210,7 @@ final class SharedRootNodeCapture {
             } catch (IOException | InterruptedException error) {
                 if (error instanceof InterruptedException) Thread.currentThread().interrupt();
                 invalidate(root);
-                DragShareLog.w("DragShare/SharedNodes", "Root image capture failed", error);
+                DragShareLog.w("DragShare/SharedNodes", "Root image capture failed");
                 throw new IllegalStateException(error.getMessage());
             } finally { Binder.restoreCallingIdentity(identity); io.unlock(); }
         }
@@ -212,9 +224,15 @@ final class SharedRootNodeCapture {
             catch (IOException | InterruptedException error) {
                 if (error instanceof InterruptedException) Thread.currentThread().interrupt();
                 invalidate(root);
-                DragShareLog.w("DragShare/SharedNodes", "Root source check failed", error);
+                DragShareLog.w("DragShare/SharedNodes", "Root source check failed");
                 throw new IllegalStateException(error.getMessage());
             } finally { Binder.restoreCallingIdentity(identity); io.unlock(); }
+        }
+
+        @Override public boolean startedMicRecording(String source, long downTime) {
+            enforceOwner();
+            // This snapshot is updated by helper events, independently of screenshot requests.
+            return root.startedMicRecording(source, downTime, uid / 100000);
         }
 
         @Override public boolean isOpen() {
@@ -259,12 +277,21 @@ final class SharedRootNodeCapture {
         private final IBinder owner;
         private final int moduleUid;
         private final IRootNodeLease lease;
+        private final String attemptId;
         private volatile boolean closed;
 
-        Connection(Context context, IBinder owner, int moduleUid, IRootNodeLease lease) {
+        Connection(Context context, IBinder owner, int moduleUid, IRootNodeLease lease, String attemptId) {
             this.context = context; this.owner = owner;
             this.moduleUid = moduleUid; this.lease = lease;
+            this.attemptId = RootConnectionDiagnostics.validAttempt(attemptId)
+                    ? attemptId : RootConnectionDiagnostics.newAttempt();
         }
+
+        Connection(Context context, IBinder owner, int moduleUid, IRootNodeLease lease) {
+            this(context, owner, moduleUid, lease, RootConnectionDiagnostics.newAttempt());
+        }
+
+        String connectionAttemptId() { return attemptId; }
 
         /** Reports when the module process hosting this lease disappears. */
         boolean linkToDeath(IBinder.DeathRecipient recipient) {
@@ -293,20 +320,31 @@ final class SharedRootNodeCapture {
         }
 
         PressResult capturePress(float x, float y, Set<String> blocked, boolean text, boolean images, boolean earlyCapture,
-                                 RootNodeCaptureClient.CandidateHandler handler)
+                                 RootNodeCaptureClient.CandidateHandler handler,
+                                 java.util.function.Consumer<String> contentReady)
                 throws IOException, InterruptedException {
-            return captureResult(x, y, blocked, text, images, true, earlyCapture, handler);
+            return captureResult(x, y, blocked, text, images, true, earlyCapture, handler, contentReady);
+        }
+
+        boolean startedMicRecording(String source, long downTime) {
+            try {
+                return lease.startedMicRecording(source, downTime);
+            } catch (RemoteException | IllegalStateException | SecurityException error) {
+                DragShareLog.w("DragShare/RecordingAvoidance", "Cannot check microphone activity", error);
+                return false;
+            }
         }
 
         private CapturedContent capture(float x, float y, Set<String> blocked, boolean text, boolean images,
                                         boolean pressLookup, boolean earlyCapture, RootNodeCaptureClient.CandidateHandler handler)
                 throws IOException, InterruptedException {
-            return captureResult(x, y, blocked, text, images, pressLookup, earlyCapture, handler).content;
+            return captureResult(x, y, blocked, text, images, pressLookup, earlyCapture, handler, null).content;
         }
 
         private PressResult captureResult(float x, float y, Set<String> blocked, boolean text, boolean images,
                                           boolean pressLookup, boolean earlyCapture,
-                                          RootNodeCaptureClient.CandidateHandler handler)
+                                          RootNodeCaptureClient.CandidateHandler handler,
+                                          java.util.function.Consumer<String> contentReady)
                 throws IOException, InterruptedException {
             if (closed) throw new ConnectionFailedException("取词连接已关闭", null);
             try {
@@ -328,6 +366,13 @@ final class SharedRootNodeCapture {
                 }
                 String rejectionReason = pressLookup && node != null
                         ? node.getString(RootNodeCaptureClient.KEY_CAPTURE_REASON) : null;
+                // Publish a validated semantic node before the slower screenshot. An OCR
+                // region is not a drag candidate and must not consume the app's long press.
+                if (contentReady != null && node != null && node.containsKey("package")
+                        && !node.getBoolean("press_ocr_region")
+                        && (node.getBoolean("image") ? images : text)) {
+                    contentReady.accept(node.getString("package"));
+                }
                 CapturedContent content = RootNodeCaptureClient.contentFromNode(
                         context, node,
                         (source, windowId, bounds) -> {
@@ -360,7 +405,7 @@ final class SharedRootNodeCapture {
                             } catch (RemoteException error) {
                                 throw requestFailure("读取图片失败", error);
                             } catch (IllegalStateException error) {
-                                DragShareLog.w("DragShare/SharedNodes", "image capture unavailable", error);
+                                DragShareLog.w("DragShare/SharedNodes", "image capture unavailable");
                                 return null;
                             }
                         });
@@ -409,7 +454,7 @@ final class SharedRootNodeCapture {
             if (closed) return;
             closed = true;
             try { lease.close(); }
-            catch (RemoteException error) { DragShareLog.w("DragShare/SharedNodes", "Capture service disconnected during close", error); }
+            catch (RemoteException error) { DragShareLog.w("DragShare/SharedNodes", "Capture service disconnected during close"); }
         }
     }
 

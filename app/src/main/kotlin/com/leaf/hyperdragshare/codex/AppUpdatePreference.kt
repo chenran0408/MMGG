@@ -61,9 +61,11 @@ private const val UPDATE_PREFS = "app_update"
 private const val KEY_DOWNLOAD_ID = "download_id"
 private const val KEY_DOWNLOAD_NAME = "download_name"
 private const val MIME_APK = "application/vnd.android.package-archive"
+private const val CHANNEL_DEBUG = "debug"
+private const val CHANNEL_BETA = "beta"
 private val RELEASE_ASSET_PATTERN = Pattern.compile("(?:MMGG|HyperDragShare)-(\\d+(?:\\.\\d+){1,3})-arm64-v8a\\.apk")
 
-private data class ReleaseInfo(
+internal data class ReleaseInfo(
     val versionName: String,
     val notes: String,
     val publishedAt: String,
@@ -97,10 +99,16 @@ internal fun AppUpdatePreference(title: String, enabled: Boolean = true) {
     var downloadError by remember { mutableStateOf<String?>(null) }
     var installMessage by remember { mutableStateOf<String?>(null) }
     var forceRedownload by remember { mutableStateOf(false) }
+    val isBeta = BuildConfig.UPDATE_CHANNEL == CHANNEL_BETA
+    val isDevelopment = BuildConfig.UPDATE_CHANNEL == CHANNEL_DEBUG
 
     ArrowPreference(
         title = title,
-        summary = "查看正式版更新说明并下载安装",
+        summary = when {
+            isDevelopment -> "开发构建不检查正式更新"
+            isBeta -> "Beta 通道 · 正式版发布后可切换"
+            else -> "查看正式版更新说明并下载安装"
+        },
         enabled = enabled,
         onClick = {
             showDialog = true
@@ -112,6 +120,11 @@ internal fun AppUpdatePreference(title: String, enabled: Boolean = true) {
 
     LaunchedEffect(showDialog, checkRevision) {
         if (!showDialog || checkRevision == 0L) return@LaunchedEffect
+        if (isDevelopment) {
+            checking = false
+            checkError = "这是开发构建，请使用 Beta 或正式版安装包检查更新。"
+            return@LaunchedEffect
+        }
         checking = true
         checkError = null
         release = null
@@ -171,11 +184,17 @@ internal fun AppUpdatePreference(title: String, enabled: Boolean = true) {
     }
 
     val releaseState = release
-    val currentVersionComparison = releaseState?.let { compareVersions(BuildConfig.VERSION_NAME, it.versionName) }
+    val currentVersionComparison = releaseState?.let {
+        compareVersionNames(BuildConfig.VERSION_NAME, it.versionName)
+    }
     val summary = when {
         checking -> "正在检查官方正式版…"
         checkError != null -> "检查失败"
-        releaseState == null -> "检查 chenran0408/HyperDragShare 正式版更新"
+        releaseState == null -> if (isBeta) {
+            "检查可用于切换的 MMGG 正式版"
+        } else {
+            "检查 chenran0408/MMGG 正式版更新"
+        }
         currentVersionComparison == null -> "当前版本号无法比较，请通过 GitHub Releases 手动核对。"
         currentVersionComparison > 0 -> "本地版本 ${BuildConfig.VERSION_NAME} 比正式版 ${releaseState.versionName} 更新。"
         currentVersionComparison == 0 -> "当前已是正式版 ${releaseState.versionName}。"
@@ -312,27 +331,27 @@ internal fun AppUpdatePreference(title: String, enabled: Boolean = true) {
     }
 }
 
-private fun fetchLatestRelease(): ReleaseInfo {
-    val (page, finalPageUrl) = fetchGithubPage(RELEASE_PAGE)
+internal fun fetchLatestRelease(readPage: (String) -> Pair<String, String> = ::fetchGithubPage): ReleaseInfo {
+    val (page, finalPageUrl) = readPage(RELEASE_PAGE)
     val finalUrl = URL(finalPageUrl)
     val tag = finalUrl.path.substringAfterLast('/')
     if (finalUrl.protocol != "https" || finalUrl.host != "github.com" ||
-        finalUrl.path.substringBeforeLast('/') != "/chenran0408/HyperDragShare/releases/tag" ||
+        finalUrl.path.substringBeforeLast('/') != "/chenran0408/MMGG/releases/tag" ||
         !tag.startsWith("v") || !VERSION_PATTERN.matcher(tag.removePrefix("v")).matches()) {
         throw IllegalArgumentException("GitHub 没有返回可识别的正式版页面。")
     }
     val version = tag.removePrefix("v")
-    val fragmentSource = Regex("""<include-fragment[^>]+src=["'](https://github\.com/chenran0408/HyperDragShare/releases/expanded_assets/v${Regex.escape(version)})["']""")
+    val fragmentSource = Regex("""<include-fragment[^>]+src=["'](https://github\.com/chenran0408/MMGG/releases/expanded_assets/v${Regex.escape(version)})["']""")
         .find(page)?.groupValues?.get(1)
         ?: throw IllegalArgumentException("正式版页面没有提供可验证的安装包列表。")
-    val (assetsHtml, assetsUrl) = fetchGithubPage(fragmentSource)
+    val (assetsHtml, assetsUrl) = readPage(fragmentSource)
     val assetsPage = URL(assetsUrl)
     if (assetsPage.protocol != "https" || assetsPage.host != "github.com" ||
-        assetsPage.path != "/chenran0408/HyperDragShare/releases/expanded_assets/v$version") {
+        assetsPage.path != "/chenran0408/MMGG/releases/expanded_assets/v$version") {
         throw IllegalArgumentException("安装包列表不是当前正式版的官方页面。")
     }
     val assetPattern = Regex(
-        """<a[^>]+href=["'](/chenran0408/HyperDragShare/releases/download/v${Regex.escape(version)}/([^"']+))["']""",
+        """<a[^>]+href=["'](/chenran0408/MMGG/releases/download/v${Regex.escape(version)}/([^"']+))["']""",
         RegexOption.IGNORE_CASE,
     )
     val asset = assetPattern.findAll(assetsHtml).firstOrNull { match ->
@@ -361,7 +380,7 @@ private fun fetchLatestRelease(): ReleaseInfo {
 private fun fetchGithubPage(url: String): Pair<String, String> {
     val requested = URL(url)
     if (requested.protocol != "https" || requested.host != "github.com" ||
-        !requested.path.startsWith("/chenran0408/HyperDragShare/releases/")) {
+        !requested.path.startsWith("/chenran0408/MMGG/releases/")) {
         throw IllegalArgumentException("请求地址不属于官方 GitHub Releases 页面。")
     }
     val connection = (requested.openConnection() as HttpURLConnection).apply {
@@ -383,17 +402,58 @@ private fun fetchGithubPage(url: String): Pair<String, String> {
 }
 
 private val VERSION_PATTERN = Pattern.compile("\\d+(?:\\.\\d+){1,3}")
+private val COMPARABLE_VERSION_PATTERN = Pattern.compile(
+    "(\\d+(?:\\.\\d+){1,3})(?:-([0-9A-Za-z.-]+))?(?:\\+[0-9A-Za-z.-]+)?",
+)
 
-private fun compareVersions(first: String, second: String): Int? {
-    if (!VERSION_PATTERN.matcher(first).matches() || !VERSION_PATTERN.matcher(second).matches()) return null
-    val left = first.split('.').map { it.toLongOrNull() ?: return null }
-    val right = second.split('.').map { it.toLongOrNull() ?: return null }
-    for (index in 0 until maxOf(left.size, right.size)) {
-        val a = left.getOrElse(index) { 0L }
-        val b = right.getOrElse(index) { 0L }
+private data class ComparableVersion(
+    val numbers: List<Long>,
+    val prerelease: List<String>?,
+)
+
+internal fun compareVersionNames(first: String, second: String): Int? {
+    val left = parseComparableVersion(first) ?: return null
+    val right = parseComparableVersion(second) ?: return null
+    for (index in 0 until maxOf(left.numbers.size, right.numbers.size)) {
+        val a = left.numbers.getOrElse(index) { 0L }
+        val b = right.numbers.getOrElse(index) { 0L }
         if (a != b) return a.compareTo(b)
     }
+    val leftPre = left.prerelease
+    val rightPre = right.prerelease
+    if (leftPre == null || rightPre == null) {
+        return when {
+            leftPre == null && rightPre == null -> 0
+            leftPre == null -> 1
+            else -> -1
+        }
+    }
+    for (index in 0 until maxOf(leftPre.size, rightPre.size)) {
+        val a = leftPre.getOrNull(index) ?: return -1
+        val b = rightPre.getOrNull(index) ?: return 1
+        val comparison = comparePrereleaseIdentifier(a, b)
+        if (comparison != 0) return comparison
+    }
     return 0
+}
+
+private fun parseComparableVersion(value: String): ComparableVersion? {
+    val matcher = COMPARABLE_VERSION_PATTERN.matcher(value)
+    if (!matcher.matches()) return null
+    val numbers = matcher.group(1)?.split('.')?.map { it.toLongOrNull() ?: return null } ?: return null
+    val prerelease = matcher.group(2)?.split('.')?.takeIf { it.isNotEmpty() }
+    return ComparableVersion(numbers, prerelease)
+}
+
+private fun comparePrereleaseIdentifier(first: String, second: String): Int {
+    val firstNumber = first.toLongOrNull()
+    val secondNumber = second.toLongOrNull()
+    return when {
+        firstNumber != null && secondNumber != null -> firstNumber.compareTo(secondNumber)
+        firstNumber != null -> -1
+        secondNumber != null -> 1
+        else -> first.compareTo(second)
+    }
 }
 
 private fun enqueueDownload(context: Context, release: ReleaseInfo): Pair<Long, String> {
@@ -417,7 +477,7 @@ private fun enqueueDownload(context: Context, release: ReleaseInfo): Pair<Long, 
 private fun isTrustedReleaseAssetUrl(value: String): Boolean = try {
     val url = URL(value)
     url.protocol == "https" && url.host == "github.com" &&
-        url.path.startsWith("/chenran0408/HyperDragShare/releases/download/")
+        url.path.startsWith("/chenran0408/MMGG/releases/download/")
 } catch (_: java.net.MalformedURLException) {
     false
 }

@@ -13,6 +13,7 @@ import android.view.accessibility.AccessibilityWindowInfo;
 import java.time.Duration;
 import java.util.List;
 import org.json.JSONObject;
+import org.junit.Before;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.robolectric.RobolectricTestRunner;
@@ -27,9 +28,15 @@ import org.robolectric.shadows.ShadowSystemClock;
 import org.robolectric.shadows.ShadowUiAutomation;
 
 @RunWith(RobolectricTestRunner.class)
-@Config(manifest = Config.NONE, shadows = RootNodeRequestTest.AutomationShadow.class)
+@Config(manifest = Config.NONE, shadows = {RootNodeRequestTest.AutomationShadow.class,
+        RootNodeRequestTest.NativeViewShadow.class})
 @LooperMode(LooperMode.Mode.PAUSED)
 public final class RootNodeRequestTest {
+    @Before public void resetNativeResult() {
+        NativeViewShadow.result = null;
+        NativeViewShadow.calls = 0;
+    }
+
     @Test public void insertionReplacesSelectionAndPreservesSurroundingText() {
         assertEquals("aXd", RootNodeCaptureMain.insertedText("abcd", 1, 3, "X"));
         assertEquals("aXd", RootNodeCaptureMain.insertedText("abcd", 3, 1, "X"));
@@ -77,6 +84,7 @@ public final class RootNodeRequestTest {
         ShadowAccessibilityWindowInfo windowShadow = Shadow.extract(window);
         windowShadow.setType(AccessibilityWindowInfo.TYPE_APPLICATION);
         windowShadow.setBoundsInScreen(new Rect(0, 0, 1000, 2000));
+        windowShadow.setId(17);
         shadow.root = AccessibilityNodeInfo.obtain();
         shadow.root.setPackageName("reader");
         shadow.root.setClassName("android.widget.TextView");
@@ -93,19 +101,92 @@ public final class RootNodeRequestTest {
         window.recycle();
     }
 
+    @Test public void changingAccessibilityRootKeepsNativeWindowRoute() throws Exception {
+        NativeViewShadow.result = new JSONObject().put("found", true).put("kind", "text")
+                .put("text", "native content").put("window_id", -1);
+
+        JSONObject result = captureWithChangingRoot(true);
+
+        assertTrue(result.getBoolean("found"));
+        assertEquals(-1, result.getInt("window_id"));
+        assertEquals("native content", result.getString("text"));
+        assertEquals(1, NativeViewShadow.calls);
+    }
+
+    @Test public void nativeRejectionIsNotHiddenByEarlierAccessibilityWindowChange() throws Exception {
+        NativeViewShadow.result = new JSONObject().put("found", false).put("reason", "no_text");
+
+        JSONObject result = captureWithChangingRoot(true);
+
+        assertFalse(result.getBoolean("found"));
+        assertEquals("no_text", result.getString("reason"));
+    }
+
+    @Test public void ordinaryLookupDoesNotStartNativePressCapture() throws Exception {
+        JSONObject result = captureWithChangingRoot(false);
+
+        assertFalse(result.getBoolean("found"));
+        assertEquals("window_changed", result.getString("reason"));
+        assertEquals(0, NativeViewShadow.calls);
+    }
+
+    private JSONObject captureWithChangingRoot(boolean press) throws Exception {
+        UiAutomation automation = Shadow.newInstanceOf(UiAutomation.class);
+        AutomationShadow shadow = Shadow.extract(automation);
+        shadow.changeAfterFirstRead = true;
+        AccessibilityWindowInfo window = AccessibilityWindowInfo.obtain();
+        ShadowAccessibilityWindowInfo windowShadow = Shadow.extract(window);
+        windowShadow.setId(17);
+        windowShadow.setType(AccessibilityWindowInfo.TYPE_APPLICATION);
+        windowShadow.setBoundsInScreen(new Rect(0, 0, 1000, 2000));
+        shadow.root = AccessibilityNodeInfo.obtain();
+        shadow.root.setPackageName("reader");
+        shadow.root.setClassName("android.widget.TextView");
+        shadow.root.setText("old content");
+        shadow.root.setVisibleToUser(true);
+        shadow.root.setBoundsInScreen(new Rect(0, 0, 300, 200));
+        ShadowAccessibilityNodeInfo nodeShadow = Shadow.extract(shadow.root);
+        nodeShadow.setAccessibilityWindowInfo(window);
+        JSONObject request = new JSONObject().put("x", 50).put("y", 50)
+                .put("density", 1).put("width", 1000).put("height", 2000)
+                .put("blocked", new org.json.JSONArray()).put("press_lookup", press);
+        try {
+            return RootNodeCaptureMain.captureRequest(request, automation,
+                    new Object(), new int[]{0}, new Handler(Looper.getMainLooper()));
+        } finally {
+            shadow.root.recycle();
+            window.recycle();
+        }
+    }
+
     @Implements(UiAutomation.class)
     public static class AutomationShadow extends ShadowUiAutomation {
         AccessibilityNodeInfo root;
+        boolean changeAfterFirstRead;
+        int reads;
 
         @Implementation protected void clearCache() {}
 
         @Implementation protected List<AccessibilityWindowInfo> getWindows() { return List.of(); }
 
         @Implementation protected AccessibilityNodeInfo getRootInActiveWindow() {
+            if (changeAfterFirstRead && reads++ > 0) return null;
             if (root != null) return AccessibilityNodeInfo.obtain(root);
             // Advance the actual request deadline without sleeping or replacing its policy.
             ShadowSystemClock.advanceBy(Duration.ofMillis(1201));
             return null;
+        }
+    }
+
+    @Implements(value = RootUiAgentCapture.class, isInAndroidSdk = false)
+    public static class NativeViewShadow {
+        static JSONObject result;
+        static int calls;
+        @Implementation protected static JSONObject capture(JSONObject request) throws Exception {
+            calls++;
+            if (result != null) return result;
+            // Host tests have no WMS/UIAgent Binder service. Simulate its missing-window response.
+            return new JSONObject().put("found", false).put("reason", "window_not_ready");
         }
     }
 }

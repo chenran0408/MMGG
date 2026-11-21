@@ -3,4 +3,10 @@
     <external-files-path
         name="update_downloads"
         path="Download/" />
+    <cache-path
+        name="touch_probe_reports"
+        path="touch-probe/" />
+    <cache-path
+        name="diagnostic_reports"
+        path="diagnostics/" />
 </paths>

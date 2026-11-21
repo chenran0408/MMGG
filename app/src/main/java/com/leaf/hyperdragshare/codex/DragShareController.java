@@ -1,7 +1,6 @@
 package com.leaf.hyperdragshare.codex;
 
 import android.content.Context;
-import android.content.Intent;
 import android.graphics.Bitmap;
 import android.graphics.Color;
 import android.graphics.Insets;
@@ -17,6 +16,7 @@ import android.os.Looper;
 import android.os.SystemClock;
 import android.util.TypedValue;
 import android.view.Gravity;
+import android.view.HapticFeedbackConstants;
 import android.view.MotionEvent;
 import android.view.View;
 import android.view.ViewGroup;
@@ -35,13 +35,14 @@ import android.widget.ScrollView;
 import android.widget.TextView;
 import android.widget.Toast;
 
-import java.io.IOException;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.LinkedBlockingQueue;
+import java.util.concurrent.ThreadPoolExecutor;
+import java.util.concurrent.TimeUnit;
 
 final class DragShareController {
     private static final String TAG = "DragShare/UI";
@@ -59,21 +60,28 @@ final class DragShareController {
     private static final int CIRCLE_EDGE_SOFT_DISTANCE_DP = 180;
     private static final long CIRCLE_EDGE_OPEN_DELAY_MS = 200L;
     private static final long DUPLICATE_EVENT_WINDOW_MS = 2;
-    private static final ExecutorService TARGET_QUERY_EXECUTOR =
-            Executors.newSingleThreadExecutor(runnable -> {
+    // Emergency recovery only: normal completion still follows Root UP/CANCEL. A long
+    // stationary drag remains valid for 30 seconds without input before being cancelled.
+    static final long STALE_INPUT_TIMEOUT_MS = 30_000L;
+    private static final ThreadPoolExecutor TARGET_QUERY_EXECUTOR =
+            new ThreadPoolExecutor(1, 1, 0L, TimeUnit.MILLISECONDS,
+                    new LinkedBlockingQueue<>(), runnable -> {
                 Thread thread = new Thread(runnable, "dragshare-target-query");
                 thread.setDaemon(true);
                 return thread;
             });
-    private static boolean modernOverlayPrewarmStarted;
-
-
     private final Context context;
     private final WindowManager windowManager;
     private final BackgroundTouchBlocker backgroundTouchBlocker;
     private final OverlayWindowPolicy windowPolicy;
     private final Handler mainHandler = new Handler(Looper.getMainLooper());
+    private final LatestRequest targetQueryRequests = new LatestRequest();
+    private final LatestTaskSlot targetQueryTask = new LatestTaskSlot(TARGET_QUERY_EXECUTOR);
     private final DragShareToast dragShareToast;
+    private final DragShareActions actions;
+    private final DragShareLifecycle lifecycle = new DragShareLifecycle();
+    private Runnable staleInputWatchdog;
+    private final ModernOverlayPrewarm overlayPrewarm;
     private final Runnable edgeScrollRunnable = new Runnable() {
         @Override
         public void run() {
@@ -140,16 +148,24 @@ final class DragShareController {
     private volatile boolean active;
     private volatile boolean destroyed;
     private volatile long rootDownTime = -1L;
+    private volatile boolean fallbackPress;
+    private volatile long releasedRootDownTime = -1L;
     private volatile long pressHandoffTime = -1L;
     private volatile long pressPipelineDownTime = -1L;
     // startPick*Task can create Taplus' full-screen float view before this controller reaches
     // the main thread. Keep its window suppressed during that small handoff.
     private volatile boolean pendingPortalHostFloatWindowSuppression;
+    private volatile CapturedContent pendingImagePreview;
+    private boolean pendingImagePreviewWhileHolding;
+    private DragShareSettings pendingImageSettings;
+    private long pendingImageOriginDownTime = -1L;
+    private boolean activeImageDragStartedFromPreview;
+    private final PendingPreviewGesture pendingPreviewGesture = new PendingPreviewGesture();
     private volatile float lastObservedX = -1;
     private volatile float lastObservedY = -1;
     private volatile long lastObservedEventTime;
-
     private float lastX;
+    private float menuDragOriginX;
     private float lastY;
     private long lastHandledEventTime = Long.MIN_VALUE;
     private int lastHandledAction = -1;
@@ -175,6 +191,7 @@ final class DragShareController {
     private int menuLeft;
     private int menuWidth;
     private int simpleMenuPosition = DragShareSettings.SIMPLE_MENU_POSITION_BOTTOM;
+    private int configuredSimpleMenuPosition = DragShareSettings.DEFAULT_SIMPLE_MENU_POSITION;
 
 
 
@@ -212,12 +229,48 @@ final class DragShareController {
     private List<ShareTarget> shareTargets = new ArrayList<>();
     private boolean targetsLoaded;
     private boolean targetQueryRequested;
+    private View targetQueryPreviewView;
+    private ViewTreeObserver.OnDrawListener targetQueryDrawListener;
+    private Runnable targetQueryStartRunnable;
     private ShareTarget selectedTarget;
     private boolean menuShown;
 
     private volatile Session session;
+    /** Main-thread accepted Root ACTION_DOWN owner, used by delayed host callbacks. */
+    private volatile long rootOperationGeneration;
     private DragShareSettings settings = DragShareSettings.defaults();
     private OverlayColors palette = OverlayColors.light();
+    private final GestureDiagnostics.Stream diagnostics = new GestureDiagnostics.Stream("drag_controller");
+    private final GestureTraceRecorder gestureTrace = new GestureTraceRecorder(message -> log(message));
+    private String diagnosticSourcePackage;
+
+    private String diagnosticState() {
+        return active ? "DRAGGING" : pressHandoffTime >= 0L ? "HANDOFF"
+                : pressPipelineDownTime >= 0L ? "ARMED" : rootDownTime >= 0L ? "PENDING" : "IDLE";
+    }
+
+    String diagnosticPackage() {
+        return active && session != null ? session.payload.sourcePackage : diagnosticSourcePackage;
+    }
+
+    void notePressDiagnostics(long expectedDown, String pkg, String phase, String reason) {
+        if (!GestureDiagnostics.enabled()) return;
+        runOnMain(() -> {
+            if (expectedDown != rootDownTime) return;
+            if (pkg != null) diagnosticSourcePackage = pkg;
+            traceDiagnostic("STATE", reason, phase);
+        });
+    }
+
+    void traceDiagnostic(String action, String reason, String phase) {
+        if (!GestureDiagnostics.enabled()) return;
+        try {
+            Boolean wf = previewView != null && previewView.isAttachedToWindow() ? previewView.hasWindowFocus() : null;
+            Boolean vf = previewView != null && previewView.isAttachedToWindow() ? previewView.hasFocus() : null;
+            diagnostics.mark(action, diagnosticPackage(), phase == null ? diagnosticState() : phase,
+                    active, wf, vf, reason);
+        } catch (RuntimeException ignored) { /* Observe without influencing gesture handling. */ }
+    }
 
     DragShareController(Context context) {
         this(context, OverlayWindowPolicy.portal());
@@ -229,7 +282,34 @@ final class DragShareController {
         this.backgroundTouchBlocker = new BackgroundTouchBlocker(context);
         this.windowPolicy = windowPolicy == null ? OverlayWindowPolicy.portal() : windowPolicy;
         this.dragShareToast = new DragShareToast(context, this.windowPolicy);
-        prewarmModernOverlay();
+        this.actions = new DragShareActions(
+                context,
+                mainHandler,
+                dragShareToast,
+                "accessibility".equals(this.windowPolicy.sourceName));
+        overlayPrewarm = new ModernOverlayPrewarm(context, windowManager, mainHandler,
+                new ModernOverlayPrewarm.Host() {
+                    @Override
+                    public boolean isDestroyed() {
+                        return destroyed;
+                    }
+
+                    @Override
+                    public WindowManager.LayoutParams warmupParams() {
+                        return overlayParams(2, 2, "DragShare modern overlay warmup");
+                    }
+
+                    @Override
+                    public void log(String message) {
+                        DragShareController.log(message);
+                    }
+
+                    @Override
+                    public void log(String message, Throwable error) {
+                        DragShareController.log(message, error);
+                    }
+                });
+        overlayPrewarm.start();
     }
 
     boolean isActive() {
@@ -242,6 +322,11 @@ final class DragShareController {
         Session current = session;
         return !active || (downTime >= 0L && current != null
                 && current.rootDownTime == downTime);
+    }
+
+    boolean inputCanBlockHostTouch() {
+        // Pilfering pointers can cancel the same MotionEvent stream that the fallback relies on.
+        return !fallbackPress;
     }
 
     boolean isAwaitingRootRelease() {
@@ -264,10 +349,11 @@ final class DragShareController {
         endPressPipeline(downTime);
         Session current = session;
         if (active && current != null && current.rootDownTime == downTime) {
-            current.cancelled = true;
+            current.discard();
             active = false;
             stopEdgeScroll();
             backgroundTouchBlocker.stop();
+            overlayPrewarm.dispose();
             removeGestureViews();
         }
         pendingPortalHostFloatWindowSuppression = false;
@@ -287,40 +373,294 @@ final class DragShareController {
             float initialX,
             float initialY,
             DragShareSettings loadedSettings) {
+        show(content, initialX, initialY, loadedSettings, rootDownTime);
+    }
+
+    void show(CapturedContent content, float initialX, float initialY,
+              DragShareSettings loadedSettings, long downTime) {
         if (content == null) {
             return;
         }
-        long downTime = rootDownTime;
-        runOnMain(() -> showOnMain(content, initialX, initialY, loadedSettings, downTime));
+        runOnMain(() -> showOnMain(content, initialX, initialY, loadedSettings, downTime, false));
     }
 
     /** Reclaim a still-active Root press after its OCR text handoff was shown. */
-    void showImageForPressTakeover(
+    void showContentForPressTakeover(
             CapturedContent content,
             float initialX,
             float initialY,
             DragShareSettings loadedSettings,
             long downTime) {
+        showContentForPressTakeover(content, initialX, initialY, loadedSettings, downTime, false);
+    }
+
+    private void showContentForPressTakeover(
+            CapturedContent content,
+            float initialX,
+            float initialY,
+            DragShareSettings loadedSettings,
+            long downTime,
+            boolean reuseAttachedPreview) {
         if (content == null) return;
         runOnMain(() -> {
             if (destroyed || downTime < 0L || rootDownTime != downTime
                     || (pressHandoffTime >= 0L && pressHandoffTime != downTime)) {
+                if (reuseAttachedPreview) removeGestureViews();
                 if (content.isImage() && content.bitmapOwnedByDragShare
                         && !content.bitmap.isRecycled()) content.bitmap.recycle();
-                log("press image takeover rejected because Root press changed");
+                log("press content takeover rejected because Root press changed");
                 return;
             }
             pressHandoffTime = -1L;
             pressPipelineDownTime = -1L;
             if (active && session != null && session.rootDownTime == downTime) {
-                cancelGestureOnMain();
+                cancelGestureOnMain("same_press_takeover");
             }
-            showOnMain(content, initialX, initialY, loadedSettings, downTime);
+            showOnMain(content, initialX, initialY, loadedSettings, downTime,
+                    reuseAttachedPreview);
         });
     }
 
+    /** Holds a bounded preview until the user starts the drag. */
+    void showPendingImagePreview(CapturedContent content, float x, float y,
+                                 DragShareSettings loadedSettings, long originDownTime) {
+        showPendingImagePreview(content, x, y, loadedSettings, originDownTime, false);
+    }
+
+    /**
+     * Same preview, shown while the Root press is still holding. The window stays
+     * NOT_TOUCHABLE so the live host touch stream is undisturbed until the user
+     * either starts moving (direct takeover) or lifts (interactive pending preview).
+     */
+    void showPendingImagePreview(CapturedContent content, float x, float y,
+                                 DragShareSettings loadedSettings, long originDownTime,
+                                 boolean whileHolding) {
+        if (content == null) return;
+        runOnMain(() -> {
+            boolean ownsRootRelease = isRootPressCurrentOrReleased(originDownTime);
+            if (!ownsRootRelease) {
+                recycleOwnedImage(content);
+                OperationTrace.event(OperationTrace.id("press", originDownTime),
+                        "preview", "pending_image_late_ignored");
+                return;
+            }
+            if (destroyed || (loadedSettings != null
+                    && !loadedSettings.isSharingEnabled(content.isImage()))) {
+                recycleOwnedImage(content);
+                return;
+            }
+            dismissPendingImagePreview(true);
+            active = false;
+            settings = loadedSettings == null ? DragShareSettings.defaults() : loadedSettings;
+            pendingImagePreview = content;
+            pendingImagePreviewWhileHolding = whileHolding;
+            pendingImageSettings = settings;
+            pendingImageOriginDownTime = originDownTime;
+            palette = OverlayColors.from(settings.isDarkTheme(context));
+            refreshDisplayGeometry();
+            try {
+                createPreview(content);
+                if (!whileHolding) {
+                    previewParams.flags &= ~WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE;
+                    previewView.setOnTouchListener((view, event) -> true);
+                } else {
+                    previewView.setOnTouchListener(null);
+                }
+                if (isModernStyle()) modernPreviewWindow.show();
+                else windowManager.addView(previewView, previewParams);
+                // The bounded preview consumes only its own View stream. Root remains the
+                // sole owner of drag recognition and outside-tap cancellation.
+                float initialX = Float.isFinite(x) && x >= 0f ? x : screenWidth / 2f;
+                float initialY = Float.isFinite(y) && y >= 0f
+                        ? y : Math.max(topInset + dp(80), screenHeight * 0.32f);
+                updatePreviewPosition(initialX, initialY);
+                startPreviewEnterAnimation();
+                if (whileHolding) {
+                    OperationTrace.event(OperationTrace.id("press", originDownTime),
+                            "preview", "hold_preview_shown");
+                } else {
+                    OperationTrace.event(OperationTrace.id("press", originDownTime),
+                            "preview", "pending_image_shown");
+                }
+                log("press timing stage=preview_shown fromDownMs="
+                        + elapsedFromPressDown(originDownTime)
+                        + " mode=" + (whileHolding ? "holding" : "pending"));
+            } catch (RuntimeException error) {
+                dismissPendingImagePreview(true);
+                failOverlay("图片预览窗口创建失败", error);
+            }
+        });
+    }
+
+    private void promotePendingImagePreview(float x, float y, long eventTime) {
+        CapturedContent payload = pendingImagePreview;
+        if (payload == null) return;
+        if (previewView != null) previewView.performHapticFeedback(HapticFeedbackConstants.LONG_PRESS);
+        DragShareSettings loadedSettings = pendingImageSettings;
+        long down = rootDownTime;
+        float startX = pendingPreviewGesture.startX();
+        float startY = pendingPreviewGesture.startY();
+        detachPendingImagePreviewForPromotion();
+        pressHandoffTime = -1L;
+        pressPipelineDownTime = -1L;
+        showOnMain(payload, x, y, loadedSettings, down, true);
+        activeImageDragStartedFromPreview = active && session != null && session.payload == payload;
+        String source = fallbackPress ? "miui" : "root";
+        handleMotionOnMain(MotionEvent.ACTION_DOWN, startX, startY, down, source, null);
+        handleMotionOnMain(MotionEvent.ACTION_MOVE, x, y, eventTime, source, null);
+    }
+
+    /** Converts the live-hold preview into the active drag session when the user starts moving. */
+    void takeoverHoldingImagePreview(float x, float y, long pressDownTime) {
+        runOnMain(() -> {
+            CapturedContent payload = pendingImagePreview;
+            if (payload == null || !pendingImagePreviewWhileHolding
+                    || pendingImageOriginDownTime != pressDownTime) return;
+            log("press timing stage=takeover fromDownMs="
+                    + elapsedFromPressDown(pressDownTime));
+            DragShareSettings loadedSettings = pendingImageSettings;
+            detachPendingImagePreviewForPromotion();
+            showContentForPressTakeover(payload, x, y, loadedSettings, pressDownTime, true);
+        });
+    }
+
+    /** Drops the live-hold preview when the press pipeline is cancelled before release. */
+    void cancelHoldingImagePreview(long pressDownTime) {
+        runOnMain(() -> {
+            if (!pendingImagePreviewWhileHolding
+                    || pendingImageOriginDownTime != pressDownTime) return;
+            dismissPendingImagePreview(true);
+            OperationTrace.event(OperationTrace.id("press", pressDownTime),
+                    "preview", "hold_preview_cancelled");
+        });
+    }
+
+    boolean holdsSourceFileOver(CapturedContent preview, long pressDownTime, float x, float y) {
+        if (pendingImageOriginDownTime == pressDownTime && pendingImagePreview != null)
+            return pendingImagePreview.keepsSourceFileOver(preview, x, y);
+        return active && session != null && session.rootDownTime == pressDownTime
+                && session.payload.keepsSourceFileOver(preview, x, y);
+    }
+
+    /** Promotes a late original into the still-pending preview. */
+    boolean replacePendingImagePreview(CapturedContent replacement, long pressDownTime) {
+        if (replacement == null || !replacement.isImage()) return false;
+        if (Looper.myLooper() == Looper.getMainLooper() && pendingImagePreview == null) {
+            return false;
+        }
+        runOnMain(() -> {
+            CapturedContent current = pendingImagePreview;
+            if (current == null || !current.isImage()
+                    || pendingImageOriginDownTime != pressDownTime) {
+                recycleOwnedImage(replacement);
+                return;
+            }
+            if (!CapturedContent.shouldReplaceImage(current, replacement)) {
+                recycleOwnedImage(replacement);
+                return;
+            }
+            if (modernPreviewView != null) {
+                modernPreviewView.setPreviewImage(replacement.bitmap);
+            } else {
+                ImageView image = findPreviewImage(previewView);
+                if (image == null) {
+                    recycleOwnedImage(replacement);
+                    return;
+                }
+                image.setImageBitmap(replacement.bitmap);
+            }
+            pendingImagePreview = replacement;
+            recycleOwnedImage(current);
+            OperationTrace.event(OperationTrace.id("press", pressDownTime),
+                    "preview", "original_image_promoted");
+        });
+        return true;
+    }
+
+    private static ImageView findPreviewImage(View view) {
+        if (view instanceof ImageView) return (ImageView) view;
+        if (!(view instanceof ViewGroup)) return null;
+        ViewGroup group = (ViewGroup) view;
+        for (int i = 0; i < group.getChildCount(); i++) {
+            ImageView image = findPreviewImage(group.getChildAt(i));
+            if (image != null) return image;
+        }
+        return null;
+    }
+
+    private boolean isRootPressCurrentOrReleased(long pressDownTime) {
+        if (pressDownTime < 0L) return false;
+        if (rootDownTime >= 0L) {
+            return releasedRootDownTime < 0L && rootDownTime <= pressDownTime;
+        }
+        return releasedRootDownTime >= 0L && releasedRootDownTime <= pressDownTime;
+    }
+
+    private void dismissPendingImagePreview(boolean recyclePayload) {
+        CapturedContent payload = pendingImagePreview;
+        pendingImagePreview = null;
+        pendingImagePreviewWhileHolding = false;
+        pendingImageSettings = null;
+        pendingImageOriginDownTime = -1L;
+        pendingPreviewGesture.reset();
+        if (previewView != null || modernPreviewWindow != null) removeGestureViews();
+        if (recyclePayload) recycleOwnedImage(payload);
+    }
+
+    /** Clears pending ownership while keeping the already attached preview window for promotion. */
+    private void detachPendingImagePreviewForPromotion() {
+        pendingImagePreview = null;
+        pendingImagePreviewWhileHolding = false;
+        pendingImageSettings = null;
+        pendingImageOriginDownTime = -1L;
+        pendingPreviewGesture.reset();
+        if (previewView != null) {
+            previewView.animate().cancel();
+            previewView.setAlpha(1f);
+            previewView.setScaleX(1f);
+            previewView.setScaleY(1f);
+            previewView.setOnTouchListener(null);
+        }
+        if (modernPreviewWindow != null) {
+            modernPreviewWindow.finishEnterAnimationImmediately();
+        }
+        if (previewParams != null) {
+            previewParams.flags |= WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE;
+            if (modernPreviewWindow != null) {
+                modernPreviewWindow.updateLayout();
+            } else if (previewView != null && previewView.isAttachedToWindow()) {
+                try {
+                    windowManager.updateViewLayout(previewView, previewParams);
+                } catch (RuntimeException error) {
+                    log("preview promotion layout update failed", error);
+                }
+            }
+        }
+    }
+
+    private static void recycleOwnedImage(CapturedContent content) {
+        if (content != null && content.isImage() && content.bitmapOwnedByDragShare
+                && !content.bitmap.isRecycled()) content.bitmap.recycle();
+    }
+
+    private void handlePendingOutsideEvent(int action, float x, float y, long eventTime) {
+        if (pendingImagePreview == null || previewParams == null) return;
+        PendingPreviewGesture.Outcome outcome = pendingPreviewGesture.onEvent(
+                action, x, y, previewParams.x, previewParams.y,
+                previewParams.x + previewWidth, previewParams.y + previewHeight,
+                android.view.ViewConfiguration.get(context).getScaledTouchSlop());
+        if (outcome == PendingPreviewGesture.Outcome.START_DRAG) {
+            promotePendingImagePreview(x, y, eventTime);
+        } else if (outcome == PendingPreviewGesture.Outcome.CANCEL_PREVIEW) {
+            dismissPendingImagePreview(true);
+        }
+    }
+
     void cancelActiveSession() {
-        runOnMain(this::cancelGestureOnMain);
+        runOnMain(() -> {
+            if (pendingImagePreview != null) dismissPendingImagePreview(true);
+            cancelGestureOnMain("explicit_cancel_active_session");
+        });
     }
 
     float latestPointerX() {
@@ -329,6 +669,15 @@ final class DragShareController {
 
     float latestPointerY() {
         return lastObservedY;
+    }
+
+    boolean hasPendingImagePreview() {
+        return pendingImagePreview != null;
+    }
+
+    /** True when the preview waits for a second press; live-hold previews keep the press stream. */
+    boolean hasInteractivePendingImagePreview() {
+        return pendingImagePreview != null && !pendingImagePreviewWhileHolding;
     }
 
     void acceptPointerEvent(
@@ -347,23 +696,43 @@ final class DragShareController {
             long eventTime,
             String source,
             Runnable beforeFinish) {
-        if ("root".equals(source) && action == MotionEvent.ACTION_DOWN) {
+        boolean physicalInput = "root".equals(source) || "miui".equals(source);
+        if (physicalInput && action == MotionEvent.ACTION_DOWN) {
+            fallbackPress = "miui".equals(source);
+            diagnosticSourcePackage = null;
             rootDownTime = eventTime;
+            releasedRootDownTime = -1L;
             pressHandoffTime = -1L;
             pressPipelineDownTime = -1L;
         }
         long downTime = rootDownTime;
         if (action != MotionEvent.ACTION_MOVE) {
-            DragShareLog.d(TAG, "pointer received source=" + source
-                    + " action=" + MotionEvent.actionToString(action)
-                    + " point=" + Math.round(x) + "," + Math.round(y)
-                    + " active=" + active
-                    + " time=" + eventTime);
+            gestureTrace.samplePointerReceived(action, x, y, eventTime, source, () -> active);
         }
         lastObservedX = x;
         lastObservedY = y;
         lastObservedEventTime = eventTime;
         mainHandler.post(() -> {
+            if (physicalInput && action == MotionEvent.ACTION_DOWN) {
+                // Advance ownership once, when the selected physical stream starts a new gesture.
+                rootOperationGeneration++;
+            }
+            if (GestureDiagnostics.enabled()) {
+                try {
+                    diagnostics.root(action, x, y, Float.NaN, Float.NaN, downTime, eventTime,
+                            diagnosticPackage(), diagnosticState(), active,
+                            previewView != null && previewView.isAttachedToWindow() ? previewView.hasWindowFocus() : null,
+                            previewView != null && previewView.isAttachedToWindow() ? previewView.hasFocus() : null,
+                            "input_" + source);
+                } catch (RuntimeException ignored) { /* Diagnostics remain optional. */ }
+            }
+            boolean traceWasActive = active;
+            gestureTrace.record(action, x, y, eventTime, source);
+            boolean pendingPreviewOwnsRootEvent = physicalInput
+                    && pendingImagePreview != null && !pendingImagePreviewWhileHolding;
+            if (pendingPreviewOwnsRootEvent) {
+                handlePendingOutsideEvent(action, x, y, eventTime);
+            }
             if (active && !inputSourceLogged) {
                 inputSourceLogged = true;
                 log("input source=" + source
@@ -371,16 +740,36 @@ final class DragShareController {
                         + " point=" + Math.round(x) + "," + Math.round(y));
             }
             try {
-                handleMotionOnMain(action, x, y, eventTime, source, beforeFinish);
+                if (pendingPreviewOwnsRootEvent) {
+                    if (action == MotionEvent.ACTION_UP || action == MotionEvent.ACTION_CANCEL) {
+                        finishGestureOnMain(false, beforeFinish,
+                                source + "_pending_preview_terminal");
+                    }
+                } else {
+                    handleMotionOnMain(action, x, y, eventTime, source, beforeFinish);
+                }
             } finally {
-                if ("root".equals(source)
+                if (action == MotionEvent.ACTION_UP || action == MotionEvent.ACTION_CANCEL) {
+                    finishGestureTrace(source, eventTime, traceWasActive);
+                }
+                if (physicalInput
                         && (action == MotionEvent.ACTION_UP || action == MotionEvent.ACTION_CANCEL)) {
-                    if (rootDownTime == downTime) rootDownTime = -1L;
+                    if (rootDownTime == downTime) {
+                        if (action == MotionEvent.ACTION_UP) releasedRootDownTime = downTime;
+                        rootDownTime = -1L;
+                    }
                     if (pressHandoffTime == downTime) pressHandoffTime = -1L;
                     endPressPipeline(downTime);
                 }
             }
         });
+    }
+
+    private void finishGestureTrace(String source, long eventTime, boolean wasActive) {
+        long durationMs = gestureTrace.durationMs(eventTime);
+        boolean worthKeeping = wasActive || menuShown
+                || ("root".equals(source) && durationMs >= 650L);
+        gestureTrace.finish(source, eventTime, worthKeeping, wasActive, menuShown);
     }
 
     /** Called by a root-backed source after it has created an active drag session. */
@@ -393,22 +782,35 @@ final class DragShareController {
     }
 
     void finishFromControlEvent() {
+        Session expectedSession = session;
+        if (expectedSession == null) return;
         mainHandler.post(() -> {
-            if (!active) {
+            if (!active || session != expectedSession) {
                 return;
             }
             handlePointerOnMain(lastObservedX, lastObservedY);
             // The fallback path does not have a physical root ACTION_UP callback.
-            finishGestureOnMain(true);
+            finishGestureOnMain(true, null, "host_control_257");
         });
     }
 
     void onHostTaskCancelled() {
+        traceDiagnostic("HOST_CANCEL_SCHEDULED", "host_cancel_delay_32ms", null);
+        long expectedGeneration = rootOperationGeneration;
+        Session expectedSession = session;
         // Give the queued 257/control callback a chance to finish the drag first.
         mainHandler.postDelayed(() -> {
+            if (rootOperationGeneration != expectedGeneration || session != expectedSession) {
+                traceDiagnostic("HOST_CANCEL_RESOLVED", "stale_root_owner", null);
+                return;
+            }
             if (active) {
-                cancelGestureOnMain();
+                cancelGestureOnMain("delayed_host_cancel_task");
+            } else if (expectedSession != null) {
+                // That owner already completed its own cleanup; do not clean current-oriented state again.
+                traceDiagnostic("HOST_CANCEL_RESOLVED", "owner_already_finished", null);
             } else {
+                traceDiagnostic("HOST_CANCEL_RESOLVED", "inactive_at_delayed_callback", null);
                 backgroundTouchBlocker.stop();
                 if (!isPreviewExitPending()) {
                     removeGestureViews();
@@ -418,18 +820,24 @@ final class DragShareController {
     }
 
     void destroy() {
+        traceDiagnostic("DESTROY", "controller_destroy", null);
         destroyed = true;
+        lifecycle.destroy();
         rootDownTime = -1L;
         pressHandoffTime = -1L;
         pressPipelineDownTime = -1L;
         pendingPortalHostFloatWindowSuppression = false;
         runOnMain(() -> {
+            boolean diagnosticWasActive = active;
             active = false;
-            if (session != null) {
-                session.cancelled = true;
+            if (diagnosticWasActive) traceDiagnostic("DRAG_STOP", "controller_destroy", "CANCELLED");
+            if (session != null && session.pendingTarget == null) {
+                session.discard();
             }
+            overlayPrewarm.dispose();
             stopEdgeScroll();
             backgroundTouchBlocker.stop();
+            dismissPendingImagePreview(true);
             removeGestureViews();
             dragShareToast.close();
         });
@@ -441,22 +849,55 @@ final class DragShareController {
             float requestedInitialY,
             DragShareSettings loadedSettings,
             long downTime) {
-        if (downTime != rootDownTime || (downTime >= 0L && downTime == pressHandoffTime)) {
+        showOnMain(payload, requestedInitialX, requestedInitialY, loadedSettings, downTime, false);
+    }
+
+    private void showOnMain(
+            CapturedContent payload,
+            float requestedInitialX,
+            float requestedInitialY,
+            DragShareSettings loadedSettings,
+            long downTime,
+            boolean reuseAttachedPreview) {
+        String operation = OperationTrace.id("press", downTime);
+        if (downTime < 0L) {
             pendingPortalHostFloatWindowSuppression = false;
+            if (reuseAttachedPreview) removeGestureViews();
+            if (payload.isImage() && payload.bitmapOwnedByDragShare
+                    && !payload.bitmap.isRecycled()) payload.bitmap.recycle();
+            OperationTrace.event(operation, "show", "rejected_no_root");
+            log("native preview skipped because no physical Root gesture was observed");
+            return;
+        }
+        boolean ownsCurrentPress = isRootPressCurrentOrReleased(downTime);
+        if (!ownsCurrentPress || (downTime >= 0L && downTime == pressHandoffTime)) {
+            pendingPortalHostFloatWindowSuppression = false;
+            if (reuseAttachedPreview) removeGestureViews();
+            OperationTrace.event(operation, "show", "rejected_stale");
+            recycleOwnedImage(payload);
             return;
         }
         if (destroyed) {
             pendingPortalHostFloatWindowSuppression = false;
+            if (reuseAttachedPreview) removeGestureViews();
+            OperationTrace.event(operation, "show", "rejected_destroyed");
+            recycleOwnedImage(payload);
             return;
+        }
+        if (pendingImagePreview != null && pendingImagePreview != payload) {
+            dismissPendingImagePreview(true);
         }
         if (active) {
             pendingPortalHostFloatWindowSuppression = false;
+            OperationTrace.event(operation, "show", "rejected_duplicate");
+            recycleOwnedImage(payload);
             if (!duplicateStartLogged) {
                 duplicateStartLogged = true;
                 log("duplicate Taplus start ignored during active drag");
             }
             return;
         }
+        activeImageDragStartedFromPreview = false;
         active = false;
         inputSourceLogged = false;
         duplicateStartLogged = false;
@@ -469,32 +910,38 @@ final class DragShareController {
         lastHandledEventTime = Long.MIN_VALUE;
         lastHandledAction = -1;
         settings = loadedSettings == null ? DragShareSettings.defaults() : loadedSettings;
+        if (GestureDiagnostics.enabled()) diagnosticSourcePackage = payload.sourcePackage;
 
-
-
+        configuredSimpleMenuPosition = settings.simpleMenuPosition;
 
         palette = OverlayColors.from(settings.isDarkTheme(context));
         stopEdgeScroll();
         backgroundTouchBlocker.stop();
-        removeGestureViews();
+        if (!reuseAttachedPreview) removeGestureViews();
 
         if (!settings.isSharingEnabled(payload.isImage())) {
             pendingPortalHostFloatWindowSuppression = false;
+            if (reuseAttachedPreview) removeGestureViews();
             log("sharing disabled kind=" + payload.kind);
             return;
         }
 
         try {
             refreshDisplayGeometry();
-            session = new Session(payload, downTime);
-            createPreview(payload);
+            DragShareLifecycle.SessionToken sessionToken = lifecycle.beginSession();
+            session = new Session(payload, downTime, operation, sessionToken);
+            if (!reuseAttachedPreview) createPreview(payload);
             createGlow();
             if (glowView != null && glowParams != null) {
                 windowManager.addView(glowView, glowParams);
                 glowView.start();
             }
-            showPreviewOverlay();
+            if (!reuseAttachedPreview) showPreviewOverlay();
             active = true;
+            traceDiagnostic("DRAG_START", "preview_attached", "DRAGGING");
+            OperationTrace.event(operation, "show", "accepted");
+            OperationTrace.event(operation, "preview", "attached");
+            refreshStaleInputWatchdog();
             pendingPortalHostFloatWindowSuppression = false;
 
             traceAccessibility("overlay added kind=" + payload.kind);
@@ -505,28 +952,41 @@ final class DragShareController {
                     ? requestedInitialY
                     : Math.max(topInset + dp(80), screenHeight * 0.32f);
             lastX = initialX;
+            menuDragOriginX = initialX;
             lastY = initialY;
+            simpleMenuPosition = GestureMath.initialMenuPosition(
+                    configuredSimpleMenuPosition, initialX, screenWidth);
+            updateGestureMenuPosition(initialX, initialY);
             updateMenuGeometry();
             updatePreviewPosition(initialX, initialY);
             updatePortalPullEffect(initialX, initialY);
-            startPreviewEnterAnimation();
+            if (!reuseAttachedPreview) startPreviewEnterAnimation();
 
-            loadTargetsAndCreateMenu(session, payload, initialX, initialY);
+            if (reuseAttachedPreview) {
+                // The held preview is already visible and may never need another draw.
+                queryTargetsForSession(session, payload, initialX, initialY);
+            } else {
+                loadTargetsAndCreateMenu(session, payload, initialX, initialY);
+            }
         } catch (RuntimeException error) {
+            OperationTrace.event(operation, "preview", "failed_" + error.getClass().getSimpleName());
             failOverlay("拖拽窗口创建失败", error);
             return;
         }
 
         if (payload.isImage()) {
             final Session stagedSession = session;
-            ImageStagingClient.stage(context, payload.bitmap, new ImageStagingClient.Callback() {
+            OperationTrace.event(stagedSession.operationId, "stage", "requested");
+            stagedSession.stagingTask = ImageStagingClient.stage(context, payload, new ImageStagingClient.Callback() {
                 @Override
                 public void onStaged(Uri uri) {
                     mainHandler.post(() -> {
-                        if (destroyed || stagedSession.cancelled) {
+                        if (!acceptsStageResult(stagedSession)) {
+                            OperationTrace.event(stagedSession.operationId, "stage", "late_ignored", uri);
                             return;
                         }
                         stagedSession.stagedUri = uri;
+                        OperationTrace.event(stagedSession.operationId, "stage", "completed", uri);
                         if (stagedSession.pendingTarget != null) {
                             launchPendingShare(stagedSession);
                         }
@@ -536,66 +996,24 @@ final class DragShareController {
                 @Override
                 public void onFailure(Throwable error) {
                     mainHandler.post(() -> {
-                        if (!destroyed && !stagedSession.cancelled) {
-                            log("image staging failed", error);
+                        if (acceptsStageResult(stagedSession)) {
+                            stagedSession.stagingFailed = true;
+                            OperationTrace.event(stagedSession.operationId, "stage",
+                                    "failed_" + error.getClass().getSimpleName());
+                            log("image staging failed error=" + error.getClass().getSimpleName());
                             if (stagedSession.pendingTarget != null) {
-                                showToast("图片准备失败");
+                                launchPendingShare(stagedSession);
                             }
-                        }
+                        } else OperationTrace.event(stagedSession.operationId, "stage", "late_ignored");
                     });
                 }
             });
         }
     }
 
-    private List<ShareTarget> queryTargets(CapturedContent payload) {
-        List<ShareTarget> queried = ShareTargetRepository.query(context, payload);
-        return ShareTargetRepository.applySettings(context, queried, settings, payload.isImage());
-    }
-
-    private void prewarmModernOverlay() {
-        if (modernOverlayPrewarmStarted) {
-            return;
-        }
-        modernOverlayPrewarmStarted = true;
-        mainHandler.post(() -> {
-            try {
-                long started = SystemClock.elapsedRealtime();
-                CapturedContent content = CapturedContent.text("预热", "warmup", null);
-                ModernPreviewOverlayView warmupView = new ModernPreviewOverlayView(
-                        context, content, DragShareSettings.defaults());
-                WindowManager.LayoutParams warmupParams =
-                        overlayParams(2, 2, "DragShare modern overlay warmup");
-                warmupParams.x = -2;
-                warmupParams.y = -2;
-                ModernOverlayWindow warmupWindow = new ModernOverlayWindow(
-                        context, windowManager, warmupView, warmupParams, 0);
-                warmupView.getViewTreeObserver().addOnDrawListener(
-                        new ViewTreeObserver.OnDrawListener() {
-                            private boolean finishPosted;
-
-                            @Override
-                            public void onDraw() {
-                                if (finishPosted) {
-                                    return;
-                                }
-                                finishPosted = true;
-                                warmupView.post(() -> {
-                                    ViewTreeObserver observer = warmupView.getViewTreeObserver();
-                                    if (observer.isAlive()) {
-                                        observer.removeOnDrawListener(this);
-                                    }
-                                    warmupWindow.dispose();
-                                    log("modern overlay prewarm completed elapsed_ms="
-                                            + (SystemClock.elapsedRealtime() - started));
-                                });
-                            }
-                        });
-                warmupWindow.showAnimated();
-            } catch (RuntimeException error) {
-                log("modern overlay prewarm failed", error);
-            }
-        });
+    private boolean acceptsStageResult(Session request) {
+        return !request.cancelled && (request.pendingTarget != null
+                || (!destroyed && lifecycle.isCurrent(request.lifecycleToken)));
     }
 
     private void loadTargetsAndCreateMenu(
@@ -603,39 +1021,58 @@ final class DragShareController {
             CapturedContent payload,
             float initialX,
             float initialY) {
-        previewView.getViewTreeObserver().addOnDrawListener(
-                new ViewTreeObserver.OnDrawListener() {
+        View targetPreview = previewView;
+        ViewTreeObserver.OnDrawListener drawListener = new ViewTreeObserver.OnDrawListener() {
                     @Override
                     public void onDraw() {
-                        if (targetQueryRequested) {
+                        if (targetQueryRequested || destroyed || !active
+                                || session != capturedSession) {
                             return;
                         }
                         targetQueryRequested = true;
-                        previewView.post(() -> {
-                            ViewTreeObserver observer = previewView.getViewTreeObserver();
+                        Runnable startQuery = () -> {
+                            ViewTreeObserver observer = targetPreview.getViewTreeObserver();
                             if (observer.isAlive()) {
                                 observer.removeOnDrawListener(this);
                             }
-                            queryTargetsAfterPreview(
+                            if (targetQueryPreviewView == targetPreview) {
+                                targetQueryPreviewView = null;
+                                targetQueryDrawListener = null;
+                                targetQueryStartRunnable = null;
+                            }
+                            if (destroyed || !active || session != capturedSession) return;
+                            queryTargetsForSession(
                                     capturedSession, payload, initialX, initialY);
-                        });
+                        };
+                        targetQueryPreviewView = targetPreview;
+                        targetQueryDrawListener = this;
+                        targetQueryStartRunnable = startQuery;
+                        targetPreview.post(startQuery);
                     }
-                });
+                };
+        targetQueryPreviewView = targetPreview;
+        targetQueryDrawListener = drawListener;
+        targetPreview.getViewTreeObserver().addOnDrawListener(drawListener);
     }
 
-    private void queryTargetsAfterPreview(
+    private void queryTargetsForSession(
             Session capturedSession,
             CapturedContent payload,
             float initialX,
             float initialY) {
-        TARGET_QUERY_EXECUTOR.execute(() -> {
+        cancelTargetQuery();
+        long request = targetQueryRequests.begin();
+        DragShareSettings menuSettings = settings;
+        targetQueryTask.submit(() -> {
             long started = SystemClock.elapsedRealtime();
             List<ShareTarget> queried;
             try {
-                queried = queryTargets(payload);
+                queried = ShareTargetRepository.queryMenu(context, payload, menuSettings);
             } catch (RuntimeException error) {
                 mainHandler.post(() -> {
-                    if (!destroyed && active && session == capturedSession) {
+                            if (targetQueryRequests.accepts(request)
+                            && !destroyed && active && session == capturedSession
+                            && lifecycle.isCurrent(capturedSession.lifecycleToken)) {
                         failOverlay("分享目标读取失败", error);
                     }
                 });
@@ -643,7 +1080,9 @@ final class DragShareController {
             }
             long elapsedMs = SystemClock.elapsedRealtime() - started;
             mainHandler.post(() -> {
-                if (destroyed || !active || session != capturedSession) {
+                if (!targetQueryRequests.accepts(request)
+                        || destroyed || !active || session != capturedSession
+                        || !lifecycle.isCurrent(capturedSession.lifecycleToken)) {
                     return;
                 }
                 shareTargets = queried;
@@ -658,13 +1097,35 @@ final class DragShareController {
                     showMenuOnMain();
                 }
                 log("preview shown kind=" + payload.kind
+                        + " source=" + payload.sourcePackage
                         + " targets=" + shareTargets.size()
                         + " targetQueryMs=" + elapsedMs
+                        + " fromDownMs=" + elapsedFromPressDown(capturedSession.rootDownTime)
                         + " style=" + settings.uiStyle
                         + " blockBackground=" + settings.blockBackgroundScroll
                         + " at=" + Math.round(initialX) + "," + Math.round(initialY));
             });
         });
+    }
+
+    private void cancelTargetQuery() {
+        targetQueryRequests.invalidate();
+        targetQueryTask.cancel();
+    }
+
+    private void cancelPreviewTargetLoad() {
+        View targetPreview = targetQueryPreviewView;
+        Runnable startQuery = targetQueryStartRunnable;
+        ViewTreeObserver.OnDrawListener drawListener = targetQueryDrawListener;
+        targetQueryPreviewView = null;
+        targetQueryStartRunnable = null;
+        targetQueryDrawListener = null;
+        if (targetPreview == null) return;
+        if (startQuery != null) targetPreview.removeCallbacks(startQuery);
+        if (drawListener != null) {
+            ViewTreeObserver observer = targetPreview.getViewTreeObserver();
+            if (observer.isAlive()) observer.removeOnDrawListener(drawListener);
+        }
     }
 
     private void createPreview(CapturedContent payload) {
@@ -708,11 +1169,7 @@ final class DragShareController {
             previewHeight = dp(sizeDp);
             if (!payload.isImage()) {
                 TextView text = new TextView(context);
-                CharSequence previewText = payload.text;
-                if (previewText != null && previewText.length() > 40) {
-                    previewText = previewText.subSequence(0, 40);
-                }
-                text.setText(previewText);
+                text.setText(payload.text);
                 text.setTextColor(palette.primaryText);
                 text.setTextSize(TypedValue.COMPLEX_UNIT_SP, 14);
                 text.setGravity(Gravity.CENTER);
@@ -725,7 +1182,7 @@ final class DragShareController {
             } else {
                 ImageView image = new ImageView(context);
                 image.setImageBitmap(payload.bitmap);
-                image.setScaleType(ImageView.ScaleType.CENTER_CROP);
+                image.setScaleType(ImageView.ScaleType.FIT_CENTER);
                 image.setPadding(dp(3), dp(3), dp(3), dp(3));
                 standardPreviewView.addView(image, new FrameLayout.LayoutParams(
                         ViewGroup.LayoutParams.MATCH_PARENT,
@@ -1032,9 +1489,10 @@ final class DragShareController {
             long eventTime,
             String source,
             Runnable beforeFinish) {
+        if (pendingImagePreview != null) return;
         if (!active) {
             if (action == MotionEvent.ACTION_UP || action == MotionEvent.ACTION_CANCEL) {
-                finishGestureOnMain(false, beforeFinish);
+                finishGestureOnMain(false, beforeFinish, source + "_terminal_while_inactive");
             }
             return;
         }
@@ -1044,18 +1502,23 @@ final class DragShareController {
                 && (action == MotionEvent.ACTION_DOWN || action == MotionEvent.ACTION_MOVE)) {
             startBackgroundBlockerIfEnabled();
         }
+        // Distinct root touch frames can share the same millisecond.
         if (eventTime == lastHandledEventTime && action == lastHandledAction
-                && eventTime != 0 && eventTime > lastObservedEventTime - DUPLICATE_EVENT_WINDOW_MS) {
+                && eventTime != 0 && eventTime > lastObservedEventTime - DUPLICATE_EVENT_WINDOW_MS
+                && (action != MotionEvent.ACTION_MOVE || (x == lastX && y == lastY))) {
             return;
         }
         lastHandledEventTime = eventTime;
         lastHandledAction = action;
         lastX = x;
         lastY = y;
+        if (action == MotionEvent.ACTION_DOWN || action == MotionEvent.ACTION_MOVE) {
+            refreshStaleInputWatchdog();
+        }
 
         if (action == MotionEvent.ACTION_CANCEL) {
             log("gesture cancelled source=" + source);
-            finishGestureOnMain(false, beforeFinish);
+            finishGestureOnMain(false, beforeFinish, source + "_cancel");
             return;
         }
         if (action == MotionEvent.ACTION_UP) {
@@ -1065,7 +1528,7 @@ final class DragShareController {
                 log("gesture finished source=" + source
                         + " point=" + Math.round(x) + "," + Math.round(y)
                         + " menu=" + menuShown);
-                finishGestureOnMain(true, beforeFinish);
+                finishGestureOnMain(true, beforeFinish, source + "_up");
             }
         } else handlePointerOnMain(x, y);
     }
@@ -1079,14 +1542,7 @@ final class DragShareController {
             lastY = y;
             updatePreviewPosition(x, y);
             updatePortalPullEffect(x, y);
-            if (isBottomInputDropZone(x, y)) {
-                if (menuShown) {
-                    if (isCircleStyle()) hideCircleMenu();
-                    else hideLinearMenu();
-                }
-                return;
-            }
-            updateDragEdgeMenuPosition(x, y);
+            updateGestureMenuPosition(x, y);
             if (isCircleStyle()) {
                 updateCirclePointer(x, y);
                 if (menuShown) {
@@ -1246,14 +1702,6 @@ final class DragShareController {
         return distanceFromMenuEdge(x, y) <= trigger;
     }
 
-    private boolean isBottomInputDropZone(float x, float y) {
-        // Keep the centre of the bottom input bar a direct drop target for every
-        // menu style. Bottom corners still open the four-edge menu.
-        return y >= screenHeight - bottomInset - dp(110)
-                && x >= screenWidth * 0.15f
-                && x <= screenWidth * 0.85f;
-    }
-
     private boolean isPointerInsideSimpleMenu(float x, float y) {
         return menuShown
                 && x >= menuLeft
@@ -1305,10 +1753,18 @@ final class DragShareController {
 
 
 
-    private void updateDragEdgeMenuPosition(float x, float y) {
-        int edge = GestureMath.nearestMenuEdge(x, y, screenWidth, topInset,
-                screenHeight - bottomInset, Math.max(dp(settings.edgeTriggerDp), dp(MENU_TRIGGER_DP)),
-                simpleMenuPosition);
+    private void updateGestureMenuPosition(float x, float y) {
+        final int edge;
+        if (configuredSimpleMenuPosition == DragShareSettings.SIMPLE_MENU_POSITION_NEAR_HAND) {
+            edge = GestureMath.nearHandMenuPosition(menuDragOriginX, x, dp(12), simpleMenuPosition);
+        } else if (GestureMath.followsDragEdge(configuredSimpleMenuPosition)) {
+            int trigger = isCircleStyle() ? circleTriggerPx()
+                    : Math.max(dp(settings.edgeTriggerDp), dp(MENU_TRIGGER_DP));
+            edge = GestureMath.nearestMenuEdge(x, y, screenWidth, topInset,
+                    screenHeight - bottomInset, trigger, simpleMenuPosition);
+        } else {
+            return;
+        }
         if (edge < 0 || edge == simpleMenuPosition) return;
         if (isCircleStyle()) hideCircleMenu();
         repositionMenu(edge);
@@ -1316,6 +1772,11 @@ final class DragShareController {
 
     private void repositionMenu(int nextPosition) {
         if (nextPosition == simpleMenuPosition) {
+            return;
+        }
+        if (!targetsLoaded) {
+            simpleMenuPosition = nextPosition;
+            updateMenuGeometry();
             return;
         }
         if (isCircleStyle()) {
@@ -1378,6 +1839,7 @@ final class DragShareController {
                 return;
             }
             menuShown = true;
+            traceDiagnostic("MMGG_MENU_SHOW", "own_menu_only", null);
 
             circleEdge = circlePendingEdge;
             circleScrollDirection = 0;
@@ -1409,6 +1871,7 @@ final class DragShareController {
             cancelLinearMenuFadeOut(menuView);
             menuView.animate().cancel();
             menuShown = true;
+            traceDiagnostic("MMGG_MENU_SHOW", "own_menu_only", null);
             menuView.animate()
                     .alpha(1f)
                     .translationX(0f)
@@ -1429,6 +1892,7 @@ final class DragShareController {
         if (isModernStyle() && modernMenuView != null
                 && modernMenuWindow.isShowing()) {
             menuShown = true;
+            traceDiagnostic("MMGG_MENU_SHOW", "own_menu_only", null);
             modernMenuWindow.showAnimated();
             updatePreviewPosition(lastX, lastY);
             log("modern menu shown pointerY=" + Math.round(lastY) + " menuTop=" + menuTop);
@@ -1441,6 +1905,7 @@ final class DragShareController {
             windowManager.addView(menuView, menuParams);
         }
         menuShown = true;
+        traceDiagnostic("MMGG_MENU_SHOW", "own_menu_only", null);
         updatePreviewPosition(lastX, lastY);
         log("menu shown style=" + settings.uiStyle + " anchoredAtCenter=true"
                 + " effectivePosition=" + simpleMenuPosition + " bounds=" + menuLeft + "," + menuTop
@@ -1598,11 +2063,16 @@ final class DragShareController {
     }
 
     private void finishGestureOnMain(boolean allowShare) {
-        finishGestureOnMain(allowShare, null);
+        finishGestureOnMain(allowShare, null, "legacy_finish");
     }
 
     private void finishGestureOnMain(boolean allowShare, Runnable afterDeactivate) {
+        finishGestureOnMain(allowShare, afterDeactivate, "finish_request");
+    }
+
+    private void finishGestureOnMain(boolean allowShare, Runnable afterDeactivate, String reason) {
         if (!active) {
+            traceDiagnostic("TERMINAL_WITHOUT_DRAG", reason, null);
             if (afterDeactivate != null) afterDeactivate.run();
             return;
         }
@@ -1617,6 +2087,8 @@ final class DragShareController {
             log("background scroll lock skipped because root input was not active");
         }
         active = false;
+        traceDiagnostic("DRAG_STOP", reason, allowShare ? "FINISHED" : "CANCELLED");
+        cancelStaleInputWatchdog();
         stopEdgeScroll();
         backgroundTouchBlocker.stop();
         if (afterDeactivate != null) {
@@ -1626,31 +2098,60 @@ final class DragShareController {
         // HyperOS can silently reject an AccessibilityService activity start after its last
         // accessibility overlay has been removed. Keep the passive overlay attached through
         // the user-selected launch, then clean it up in the same main-thread turn.
+        boolean restorePendingImage = activeImageDragStartedFromPreview
+                && finished != null && finished.payload.isImage()
+                && (!allowShare || target == null);
+        activeImageDragStartedFromPreview = false;
         if (allowShare && target != null && finished != null) {
-            if (!finished.payload.isImage()
-                    || target.isSaveToLocal()
-                    || finished.stagedUri != null) {
+            OperationTrace.event(finished.operationId, "target", "selected");
+            if (!finished.payload.isImage() || finished.stagedUri != null) {
                 launchShare(finished, target);
             } else {
                 finished.pendingTarget = target;
-                showToast("正在准备图片");
+                if (finished.stagingFailed) launchPendingShare(finished);
+                else showToast("正在准备图片");
             }
-        } else if (finished != null && finished.pendingTarget == null) {
-            finished.cancelled = true;
+        } else if (!restorePendingImage && finished != null && finished.pendingTarget == null) {
+            OperationTrace.event(finished.operationId, "target", allowShare ? "rejected" : "cancelled");
+            finished.discard();
         }
-        removeGestureViews(true);
+        if (restorePendingImage) {
+            finished.discard();
+            removeGestureViews();
+            showPendingImagePreview(finished.payload, lastX, lastY, settings,
+                    finished.rootDownTime);
+        } else {
+            removeGestureViews(true);
+        }
     }
 
     private void cancelGestureOnMain() {
+        cancelGestureOnMain("cancel_request");
+    }
+
+    private void cancelGestureOnMain(String reason) {
         if (!active) {
             return;
         }
+        Session cancelled = session;
+        boolean restorePendingImage = activeImageDragStartedFromPreview
+                && cancelled != null && cancelled.payload.isImage();
+        activeImageDragStartedFromPreview = false;
         active = false;
+        traceDiagnostic("DRAG_STOP", reason, "CANCELLED");
+        if (session != null) OperationTrace.event(session.operationId, "gesture", "cancelled");
+        cancelStaleInputWatchdog();
         stopEdgeScroll();
         backgroundTouchBlocker.stop();
-        removeGestureViews(true);
-        if (session != null && session.pendingTarget == null) {
-            session.cancelled = true;
+        if (cancelled != null && cancelled.pendingTarget == null) {
+            cancelled.discard();
+        }
+        if (restorePendingImage) {
+            removeGestureViews();
+            showPendingImagePreview(cancelled.payload, lastX, lastY, settings,
+                    cancelled.rootDownTime);
+        } else {
+            removeGestureViews(true);
         }
     }
 
@@ -1658,181 +2159,59 @@ final class DragShareController {
         log(message, error);
         traceAccessibility("overlay failed=" + error.getClass().getSimpleName() + ":" + error.getMessage());
         pendingPortalHostFloatWindowSuppression = false;
-        if (session != null) session.cancelled = true;
-        if (active) cancelGestureOnMain();
-        else removeGestureViews();
+        if (active) cancelGestureOnMain("overlay_failure_" + error.getClass().getSimpleName());
+        else {
+            if (session != null && session.pendingTarget == null) session.discard();
+            removeGestureViews();
+        }
         showToast(message + "，已取消本次拖拽；详情见诊断日志", Toast.LENGTH_LONG);
+    }
+
+    private void refreshStaleInputWatchdog() {
+        cancelStaleInputWatchdog();
+        Session observedSession = session;
+        if (!active || observedSession == null || destroyed) return;
+        Runnable watchdog = new Runnable() {
+            @Override
+            public void run() {
+                if (staleInputWatchdog != this) return;
+                staleInputWatchdog = null;
+                if (!active || destroyed || session != observedSession) return;
+                log("gesture cancelled after root input became stale");
+                cancelGestureOnMain("stale_input_watchdog_30000ms");
+            }
+        };
+        staleInputWatchdog = watchdog;
+        mainHandler.postDelayed(watchdog, STALE_INPUT_TIMEOUT_MS);
+    }
+
+    private void cancelStaleInputWatchdog() {
+        Runnable watchdog = staleInputWatchdog;
+        staleInputWatchdog = null;
+        if (watchdog != null) mainHandler.removeCallbacks(watchdog);
     }
 
     private void launchPendingShare(Session pendingSession) {
         ShareTarget target = pendingSession.pendingTarget;
-        if (target == null
-                || (pendingSession.stagedUri == null && !target.isSaveToLocal())) {
-            return;
-        }
+        if (target == null) return;
         pendingSession.pendingTarget = null;
-        launchShare(pendingSession, target);
+        if (pendingSession.stagedUri != null || (target.isSaveToLocal() && !pendingSession.payload.hasSourceFile())) {
+            launchShare(pendingSession, target);
+        } else {
+            pendingSession.cancelled = true;
+            showToast("图片准备失败，请重新拖拽");
+        }
     }
 
     private void launchShare(Session shareSession, ShareTarget target) {
-        if (target.isImageOcr()) {
-            try {
-                launchImageOcrHost(shareSession.stagedUri, false);
-            } catch (RuntimeException error) {
-                log("image OCR window failed", error);
-                showToast("无法识别图片：" + error.getMessage());
-            }
-            shareSession.cancelled = true;
-            return;
-        }
-        if (target.isQrScan()) {
-            try {
-                launchImageOcrHost(shareSession.stagedUri, true);
-            } catch (RuntimeException error) {
-                log("image QR window failed", error);
-                showToast("无法扫描图片二维码：" + error.getMessage());
-            }
-            shareSession.cancelled = true;
-            return;
-        }
-        if (target.isStash()) {
-            stashContent(shareSession.payload, shareSession.stagedUri);
-            shareSession.cancelled = true;
-            return;
-        }
-        if (target.isSaveToLocal()) {
-            saveImageLocally(shareSession.payload.bitmap);
-            shareSession.cancelled = true;
-            return;
-        }
-        if (target.isCopyToClipboard()) {
-            copyToClipboard(shareSession.payload, shareSession.stagedUri);
-            shareSession.cancelled = true;
-            return;
-        }
-        if (target.isTextSegmentation()) {
-            openTextSegmentation(shareSession.payload);
-            shareSession.cancelled = true;
-            return;
-        }
-        try {
-            log("drop target=" + target.component.flattenToShortString());
-            ShareLauncher.launch(
-                    context,
-                    shareSession.payload,
-                    target,
-                    shareSession.stagedUri,
-                    dragShareToast);
-        } catch (Throwable error) {
-            log("share launch failed", error);
-        }
+        actions.execute(
+                shareSession.payload,
+                target,
+                shareSession.stagedUri,
+                lastX,
+                lastY,
+                shareSession.operationId);
         shareSession.cancelled = true;
-    }
-
-    private void launchImageOcrHost(Uri image, boolean qr) {
-        android.content.Intent intent = new android.content.Intent();
-        intent.setComponent(new android.content.ComponentName(BuildConfig.APPLICATION_ID,
-                ImageOcrActivity.class.getName()));
-        intent.putExtra(ImageOcrActivity.EXTRA_HOSTED_URI, image);
-        intent.putExtra(ImageOcrActivity.EXTRA_QR, qr);
-        intent.setDataAndType(image, "image/*");
-        intent.setClipData(android.content.ClipData.newRawUri("image", image));
-        intent.addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK
-                | android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION);
-        context.startActivity(intent);
-        log("image window handed to Activity qr=" + qr);
-    }
-
-    private void stashContent(CapturedContent payload, Uri stagedImage) {
-        new Thread(() -> {
-            try {
-                StashClient.put(context, payload, stagedImage);
-                log("stored content in stash kind=" + (payload.isImage() ? "image" : "text"));
-                mainHandler.post(() -> showToast("已存入中转站"));
-            } catch (IOException | SecurityException | IllegalStateException error) {
-                log("stash save failed", error);
-                mainHandler.post(() -> showToast("存入中转站失败：" + error.getMessage(), Toast.LENGTH_LONG));
-            }
-        }, "drag-share-stash-save").start();
-    }
-
-    private void copyToClipboard(CapturedContent payload, Uri stagedImage) {
-        boolean image = payload != null && payload.isImage();
-        if (!image) {
-            String text = payload == null ? null : payload.text;
-            if (text == null || text.trim().isEmpty()) {
-                showToast("没有可复制的文字");
-                return;
-            }
-            ClipboardWriter.copy(context, text, error -> {
-                if (error == null) {
-                    log("copied text to clipboard");
-                    showToast("文字已复制到剪贴板");
-                } else {
-                    log("clipboard text copy failed", error);
-                    showToast("复制文字失败：" + error.getMessage(), Toast.LENGTH_LONG);
-                }
-            });
-            return;
-        }
-        if (stagedImage == null) {
-            showToast("图片尚未准备好，无法复制");
-            return;
-        }
-        ClipboardWriter.copyImage(context, stagedImage, error -> {
-            if (error == null) {
-                log("copied image to clipboard");
-                showToast("图片已复制到剪贴板");
-            } else {
-                log("clipboard image copy failed", error);
-                showToast("复制图片失败：" + error.getMessage(), Toast.LENGTH_LONG);
-            }
-        });
-    }
-
-    private void openTextSegmentation(CapturedContent payload) {
-        String text = payload.text;
-        if (text == null || text.trim().isEmpty()) {
-            showToast("没有可分词的文字");
-            return;
-        }
-        try {
-            android.os.Bundle input = new android.os.Bundle();
-            input.putString("text", text);
-            input.putString("before_text", payload.beforeText);
-            input.putString("after_text", payload.afterText);
-            input.putInt("x", Math.round(lastX));
-            input.putInt("y", Math.round(lastY));
-            android.os.Bundle result = context.getContentResolver().call(
-                    ImageStagingClient.BASE_URI, BigBangOverlayLauncher.METHOD_OPEN, null, input);
-            if (result == null || !result.getBoolean("accepted")) {
-                throw new IllegalStateException("分词窗口未接受请求");
-            }
-            log("requested text segmentation window");
-        } catch (RuntimeException error) {
-            log("open text segmentation failed", error);
-            showToast("无法打开分词窗口：" + error.getMessage());
-        }
-    }
-
-    private void saveImageLocally(Bitmap bitmap) {
-        if (bitmap == null || bitmap.isRecycled()) {
-            showToast("保存图片失败");
-            return;
-        }
-        Thread worker = new Thread(() -> {
-            try {
-                LocalImageSaver.save(context, bitmap);
-                log("saved image as PNG");
-                traceAccessibility("local save succeeded");
-                mainHandler.post(() -> showToast("已保存到本地", android.widget.Toast.LENGTH_LONG));
-            } catch (Throwable error) {
-                log("local image save failed", error);
-                traceAccessibility("local save failed=" + error.getClass().getSimpleName());
-                mainHandler.post(() -> showToast("保存图片失败", android.widget.Toast.LENGTH_LONG));
-            }
-        }, "drag-share-local-save");
-        worker.start();
     }
 
     private void updatePreviewPosition(float x, float y) {
@@ -1865,16 +2244,16 @@ final class DragShareController {
                 default:
                     break;
             }
-            previewParams.x = GestureMath.clamp(
+            int nextX = GestureMath.clamp(
                     left,
                     dp(8),
                     Math.max(dp(8), screenWidth - previewWidth - dp(8)));
-            previewParams.y = GestureMath.clamp(
+            int nextY = GestureMath.clamp(
                     top,
                     topInset + dp(8),
                     Math.max(topInset + dp(8),
                             screenHeight - bottomInset - previewHeight - dp(8)));
-            updateOverlayLayout(previewView, modernPreviewWindow, previewParams);
+            updatePreviewLayoutIfPositionChanged(nextX, nextY);
             return;
         }
         int margin = dp(settings.simpleMenuEdgeDistanceDp);
@@ -1895,10 +2274,20 @@ final class DragShareController {
                 maxTop = Math.max(minTop, menuTop - previewHeight - margin);
             }
         }
-        previewParams.x = GestureMath.clamp(
+        int nextX = GestureMath.clamp(
                 Math.round(x - previewWidth / 2f), minLeft, maxLeft);
-        previewParams.y = GestureMath.clamp(
+        int nextY = GestureMath.clamp(
                 Math.round(y - previewHeight - dp(20)), minTop, maxTop);
+        updatePreviewLayoutIfPositionChanged(nextX, nextY);
+    }
+
+    private void updatePreviewLayoutIfPositionChanged(int nextX, int nextY) {
+        if (previewParams == null || GestureMath.samePosition(
+                previewParams.x, previewParams.y, nextX, nextY)) {
+            return;
+        }
+        previewParams.x = nextX;
+        previewParams.y = nextY;
         updateOverlayLayout(previewView, modernPreviewWindow, previewParams);
     }
 
@@ -1987,7 +2376,11 @@ final class DragShareController {
     }
 
     private void removeGestureViews(boolean animatePreviewExit) {
-
+        traceDiagnostic("WINDOW_CLEANUP", animatePreviewExit ? "preview_exit_animation" : "remove_views",
+                active ? "DRAGGING" : "CLEANUP");
+        cancelStaleInputWatchdog();
+        cancelTargetQuery();
+        cancelPreviewTargetLoad();
         cancelModernMenuDispose();
         cancelLinearMenuFadeOut();
         if (!animatePreviewExit) {
@@ -2012,8 +2405,9 @@ final class DragShareController {
             glowView.stop();
             try {
                 windowManager.removeViewImmediate(glowView);
-            } catch (Throwable ignored) {
+            } catch (Throwable error) {
                 // Already removed or never attached.
+                log("overlay cleanup failed layer=glow", error);
             }
         }
         mainHandler.removeCallbacks(circleExpandRunnable);
@@ -2021,8 +2415,9 @@ final class DragShareController {
             circleMenuView.collapse();
             try {
                 windowManager.removeViewImmediate(circleMenuView);
-            } catch (Throwable ignored) {
+            } catch (Throwable error) {
                 // Already removed or never attached.
+                log("overlay cleanup failed layer=circle_menu", error);
             }
         }
         previewView = null;
@@ -2060,18 +2455,27 @@ final class DragShareController {
             ModernOverlayComposeView modernOverlay,
             ModernOverlayWindow modernWindow) {
         if (modernWindow != null) {
-            modernWindow.dispose();
+            try {
+                modernWindow.dispose();
+            } catch (RuntimeException error) {
+                log("overlay cleanup failed layer=modern_window", error);
+            }
             return;
         }
         if (view != null) {
             try {
                 windowManager.removeViewImmediate(view);
-            } catch (Throwable ignored) {
+            } catch (Throwable error) {
                 // Already removed or never attached.
+                log("overlay cleanup failed layer=view", error);
             }
         }
         if (modernOverlay != null) {
-            modernOverlay.disposeOverlay();
+            try {
+                modernOverlay.disposeOverlay();
+            } catch (RuntimeException error) {
+                log("overlay cleanup failed layer=compose_view", error);
+            }
         }
     }
 
@@ -2081,6 +2485,7 @@ final class DragShareController {
             ModernOverlayWindow modernWindowToFade) {
         removePendingPreviewExitImmediately();
         final int generation = ++previewExitGeneration;
+        final DragShareLifecycle.PreviewExitToken exitToken = lifecycle.beginPreviewExit();
         exitingPreviewView = previewToFade;
         exitingModernPreviewView = modernPreviewToFade;
         exitingModernPreviewWindow = modernWindowToFade;
@@ -2089,7 +2494,7 @@ final class DragShareController {
             modernWindowToFade.hideAnimated(
                     MODERN_OVERLAY_EXIT_DURATION_MS,
                     () -> finishPreviewExit(
-                            generation,
+                             exitToken,
                             previewToFade,
                             modernPreviewToFade,
                             modernWindowToFade));
@@ -2099,7 +2504,7 @@ final class DragShareController {
             modernPreviewToFade.hideAnimated();
             mainHandler.postDelayed(
                     () -> finishPreviewExit(
-                            generation,
+                             exitToken,
                             previewToFade,
                             modernPreviewToFade,
                             null),
@@ -2115,13 +2520,31 @@ final class DragShareController {
                 .setDuration(PREVIEW_EXIT_DURATION_MS)
                 .setInterpolator(new DecelerateInterpolator(1.5f))
                 .withEndAction(() -> finishPreviewExit(
-                        generation,
+                         exitToken,
                         previewToFade,
                         null,
                         null))
                 .start();
     }
 
+    private void finishPreviewExit(
+            DragShareLifecycle.PreviewExitToken exitToken,
+            View previewToRemove,
+            ModernPreviewOverlayView modernPreviewToRemove,
+            ModernOverlayWindow modernWindowToRemove) {
+        if (!lifecycle.isCurrent(exitToken)
+                || exitingPreviewView != previewToRemove
+                || exitingModernPreviewView != modernPreviewToRemove
+                || exitingModernPreviewWindow != modernWindowToRemove) {
+            return;
+        }
+        exitingPreviewView = null;
+        exitingModernPreviewView = null;
+        exitingModernPreviewWindow = null;
+        removeOverlayView(previewToRemove, modernPreviewToRemove, modernWindowToRemove);
+    }
+
+    // Kept for existing lifecycle probes that inspect the controller's legacy generation.
     private void finishPreviewExit(
             int generation,
             View previewToRemove,
@@ -2136,6 +2559,7 @@ final class DragShareController {
         exitingPreviewView = null;
         exitingModernPreviewView = null;
         exitingModernPreviewWindow = null;
+        lifecycle.cancelPreviewExit();
         removeOverlayView(previewToRemove, modernPreviewToRemove, modernWindowToRemove);
     }
 
@@ -2145,6 +2569,7 @@ final class DragShareController {
 
     private void removePendingPreviewExitImmediately() {
         previewExitGeneration++;
+        lifecycle.cancelPreviewExit();
         View previewToRemove = exitingPreviewView;
         ModernPreviewOverlayView modernPreviewToRemove = exitingModernPreviewView;
         ModernOverlayWindow modernWindowToRemove = exitingModernPreviewWindow;
@@ -2282,6 +2707,7 @@ final class DragShareController {
             return;
         }
         backgroundBlockAttempted = true;
+        traceDiagnostic("BACKGROUND_BLOCK_REQUEST", "existing_block_background_scroll_enabled", null);
         if (!backgroundTouchBlocker.start()) {
             log("background scroll lock unavailable; continuing without it");
         }
@@ -2354,6 +2780,11 @@ final class DragShareController {
         DragShareLog.i(TAG, message);
     }
 
+    private static long elapsedFromPressDown(long downTime) {
+        return downTime < 0L
+                ? -1L : Math.max(0L, SystemClock.uptimeMillis() - downTime);
+    }
+
     private static void log(String message, Throwable error) {
         DragShareLog.w(TAG, message, error);
     }
@@ -2367,13 +2798,33 @@ final class DragShareController {
     private static final class Session {
         final CapturedContent payload;
         final long rootDownTime;
+        final String operationId;
+        final DragShareLifecycle.SessionToken lifecycleToken;
         Uri stagedUri;
+        Future<?> stagingTask;
+        boolean stagingFailed;
         ShareTarget pendingTarget;
         boolean cancelled;
 
-        Session(CapturedContent payload, long rootDownTime) {
+        void discard() {
+            cancelled = true;
+            // Leave an active provider transfer intact; its late result is ignored.
+            if (stagingTask != null) stagingTask.cancel(false);
+        }
+
+        Session(
+                CapturedContent payload,
+                long rootDownTime,
+                String operationId,
+                DragShareLifecycle.SessionToken lifecycleToken) {
             this.payload = payload;
             this.rootDownTime = rootDownTime;
+            this.operationId = operationId;
+            this.lifecycleToken = lifecycleToken;
+        }
+
+        Session(CapturedContent payload, long rootDownTime, String operationId) {
+            this(payload, rootDownTime, operationId, null);
         }
     }
 

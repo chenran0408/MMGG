@@ -20,18 +20,26 @@ import java.util.concurrent.ConcurrentHashMap;
 
 import com.leaf.hyperdragshare.gestures.config.OverlayTouchRegions;
 
-import de.robv.android.xposed.XC_MethodHook;
-import de.robv.android.xposed.XposedBridge;
-import de.robv.android.xposed.XposedHelpers;
+import com.leaf.hyperdragshare.compat.xposed.XC_MethodHook;
+import com.leaf.hyperdragshare.compat.xposed.XposedBridge;
+import com.leaf.hyperdragshare.compat.xposed.XposedHelpers;
 
 final class PortalHooks {
     private static final String TAG = "DragShare/Taplus";
     private static final String SERVICE_CLASS =
             "com.miui.contentextension.services.TextContentExtensionService";
     private static final String CALLBACK_CLASS = SERVICE_CLASS + "$1";
+    private static final String CATCHER_RESULT_CLASS =
+            "miui.contentcatcher.sdk.ClientCatcherResult";
+    private static final String ON_PICK_TEXT_METHOD = "onPickText";
+    private static final String ON_PICK_IMAGE_METHOD = "onPickImage";
     private static final String BASE_FLOAT_CLASS =
             "com.miui.contentextension.text.floatview.BaseFloatView";
     private static final String MOTION_KEY = "MotionEvent";
+    private static final Handler INPUT_MAIN = new Handler(Looper.getMainLooper());
+    private static final PortalInputHandoff inputHandoff = new PortalInputHandoff();
+    private static final GestureDiagnostics.Stream callbackDiagnostics =
+            new GestureDiagnostics.Stream("portal_callback_observed");
     private static final String CONTROL_KEY = "observe_control_event";
     private static final Object DEFERRED_HOST_LOCK = new Object();
     private static final ArrayDeque<DeferredHostCall> DEFERRED_HOST_CALLS = new ArrayDeque<>();
@@ -43,6 +51,8 @@ final class PortalHooks {
     @SuppressLint("StaticFieldLeak")
     private static volatile DragShareController controller;
     private static volatile RootTouchSource rootTouchSource;
+    private static volatile RootGateway rootGateway;
+    private static volatile MiuiMotionSource motionSource;
     private static volatile PressCaptureSource thumbCaptureSource;
     @SuppressLint("StaticFieldLeak")
     private static android.app.Service portalService;
@@ -52,6 +62,7 @@ final class PortalHooks {
     private static volatile boolean activationReported;
     private static volatile Context portalContext;
     private static volatile ClassLoader portalClassLoader;
+    private static volatile boolean currentPickCallbacksHooked;
     private static volatile ContentObserver settingsObserver;
     private static volatile String xposedBridgeVersion = "unavailable";
     private static boolean overlayTouchObserved;
@@ -86,7 +97,7 @@ final class PortalHooks {
                             portalContext = context;
                             observeOverlayTouchRegions(context);
                             registerSettingsObserver(context);
-                            applyPortalRuntime();
+                            applyPortalRuntime(false);
                             activationReported = reportPortalActivation(context);
                             log("application input initialized; foreground service startup reported separately");
                         } catch (RuntimeException | LinkageError error) {
@@ -205,7 +216,7 @@ final class PortalHooks {
                         xposedBridgeVersion);
                 activationReported = reportPortalActivation(context);
                 registerSettingsObserver(context);
-                applyPortalRuntime();
+                applyPortalRuntime(true);
                 hookCallbackFromService(param.thisObject);
             }
         });
@@ -254,6 +265,7 @@ final class PortalHooks {
                 DragShareController current = controller;
                 if (current != null) {
                     if (deferHostCallIfRootDragActive(param, "cancelTask")) {
+                        current.traceDiagnostic("HOST_CANCEL_DEFERRED", "root_owns_release", null);
                         // Let the root ACTION_UP replay the original method after the
                         // physical gesture has ended. Running it now poisons Taplus'
                         // task state and prevents the next long press in the same app.
@@ -263,6 +275,7 @@ final class PortalHooks {
                             log("ignoring host cancel while root drag is active");
                         }
                     } else {
+                        invalidateLegacyPick();
                         current.onHostTaskCancelled();
                     }
                 }
@@ -280,37 +293,165 @@ final class PortalHooks {
                 }
                 Context context = ((Context) param.thisObject).getApplicationContext();
                 DragShareSettings settings = DragShareSettings.readFromProvider(context);
-                applyPortalRuntime();
+                applyPortalRuntime(false);
                 DragShareController current = controller;
                 if (current != null) {
-                    PressCaptureSource press = thumbCaptureSource;
-                    CapturedContent content = PortalContentCaptureSource.capture(param.thisObject, settings);
-                    if (content != null && press != null && press.acceptWeChatPortalContent(content)) {
+                    String methodName = param.method.getName();
+                    Object catcherResult = null;
+                    boolean currentPickCallback = ON_PICK_TEXT_METHOD.equals(methodName)
+                            || ON_PICK_IMAGE_METHOD.equals(methodName);
+                    if (currentPickCallback && param.args != null && param.args.length > 0) {
+                        catcherResult = param.args[0];
+                    }
+                    // The newer Taplus chain delivers the authoritative result
+                    // through onPick*; startPick* only arms the capture and still
+                    // points at the previous static result.
+                    if (currentPickCallbacksHooked && catcherResult == null
+                            && ("startPickTextTask".equals(methodName)
+                            || "startPickImageTask".equals(methodName))) {
                         return;
                     }
-                    if (current.isAwaitingRootRelease()) {
-                        if (content != null && content.isImage()) content.bitmap.recycle();
-                        log("portal pick ignored while Root press owns the gesture");
-                        return;
-                    }
-                    if (content == null) {
-                        return;
-                    }
-                    PointF point = PortalContentCaptureSource.initialPoint(
-                            param.thisObject,
-                            current.latestPointerX(),
-                            current.latestPointerY());
-                    current.reservePortalHostFloatWindowSuppression();
-                    current.show(
-                            content,
-                            point == null ? -1f : point.x,
-                            point == null ? -1f : point.y,
-                            settings);
+                    PortalContentCaptureSource.Pick pick = PortalContentCaptureSource.capturePick(
+                            param.thisObject, settings, catcherResult);
+                    if (pick != null) dispatchPortalPick(param.thisObject, catcherResult, settings, pick);
                 }
             }
         };
         XposedHelpers.findAndHookMethod(serviceClass, "startPickTextTask", showHook);
         XposedHelpers.findAndHookMethod(serviceClass, "startPickImageTask", showHook);
+        try {
+            Class<?> catcherResultClass = XposedHelpers.findClassIfExists(
+                    CATCHER_RESULT_CLASS, portalClassLoader);
+            if (catcherResultClass != null) {
+                XposedHelpers.findAndHookMethod(
+                        serviceClass, ON_PICK_TEXT_METHOD, catcherResultClass, showHook);
+                XposedHelpers.findAndHookMethod(
+                        serviceClass, ON_PICK_IMAGE_METHOD, catcherResultClass, showHook);
+                currentPickCallbacksHooked = true;
+                log("hooked Taplus current pick callbacks");
+            } else {
+                currentPickCallbacksHooked = false;
+                log("Taplus current pick result class unavailable; using legacy entry points");
+            }
+        } catch (Throwable error) {
+            currentPickCallbacksHooked = false;
+            log("unable to hook Taplus current pick callbacks", error);
+        }
+    }
+
+    /** Native callbacks can arrive on Binder threads; qualification owns the main queue. */
+    static void dispatchPortalContent(Object service, Object result,
+                                      DragShareSettings settings, CapturedContent content) {
+        dispatchPortalPick(service, result, settings, new PortalContentCaptureSource.Pick(content, null));
+    }
+
+    private static long legacyPickGeneration;
+    private static Runnable legacyPickCancellation;
+
+    private static void invalidateLegacyPick() {
+        if (thumbCaptureSource != null) return;
+        if (Looper.myLooper() == Looper.getMainLooper()) clearLegacyPick();
+        else new Handler(Looper.getMainLooper()).post(PortalHooks::clearLegacyPick);
+    }
+
+    private static void clearLegacyPick() {
+        legacyPickGeneration++;
+        Runnable cancellation = legacyPickCancellation;
+        legacyPickCancellation = null;
+        if (cancellation != null) cancellation.run();
+    }
+
+    private static void dispatchPortalPick(Object service, Object result, DragShareSettings settings,
+                                           PortalContentCaptureSource.Pick pick) {
+        DragShareController current = controller;
+        PressCaptureSource press = thumbCaptureSource;
+        Runnable deliver = () -> {
+            CapturedContent preview = pick.preview();
+            var original = pick.original();
+            if (current == null || current != controller || press != thumbCaptureSource) {
+                recyclePortalPreview(preview);
+                return;
+            }
+            if (press != null) {
+                if (preview != null && !press.acceptPortalContent(preview)) {
+                    recyclePortalPreview(preview);
+                    log("portal pick ignored without a qualified live press");
+                    return;
+                }
+                if (original != null) press.loadPortalOriginal(service, original, preview != null);
+                return;
+            }
+            if (current.isAwaitingRootRelease()) {
+                recyclePortalPreview(preview);
+                log("portal pick ignored while Root press owns the gesture");
+                return;
+            }
+            PointF point = PortalContentCaptureSource.touchPointFromResult(result);
+            if (point == null) point = PortalContentCaptureSource.initialPoint(
+                    service, current.latestPointerX(), current.latestPointerY());
+            float x = point == null ? -1f : point.x;
+            float y = point == null ? -1f : point.y;
+            clearLegacyPick();
+            if (original == null) {
+                showLegacyPick(current, settings, preview, x, y);
+                return;
+            }
+            // Legacy capture has no press-owned preview to upgrade. Use the prior
+            // display deadline asynchronously and keep just one load.
+            long generation = legacyPickGeneration;
+            Handler main = new Handler(Looper.getMainLooper());
+            class LegacyPickResult {
+                boolean delivered;
+                PortalContentCaptureSource.OriginalImageRequest request;
+                final Runnable showPreview = () -> deliver(null);
+
+                void cancel() {
+                    if (delivered) return;
+                    delivered = true;
+                    main.removeCallbacks(showPreview);
+                    request.cancel();
+                    recyclePortalPreview(preview);
+                }
+
+                void deliver(CapturedContent image) {
+                    if (delivered) {
+                        recyclePortalPreview(image);
+                        return;
+                    }
+                    delivered = true;
+                    main.removeCallbacks(showPreview);
+                    if (generation == legacyPickGeneration) legacyPickCancellation = null;
+                    if (image == null) request.cancel();
+                    if (generation != legacyPickGeneration || controller != current
+                            || thumbCaptureSource != null
+                            || current.isAwaitingRootRelease()) {
+                        recyclePortalPreview(image);
+                        recyclePortalPreview(preview);
+                        return;
+                    }
+                    if (image != null) recyclePortalPreview(preview);
+                    showLegacyPick(current, settings, image == null ? preview : image, x, y);
+                }
+            }
+            LegacyPickResult completion = new LegacyPickResult();
+            completion.request = PortalContentCaptureSource.loadOriginalImageAsync(
+                    service, original, image -> main.post(() -> completion.deliver(image)));
+            legacyPickCancellation = completion::cancel;
+            if (preview != null) main.postDelayed(completion.showPreview, 250L);
+        };
+        if (Looper.myLooper() == Looper.getMainLooper()) deliver.run();
+        else new Handler(Looper.getMainLooper()).post(deliver);
+    }
+
+    private static void showLegacyPick(DragShareController current, DragShareSettings settings,
+                                       CapturedContent content, float x, float y) {
+        if (content == null) return;
+        current.reservePortalHostFloatWindowSuppression();
+        current.show(content, x, y, settings);
+    }
+
+    private static void recyclePortalPreview(CapturedContent content) {
+        if (content != null && content.isImage()) content.bitmap.recycle();
     }
 
     private static void hookKnownCallbackClass(ClassLoader classLoader) {
@@ -383,24 +524,35 @@ final class PortalHooks {
             Object motion = properties.get(MOTION_KEY);
             if (!(motion instanceof MotionEvent)
                     || ((MotionEvent) motion).getActionMasked() != MotionEvent.ACTION_MOVE) {
-                DragShareLog.d(TAG, "portal callback keys=" + properties.keySet()
-                        + " motion=" + (motion instanceof MotionEvent)
-                        + " control=" + String.valueOf(properties.get(CONTROL_KEY)));
+                Object control = properties.get(CONTROL_KEY);
+                DragShareLog.dSampled(TAG, "callback:" + String.valueOf(control), 1_000L,
+                        () -> "portal callback keys=" + properties.keySet()
+                                + " motion=" + (motion instanceof MotionEvent)
+                                + " control=" + String.valueOf(control));
             }
             if (motion instanceof MotionEvent) {
-                // A motion-only result is not valid Taplus pick content.
+                callbackDiagnostics.motion((MotionEvent) motion, current.diagnosticPackage(),
+                        "HOST_CALLBACK_OBSERVED", null, null, null, "miui_motion_fallback");
+                offerMotion((MotionEvent) motion);
+                // A motion-only result is not valid Taplus pick content. The
+                // fallback above has already received the event when Root is
+                // not ready.
                 param.setResult(null);
                 return;
             }
 
             Object control = properties.get(CONTROL_KEY);
             if ("258".equals(control)) {
+                current.traceDiagnostic("HOST_CONTROL_258", "portal_control_received", null);
                 // A confirmed press owns this same root gesture through release too.
                 if (current.isAwaitingRootRelease()) {
+                    current.traceDiagnostic("HOST_CONTROL_258_IGNORED", "root_owns_release", null);
                     param.setResult(null);
                 }
             } else if ("257".equals(control)) {
+                current.traceDiagnostic("HOST_CONTROL_257", "portal_control_received", null);
                 if (deferHostCallIfRootDragActive(param, "control-257")) {
+                    current.traceDiagnostic("HOST_CONTROL_257_DEFERRED", "root_owns_release", null);
                     if (!controlIgnoredLogged) {
                         controlIgnoredLogged = true;
                         log("ignoring host finish; waiting for root ACTION_UP");
@@ -408,6 +560,7 @@ final class PortalHooks {
                     param.setResult(null);
                 } else {
                     if (current != null) {
+                        invalidateLegacyPick();
                         current.finishFromControlEvent();
                     }
                 }
@@ -426,11 +579,13 @@ final class PortalHooks {
     }
 
     private static boolean hasReadyRootSource() {
+        RootGateway gateway = rootGateway;
+        if (gateway != null) return gateway.isInputReady();
         RootTouchSource source = rootTouchSource;
         return source != null && source.isReady();
     }
 
-    private static synchronized void applyPortalRuntime() {
+    private static synchronized void applyPortalRuntime(boolean retryFailedInput) {
         Context context = portalContext;
         ClassLoader classLoader = portalClassLoader;
         if (context == null || classLoader == null) {
@@ -447,16 +602,23 @@ final class PortalHooks {
         }
         if (controller != null) {
             configureThumbCapture(context, settings);
+            if (retryFailedInput && rootGateway != null) rootGateway.retryFailedInput();
             return;
         }
         hostCancelIgnoredLogged = false;
         controlIgnoredLogged = false;
         clearDeferredHostCalls();
         controller = new DragShareController(context, OverlayWindowPolicy.portal());
-        rootTouchSource = new RootTouchSource(context, PortalHooks::dispatchRootPointer,
-                (ready, reason) -> ModuleActivation.reportRootInput(context, ready, reason));
+        rootGateway = new RootGateway(context, PortalHooks::dispatchRootPointer,
+                (ready, reason) -> {
+                    syncFallbackMotion(ready);
+                    ModuleActivation.reportRootInput(context, ready, reason);
+                });
+        rootTouchSource = rootGateway.input();
+        rootTouchSource.setFallbackOwnsInput(inputHandoff::fallbackActive);
+        motionSource = new MiuiMotionSource(classLoader, PortalHooks::offerMotion);
         configureThumbCapture(context, settings);
-        rootTouchSource.start();
+        rootGateway.startInput();
         log("portal runtime started");
     }
 
@@ -464,14 +626,22 @@ final class PortalHooks {
         PressCaptureSource thumb = thumbCaptureSource;
         thumbCaptureSource = null;
         if (thumb != null) thumb.stop();
+        invalidateLegacyPick();
         updateHostIdleTimer(false);
         if (replayDeferredCalls) {
             replayDeferredHostCalls();
         }
+        MiuiMotionSource fallback = motionSource;
+        motionSource = null;
+        inputHandoff.finishFallback();
+        if (fallback != null) fallback.stop();
         RootTouchSource rootSource = rootTouchSource;
         rootTouchSource = null;
         if (rootSource != null) {
-            rootSource.stop();
+            RootGateway gateway = rootGateway;
+            rootGateway = null;
+            if (gateway != null) gateway.stopInput();
+            else rootSource.stop();
         }
         DragShareController current = controller;
         controller = null;
@@ -486,7 +656,7 @@ final class PortalHooks {
         ContentObserver observer = new ContentObserver(new Handler(Looper.getMainLooper())) {
             @Override
             public void onChange(boolean selfChange) {
-                applyPortalRuntime();
+                applyPortalRuntime(true);
             }
         };
         try {
@@ -523,9 +693,11 @@ final class PortalHooks {
     private static void dispatchRootPointer(
             int action, float x, float y, long eventTime, int rawTouchMajor, int rawTouchMinor, int rawWidthMajor) {
         if (action != MotionEvent.ACTION_MOVE) {
-            DragShareLog.d(TAG, "root pointer action=" + MotionEvent.actionToString(action)
-                    + " point=" + Math.round(x) + "," + Math.round(y)
-                    + " time=" + eventTime);
+            invalidateLegacyPick();
+            DragShareLog.dSampled(TAG, "root-pointer:" + action, 250L,
+                    () -> "root pointer action=" + MotionEvent.actionToString(action)
+                            + " point=" + Math.round(x) + "," + Math.round(y)
+                            + " time=" + eventTime);
         }
         DragShareController current = controller;
         if (current != null) {
@@ -540,7 +712,89 @@ final class PortalHooks {
                             : null);
         }
         PressCaptureSource thumb = thumbCaptureSource;
-        if (thumb != null) thumb.onPointerEvent(action, x, y, eventTime);
+        if (thumb != null && (current == null || !current.hasInteractivePendingImagePreview())) {
+            thumb.onPointerEvent(action, x, y, eventTime);
+        }
+    }
+
+    private static void syncFallbackMotion(boolean rootReady) {
+        MiuiMotionSource fallback = motionSource;
+        if (fallback == null) return;
+        if (inputHandoff.shouldListen(rootReady)) fallback.start();
+        else fallback.stop();
+    }
+
+    /** Only copy a borrowed event when it will cross onto the main queue. */
+    private static void offerMotion(MotionEvent event) {
+        MiuiMotionSource fallback = motionSource;
+        if (fallback == null || !inputHandoff.shouldListen(hasReadyRootSource())) return;
+        if (Looper.myLooper() == INPUT_MAIN.getLooper()) {
+            dispatchMotion(event);
+            return;
+        }
+        MotionEvent copy = MotionEvent.obtainNoHistory(event);
+        INPUT_MAIN.post(() -> {
+            try {
+                if (motionSource == fallback) dispatchMotion(copy);
+            } finally {
+                copy.recycle();
+            }
+        });
+    }
+
+    /** New gestures prefer Root. A fallback gesture already in progress keeps its source. */
+    private static void dispatchMotion(MotionEvent event) {
+        boolean rootReady = hasReadyRootSource();
+        int action = event.getActionMasked();
+        long downTime = event.getDownTime();
+        if (action == MotionEvent.ACTION_DOWN) {
+            boolean missedEnd = inputHandoff.missedFallbackEnd(downTime);
+            if (missedEnd) deliverMotion(event, MotionEvent.ACTION_CANCEL);
+            if (OverlayTouchRegions.contains(event.getRawX(), event.getRawY())) {
+                if (missedEnd) {
+                    inputHandoff.finishFallback();
+                    syncFallbackMotion(rootReady);
+                }
+                return;
+            }
+        }
+        if (!inputHandoff.acceptFallback(action, downTime, rootReady)) return;
+        deliverMotion(event, action);
+        if (action == MotionEvent.ACTION_UP || action == MotionEvent.ACTION_CANCEL) {
+            inputHandoff.finishFallback();
+            syncFallbackMotion(rootReady);
+        }
+    }
+
+    private static void deliverMotion(MotionEvent event, int action) {
+        DragShareController current = controller;
+        PressCaptureSource press = thumbCaptureSource;
+        float x = event.getRawX();
+        float y = event.getRawY();
+        long time = event.getEventTime();
+        if (current != null && (action == MotionEvent.ACTION_DOWN
+                || action == MotionEvent.ACTION_MOVE
+                || action == MotionEvent.ACTION_UP
+                || action == MotionEvent.ACTION_CANCEL)) {
+            if (action != MotionEvent.ACTION_MOVE) invalidateLegacyPick();
+            current.acceptPointerEvent(action, x, y, time, "miui",
+                    action == MotionEvent.ACTION_UP || action == MotionEvent.ACTION_CANCEL
+                            ? PortalHooks::replayDeferredHostCalls : null);
+        }
+        if (press == null || (current != null && current.hasInteractivePendingImagePreview())) return;
+        int pointerCount = event.getPointerCount();
+        if ((action == MotionEvent.ACTION_DOWN || action == MotionEvent.ACTION_MOVE) && pointerCount == 1) {
+            press.onPointerEvent(action, x, y, time);
+        } else if (action == MotionEvent.ACTION_UP || action == MotionEvent.ACTION_CANCEL) {
+            press.onContactEvent(action, x, y,
+                    pointerCount > 1 ? event.getRawX(1) : Float.NaN,
+                    pointerCount > 1 ? event.getRawY(1) : Float.NaN,
+                    pointerCount, time);
+            press.onPointerEvent(action, x, y, time);
+        } else if (pointerCount > 1) {
+            press.onContactEvent(action, x, y, event.getRawX(1), event.getRawY(1),
+                    pointerCount, time);
+        }
     }
 
     private static void configureThumbCapture(Context context, DragShareSettings settings) {
@@ -554,6 +808,7 @@ final class PortalHooks {
             thumbCaptureSource = null;
             if (previous != null) previous.stop();
             if (thumb.enabled) {
+                invalidateLegacyPick();
                 thumbCaptureSource = new PressCaptureSource(
                         context, rootTouchSource, controller, settings);
                 log("reference press trigger enabled; no calibration required");

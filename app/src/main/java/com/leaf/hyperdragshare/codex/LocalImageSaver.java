@@ -9,8 +9,10 @@ import android.net.Uri;
 import android.os.Build;
 import android.os.Environment;
 import android.provider.MediaStore;
+import android.webkit.MimeTypeMap;
 
 import java.io.File;
+import java.io.InputStream;
 import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.OutputStream;
@@ -29,34 +31,68 @@ final class LocalImageSaver {
         if (context == null || bitmap == null || bitmap.isRecycled()) {
             throw new IOException("Image is unavailable");
         }
-        return save(context, output -> writePng(bitmap, output));
+        return save(context, timestampName(System.currentTimeMillis()), MIME_PNG,
+                output -> writePng(bitmap, output));
+    }
+
+    static Uri save(Context context, Uri source, String mimeTypeHint) throws IOException {
+        if (context == null || source == null) throw new IOException("Image source is unavailable");
+        ContentResolver resolver = context.getContentResolver();
+        String mimeType = resolver.getType(source);
+        if (mimeType == null || mimeType.isEmpty() || !mimeType.startsWith("image/")) {
+            String extension = MimeTypeMap.getFileExtensionFromUrl(source.getLastPathSegment());
+            String pathMimeType = MimeTypeMap.getSingleton().getMimeTypeFromExtension(extension);
+            if (pathMimeType != null && pathMimeType.startsWith("image/")) mimeType = pathMimeType;
+        }
+        if ((mimeType == null || !mimeType.startsWith("image/"))
+                && mimeTypeHint != null && mimeTypeHint.startsWith("image/")) mimeType = mimeTypeHint;
+        if (mimeType == null || !mimeType.startsWith("image/")) {
+            throw new IOException("Unable to determine source image format");
+        }
+        String extension = MimeTypeMap.getSingleton().getExtensionFromMimeType(mimeType);
+        if (extension == null || extension.isEmpty()) {
+            throw new IOException("Unsupported source image format");
+        }
+        String name = timestampName(System.currentTimeMillis(), extension);
+        String sourceMimeType = mimeType;
+        return save(context, name, sourceMimeType, output -> {
+            try (InputStream input = resolver.openInputStream(source)) {
+                if (input == null) throw new IOException("Unable to open source image");
+                copy(input, output);
+            }
+        });
     }
 
     static String timestampName(long timestampMillis) {
+        return timestampName(timestampMillis, "png");
+    }
+
+    static String timestampName(long timestampMillis, String extension) {
         return new SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US)
-                .format(new Date(timestampMillis)) + ".png";
+                .format(new Date(timestampMillis)) + "." + extension;
     }
 
     static void writePng(Bitmap bitmap, OutputStream output) throws IOException {
         BitmapEncoder.writePng(bitmap, output);
     }
 
-    private static Uri save(Context context, OutputWriter writer) throws IOException {
-        String displayName = timestampName(System.currentTimeMillis());
+    private static Uri save(Context context, String displayName, String mimeType,
+            OutputWriter writer) throws IOException {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            return saveWithMediaStore(context, displayName, writer);
+            return saveWithMediaStore(context, displayName, mimeType, writer);
         }
-        return saveLegacy(context, displayName, writer);
+        return saveLegacy(context, displayName, mimeType, writer);
     }
 
     private static Uri saveWithMediaStore(
             Context context,
             String displayName,
+            String mimeType,
             OutputWriter writer) throws IOException {
         ContentResolver resolver = context.getContentResolver();
         ContentValues values = new ContentValues();
         values.put(MediaStore.Images.Media.DISPLAY_NAME, displayName);
-        values.put(MediaStore.Images.Media.MIME_TYPE, MIME_PNG);
+        values.put(MediaStore.Images.Media.MIME_TYPE, mimeType);
         values.put(
                 MediaStore.Images.Media.RELATIVE_PATH,
                 Environment.DIRECTORY_PICTURES + File.separator + DIRECTORY_NAME);
@@ -94,6 +130,7 @@ final class LocalImageSaver {
     private static Uri saveLegacy(
             Context context,
             String displayName,
+            String mimeType,
             OutputWriter writer) throws IOException {
         File directory = new File(
                 Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_PICTURES),
@@ -115,9 +152,15 @@ final class LocalImageSaver {
         MediaScannerConnection.scanFile(
                 context,
                 new String[]{destination.getAbsolutePath()},
-                new String[]{MIME_PNG},
+                new String[]{mimeType},
                 null);
         return Uri.fromFile(destination);
+    }
+
+    static void copy(InputStream input, OutputStream output) throws IOException {
+        byte[] buffer = new byte[64 * 1024];
+        int count;
+        while ((count = input.read(buffer)) != -1) output.write(buffer, 0, count);
     }
 
     private static File uniqueFile(File directory, String displayName) {

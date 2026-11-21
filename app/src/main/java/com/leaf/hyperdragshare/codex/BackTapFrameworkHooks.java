@@ -9,10 +9,10 @@ import android.provider.Settings;
 import java.lang.reflect.Member;
 import java.lang.reflect.Method;
 
-import de.robv.android.xposed.XC_MethodHook;
-import de.robv.android.xposed.XposedBridge;
-import de.robv.android.xposed.XposedHelpers;
-import de.robv.android.xposed.callbacks.XC_LoadPackage;
+import com.leaf.hyperdragshare.compat.xposed.XC_MethodHook;
+import com.leaf.hyperdragshare.compat.xposed.XposedBridge;
+import com.leaf.hyperdragshare.compat.xposed.XposedHelpers;
+import com.leaf.hyperdragshare.compat.xposed.callbacks.XC_LoadPackage;
 
 /** Narrow HyperOS system-process hook for the user's optional back-tap shortcut. */
 final class BackTapFrameworkHooks {

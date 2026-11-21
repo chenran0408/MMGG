@@ -12,7 +12,13 @@ final class GestureArbitrator {
         if (decision != Decision.PENDING) return decision;
         float inward = corner == GestureGeometry.Corner.LEFT ? x - downX : downX - x;
         float upward = downY - y;
-        if (Math.hypot(inward, upward) < decisionDistance) return Decision.PENDING;
+        double distance = Math.hypot(inward, upward);
+        if (distance < decisionDistance) return Decision.PENDING;
+        // A steep inward start can still turn diagonal before the next decision distance.
+        if (corner != null && inward > 0f && inward < upward * MIN_INWARD_TO_UPWARD
+                && distance < 2f * decisionDistance) {
+            return Decision.PENDING;
+        }
         decision = corner != null && upward > 0f && inward > 0f
                 && inward >= upward * MIN_INWARD_TO_UPWARD
                 && upward >= inward * MIN_UPWARD_TO_INWARD

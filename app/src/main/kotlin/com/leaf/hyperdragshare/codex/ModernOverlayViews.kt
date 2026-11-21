@@ -11,8 +11,8 @@ import android.view.ViewGroup
 import android.view.ViewOutlineProvider
 import android.view.animation.PathInterpolator
 import android.widget.FrameLayout
+import android.widget.ImageView
 import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.FastOutLinearInEasing
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.Spring
@@ -24,11 +24,14 @@ import androidx.compose.animation.fadeOut
 import androidx.compose.animation.scaleIn
 import androidx.compose.animation.scaleOut
 import androidx.compose.foundation.Image
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -48,6 +51,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asImageBitmap
@@ -61,6 +65,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.viewinterop.AndroidView
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleOwner
 import androidx.lifecycle.LifecycleRegistry
@@ -72,16 +77,17 @@ import androidx.savedstate.SavedStateRegistry
 import androidx.savedstate.SavedStateRegistryController
 import androidx.savedstate.SavedStateRegistryOwner
 import androidx.savedstate.setViewTreeSavedStateRegistryOwner
+import java.util.function.Consumer
 import top.yukonga.miuix.kmp.basic.Card
 import top.yukonga.miuix.kmp.basic.CardDefaults
 import top.yukonga.miuix.kmp.basic.Text
-import top.yukonga.miuix.kmp.squircle.squircleBackground
 import top.yukonga.miuix.kmp.theme.ColorSchemeMode
 import top.yukonga.miuix.kmp.theme.MiuixTheme
 import top.yukonga.miuix.kmp.theme.ThemeController
 import kotlin.math.max
 
 private const val MODERN_MENU_ICON_SIZE_DP = 40
+private const val MODERN_MENU_SELECTION_FRAME_SIZE_DP = 46
 private const val MODERN_MENU_ITEM_WIDTH_DP = LinearMenuGeometry.ITEM_WIDTH_DP
 private const val MODERN_MENU_ITEM_HEIGHT_DP = LinearMenuGeometry.ITEM_HEIGHT_DP
 private const val MODERN_MENU_ITEM_STAGGER_MS = 38L
@@ -133,12 +139,21 @@ private class ModernOverlayLifecycleOwner :
     }
 }
 
-internal abstract class ModernOverlayComposeView(context: Context) : FrameLayout(context) {
+internal abstract class ModernOverlayComposeView(
+    context: Context,
+    private val settings: DragShareSettings,
+    private val nativeGlassBackdrop: NativeGlassBackdrop = NativeGlassBackdrop(context),
+) : FrameLayout(context) {
     protected var contentVisible by mutableStateOf(false)
     protected var nativeBackdropBlurEnabled by mutableStateOf(false)
+    protected var nativeGlassMaterialEnabled by mutableStateOf(false)
     private val lifecycleOwner = ModernOverlayLifecycleOwner()
     private val composeView = ComposeView(context)
     private var animationGeneration = 0
+    private var nativeGlassRequested = false
+    private var requestedBlurRadiusPx = 0
+    private var overlayDisposed = false
+    private var nativeGlassStateListener: Consumer<Boolean>? = null
 
     init {
         setViewTreeLifecycleOwner(lifecycleOwner)
@@ -147,6 +162,22 @@ internal abstract class ModernOverlayComposeView(context: Context) : FrameLayout
         composeView.setViewTreeLifecycleOwner(lifecycleOwner)
         composeView.setViewTreeSavedStateRegistryOwner(lifecycleOwner)
         composeView.setViewTreeViewModelStoreOwner(lifecycleOwner)
+        addView(
+            nativeGlassBackdrop,
+            LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.MATCH_PARENT,
+            ),
+        )
+        nativeGlassBackdrop.addOnAttachStateChangeListener(object : View.OnAttachStateChangeListener {
+            override fun onViewAttachedToWindow(view: View) {
+                applyRequestedNativeGlass()
+            }
+
+            override fun onViewDetachedFromWindow(view: View) {
+                updateNativeGlassState(false)
+            }
+        })
         addView(
             composeView,
             LayoutParams(
@@ -215,8 +246,40 @@ internal abstract class ModernOverlayComposeView(context: Context) : FrameLayout
             .start()
     }
 
-    fun updateNativeBackdropBlurAvailability(enabled: Boolean) {
+    fun updateNativeBackdropBlurAvailability(enabled: Boolean, blurRadiusPx: Int): Boolean {
         nativeBackdropBlurEnabled = enabled
+        nativeGlassRequested = enabled
+        requestedBlurRadiusPx = blurRadiusPx
+        return applyRequestedNativeGlass()
+    }
+
+    fun setNativeGlassStateListener(listener: Consumer<Boolean>?) {
+        nativeGlassStateListener = listener
+        listener?.accept(nativeGlassMaterialEnabled)
+    }
+
+    fun isNativeGlassMaterialEnabled(): Boolean = nativeGlassMaterialEnabled
+
+    private fun applyRequestedNativeGlass(): Boolean {
+        val canEnable = !overlayDisposed
+            && nativeGlassRequested
+            && nativeGlassBackdrop.isAttachedToWindow
+        val enabled = canEnable && (nativeGlassBackdrop.isActive() || nativeGlassBackdrop.configure(
+            requestedBlurRadiusPx,
+            settings.modernGlassOpacityPercent,
+            settings.isDarkTheme(context),
+        ))
+        if (!enabled) {
+            nativeGlassBackdrop.disable()
+        }
+        updateNativeGlassState(enabled)
+        return enabled
+    }
+
+    private fun updateNativeGlassState(enabled: Boolean) {
+        if (nativeGlassMaterialEnabled == enabled) return
+        nativeGlassMaterialEnabled = enabled
+        nativeGlassStateListener?.accept(enabled)
     }
 
     fun setContentVisibleForWindowAnimation(visible: Boolean) {
@@ -231,27 +294,41 @@ internal abstract class ModernOverlayComposeView(context: Context) : FrameLayout
     fun disposeOverlay() {
         animationGeneration++
         animate().cancel()
+        overlayDisposed = true
+        nativeGlassRequested = false
+        nativeGlassBackdrop.disable()
         nativeBackdropBlurEnabled = false
+        updateNativeGlassState(false)
         contentVisible = false
         composeView.disposeComposition()
     }
 }
 
-internal class ModernPreviewOverlayView(
+internal class ModernPreviewOverlayView @JvmOverloads constructor(
     context: Context,
-    private val payload: CapturedContent,
+    payload: CapturedContent,
     private val settings: DragShareSettings,
-) : ModernOverlayComposeView(context) {
+    nativeGlassBackdrop: NativeGlassBackdrop = NativeGlassBackdrop(context),
+) : ModernOverlayComposeView(context, settings, nativeGlassBackdrop) {
+    private val previewText = payload.text.orEmpty()
+    private val previewImage = if (payload.isImage()) ImageView(context).apply {
+        scaleType = ImageView.ScaleType.FIT_CENTER
+        importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
+        setImageBitmap(payload.bitmap)
+    } else null
+
+    fun setPreviewImage(bitmap: Bitmap) {
+        previewImage?.setImageBitmap(bitmap)
+    }
+
     init {
         setOverlayContent {
             ModernOverlayTheme(settings) {
-                val image = remember(payload.bitmap) {
-                    payload.bitmap?.takeIf { !it.isRecycled }?.asImageBitmap()
-                }
                 ModernFrostedSurface(
                     settings = settings,
                     visible = contentVisible,
                     nativeBackdropBlur = nativeBackdropBlurEnabled,
+                    nativeGlassMaterial = nativeGlassMaterialEnabled,
                     modifier = Modifier.fillMaxSize(),
                 ) {
                     Box(
@@ -260,15 +337,14 @@ internal class ModernPreviewOverlayView(
                             .padding(10.dp),
                         contentAlignment = Alignment.Center,
                     ) {
-                        if (payload.isImage() && image != null) {
-                            Image(
-                                bitmap = image,
-                                contentDescription = null,
+                        if (previewImage != null) {
+                            AndroidView(
+                                factory = { previewImage },
                                 modifier = Modifier.fillMaxSize(),
                             )
                         } else {
                             Text(
-                                text = payload.text.orEmpty(),
+                                text = previewText,
                                 color = MiuixTheme.colorScheme.onSurfaceContainer,
                                 fontSize = 14.sp,
                                 lineHeight = 19.sp,
@@ -284,13 +360,14 @@ internal class ModernPreviewOverlayView(
     }
 }
 
-internal class ModernMenuOverlayView(
+internal class ModernMenuOverlayView @JvmOverloads constructor(
     context: Context,
     private val targets: List<ShareTarget>,
     private val icons: Map<ShareTarget, Drawable>,
     private val settings: DragShareSettings,
     private val vertical: Boolean,
-) : ModernOverlayComposeView(context) {
+    nativeGlassBackdrop: NativeGlassBackdrop = NativeGlassBackdrop(context),
+) : ModernOverlayComposeView(context, settings, nativeGlassBackdrop) {
     private val itemBounds = LinkedHashMap<ShareTarget, androidx.compose.ui.geometry.Rect>()
     private var selectedTargetState by mutableStateOf<ShareTarget?>(null)
     private var scrollState: LazyListState? = null
@@ -310,6 +387,7 @@ internal class ModernMenuOverlayView(
                     settings = settings,
                     visible = contentVisible,
                     nativeBackdropBlur = nativeBackdropBlurEnabled,
+                    nativeGlassMaterial = nativeGlassMaterialEnabled,
                     modifier = Modifier.fillMaxSize(),
                 ) {
                     if (targets.isEmpty()) {
@@ -425,6 +503,7 @@ private fun ModernFrostedSurface(
     settings: DragShareSettings,
     visible: Boolean,
     nativeBackdropBlur: Boolean,
+    nativeGlassMaterial: Boolean,
     modifier: Modifier = Modifier,
     content: @Composable () -> Unit,
 ) {
@@ -433,6 +512,7 @@ private fun ModernFrostedSurface(
             ModernCardSurface(
                 settings = settings,
                 nativeBackdropBlur = nativeBackdropBlur,
+                nativeGlassMaterial = nativeGlassMaterial,
                 modifier = Modifier.fillMaxSize(),
                 content = content,
             )
@@ -444,16 +524,16 @@ private fun ModernFrostedSurface(
 private fun ModernCardSurface(
     settings: DragShareSettings,
     nativeBackdropBlur: Boolean,
+    nativeGlassMaterial: Boolean,
     modifier: Modifier = Modifier,
     content: @Composable () -> Unit,
 ) {
-    val cardColor = MiuixTheme.colorScheme.surfaceContainer.let { surfaceColor ->
-        if (nativeBackdropBlur) {
-            surfaceColor.copy(alpha = settings.modernGlassOpacityPercent / 100f)
-        } else {
-            surfaceColor
-        }
-    }
+    val cardColor = modernOverlayCardColor(
+        surfaceColor = MiuixTheme.colorScheme.surfaceContainer,
+        opacityPercent = settings.modernGlassOpacityPercent,
+        nativeBackdropBlur = nativeBackdropBlur,
+        nativeGlassMaterial = nativeGlassMaterial,
+    )
     Card(
         modifier = modifier,
         insideMargin = PaddingValues(0.dp),
@@ -466,6 +546,17 @@ private fun ModernCardSurface(
             content()
         }
     }
+}
+
+internal fun modernOverlayCardColor(
+    surfaceColor: Color,
+    opacityPercent: Int,
+    nativeBackdropBlur: Boolean,
+    nativeGlassMaterial: Boolean,
+): Color = when {
+    nativeGlassMaterial -> Color.Transparent
+    nativeBackdropBlur -> surfaceColor.copy(alpha = opacityPercent.coerceIn(0, 100) / 100f)
+    else -> surfaceColor
 }
 
 private class ModernRoundedOutlineProvider(context: Context) : ViewOutlineProvider() {
@@ -525,51 +616,61 @@ private fun ModernShareTarget(
             modifier = Modifier.matchParentSize(),
         ) {
             val selectedScale by animateFloatAsState(
-                targetValue = if (selected) 1.08f else 1f,
+                targetValue = if (selected) 1.12f else 1f,
                 animationSpec = spring(
                     dampingRatio = Spring.DampingRatioMediumBouncy,
-                    stiffness = Spring.StiffnessMedium,
+                    stiffness = Spring.StiffnessMediumLow,
                 ),
                 label = "modern-target-scale",
             )
-            val background by animateColorAsState(
-                targetValue = if (selected) {
-                    MiuixTheme.colorScheme.onSurfaceContainer.copy(alpha = 0.12f)
-                } else {
-                    Color.Transparent
-                },
-                animationSpec = tween(140, easing = FastOutSlowInEasing),
-                label = "modern-target-selection",
+            val liftPx = with(LocalDensity.current) { 8.dp.toPx() }
+            val selectedLift by animateFloatAsState(
+                targetValue = if (selected) -liftPx else 0f,
+                animationSpec = spring(
+                    dampingRatio = Spring.DampingRatioMediumBouncy,
+                    stiffness = Spring.StiffnessMediumLow,
+                ),
+                label = "modern-target-lift",
             )
+            val accent = MiuixTheme.colorScheme.primary
+            val iconVisualOpacity = max(iconOpacity, 0.9f)
             Column(
                 modifier = Modifier
                     .fillMaxSize()
                     .onGloballyPositioned { onBoundsChanged(it.boundsInRoot()) }
-                    .then(
-                        if (selected) {
-                            Modifier.squircleBackground(
-                                color = background,
-                                cornerRadius = 12.dp,
-                            )
-                        } else {
-                            Modifier
-                        },
-                    )
                     .padding(vertical = 4.dp),
                 horizontalAlignment = Alignment.CenterHorizontally,
                 verticalArrangement = Arrangement.Center,
             ) {
-                ModernTargetIcon(
-                    target = target,
-                    icon = icon,
-                    opacity = iconOpacity,
+                Box(
                     modifier = Modifier
-                        .size(MODERN_MENU_ICON_SIZE_DP.dp)
+                        .size(MODERN_MENU_SELECTION_FRAME_SIZE_DP.dp)
+                        .then(
+                            if (selected) {
+                                Modifier
+                                    .border(3.dp, accent.copy(alpha = 0.16f), RoundedCornerShape(14.dp))
+                                    .border(2.dp, accent.copy(alpha = 0.36f), RoundedCornerShape(13.dp))
+                                    .border(1.dp, accent.copy(alpha = 0.85f), RoundedCornerShape(12.dp))
+                            } else {
+                                Modifier
+                            },
+                        )
+                        // Keep the measured cell and its drag hit bounds stable; only the visual
+                        // target lifts and scales, matching the Dock-style selected treatment.
                         .graphicsLayer {
                             scaleX = selectedScale
                             scaleY = selectedScale
+                            translationY = selectedLift
                         },
-                )
+                    contentAlignment = Alignment.Center,
+                ) {
+                    ModernTargetIcon(
+                        target = target,
+                        icon = icon,
+                        opacity = iconVisualOpacity,
+                        modifier = Modifier.size(MODERN_MENU_ICON_SIZE_DP.dp),
+                    )
+                }
                 Text(
                     text = target.label?.toString().orEmpty(),
                     modifier = Modifier

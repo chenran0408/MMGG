@@ -14,6 +14,7 @@ import android.view.accessibility.AccessibilityNodeInfo;
 import android.view.accessibility.AccessibilityWindowInfo;
 
 import org.json.JSONArray;
+import org.json.JSONException;
 import org.json.JSONObject;
 
 import java.io.BufferedReader;
@@ -23,6 +24,8 @@ import java.io.InputStreamReader;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Set;
+import java.util.regex.Pattern;
 
 /** Explicit node lookups in app_process; serving mode never traverses nodes while idle. */
 @android.annotation.TargetApi(34)
@@ -33,9 +36,34 @@ public final class RootNodeCaptureMain {
     private static java.lang.reflect.Constructor<?> automationConstructor;
     private static java.lang.reflect.Method connect;
     private static java.lang.reflect.Method disconnect;
+    private static RootRecordingActivity recordingActivity;
 
-    // WMS identity is used only for a node-less WeChat conversation capture.
-    private static final int WINDOW_MANAGER_CAPTURE = -2;
+    private static final Pattern HOLD_WHITESPACE = Pattern.compile("\\s+");
+    private static final Set<String> HOLD_PROMPTS = Set.of(
+            "按住说话", "按住讲话", "长按说话", "长按讲话", "按住语音输入",
+            "长按语音输入", "按住语音说话", "按住开始说话", "按住开始录音",
+            "按住录音说话", "长按录音", "按住发语音", "长按发语音", "按住发送语音",
+            "按住录音", "按住发送", "松开发送", "松开结束录音", "松开取消",
+            "上滑取消", "手指上滑取消发送", "松开转文字", "holdtotalk", "presstotalk",
+            "holdtospeak", "pressandholdtospeak", "holdtorecord", "releasetosend",
+            "releasetocancel", "releasetostoprecording",
+            "slideuptocancel");
+    private static final Set<String> VIDEO_SPEED_HOLD_PROMPTS = Set.of(
+            "长按倍速播放", "按住倍速", "按住倍速播放", "长按快进", "按住快进",
+            "长按加速播放", "按住加速播放",
+            // Compact accessibility labels used by inline/overlay playback speed controls.
+            "倍速", "2x", "2.0x", "2倍", "2倍速", "1.5x", "1.5倍", "1.5倍速",
+            "长按快进2x", "长按快进2倍", "按住快进2x", "长按加速播放2x");
+    private static final Set<String> CAMERA_CAPTURE_PROMPTS = Set.of(
+            "拍照", "拍照按钮", "拍摄", "拍摄按钮", "拍摄照片", "开始拍照", "开始拍摄",
+            "按住拍摄", "长按拍摄", "拍摄视频", "开始录像", "录像", "录制视频",
+            "录制", "录制按钮", "开始录制", "停止录制", "按住录制", "长按录制", "快门",
+            "takephoto", "takepicture", "shutter", "record", "recordvideo", "startrecording", "stoprecording");
+    private static final Set<String> ACTION_MENU_PROMPTS = Set.of(
+            "复制", "复制文本", "复制链接", "回复", "回复评论", "转发", "转发给朋友",
+            "评论", "发表评论", "点赞", "赞", "点踩", "收藏", "引用", "更多", "多选",
+            "删除", "撤回", "翻译", "copy", "copylink", "reply", "forward", "comment",
+            "like", "quote", "more", "delete", "translate");
     private static PressWindowSnapshot pressWindow;
     private static Rect pressRegion;
     private static String pressVerificationError = "";
@@ -77,21 +105,25 @@ public final class RootNodeCaptureMain {
                 Throwable cause = error instanceof java.lang.reflect.InvocationTargetException
                         && error.getCause() != null ? error.getCause() : error;
                 String reason;
+                String errorCode;
                 if (cause instanceof IllegalStateException && cause.getMessage() != null
                         && cause.getMessage().contains("already registered")) {
                     reason = "界面取词服务正被其他自动化会话占用，请结束该会话后重试";
+                    errorCode = "uiautomation_already_registered";
                 } else if (cause instanceof SecurityException) {
                     reason = "系统拒绝界面取词连接，请检查 Root 授权";
+                    errorCode = "uiautomation_permission_denied";
                 } else {
-                    reason = "无法连接界面取词服务：" + cause.getClass().getSimpleName()
-                            + (cause.getMessage() == null ? "" : "（" + cause.getMessage() + "）");
+                    reason = "无法连接界面取词服务，请稍后重试";
+                    errorCode = "uiautomation_connect_failed";
                 }
-                System.err.println("Root node connection failed");
-                error.printStackTrace(System.err);
-                System.out.println(new JSONObject().put("ready", false).put("error", reason));
+                // Do not expose framework exception text or stack traces to either log destination.
+                System.out.println(new JSONObject().put("ready", false).put("error", reason)
+                        .put("error_code", errorCode));
                 System.out.flush();
             }
             if (connected) {
+                if (serve) recordingActivity = RootRecordingActivity.open(RootNodeCaptureMain::publishRecordings);
                 automation.setOnAccessibilityEventListener(event -> {
                     synchronized (eventLock) {
                         eventVersion[0]++;
@@ -123,6 +155,19 @@ public final class RootNodeCaptureMain {
         System.exit(0);
     }
 
+    private static void publishRecordings(Set<RootRecordingActivity.Recording> active, long observedAt) {
+        try {
+            JSONArray recordings = new JSONArray();
+            for (RootRecordingActivity.Recording item : active) {
+                recordings.put(new JSONArray().put(item.pkg()).put(item.user()).put(item.session()));
+            }
+            System.out.println(new JSONObject().put("recordings", recordings).put("observed_at", observedAt));
+            System.out.flush();
+        } catch (JSONException error) {
+            android.util.Log.w("DragShare/RecordingAvoidance", "Cannot serialize recording state", error);
+        }
+    }
+
     static JSONObject captureRequest(JSONObject request, UiAutomation automation,
                                             Object eventLock, int[] eventVersion, Handler watchdog)
             throws Exception {
@@ -139,9 +184,10 @@ public final class RootNodeCaptureMain {
                 return captureImageRegion(request, automation);
             }
             if ("verify_window".equals(request.optString("operation"))) {
-                if (request.getInt("window_id") == WINDOW_MANAGER_CAPTURE) {
-                    Rect region = verifyPressRegion(request.getString("package"));
-                    return windowResult(region);
+                if (request.getInt("window_id") == -1) {
+                    Rect bounds = new Rect(request.getInt("left"), request.getInt("top"),
+                            request.getInt("right"), request.getInt("bottom"));
+                    return windowResult(RootUiAgentCapture.currentBounds(request.getString("package"), bounds));
                 }
                 automation.clearCache();
                 AccessibilityNodeInfo current = automation.getRootInActiveWindow();
@@ -158,6 +204,10 @@ public final class RootNodeCaptureMain {
                 }
             }
             if ("verify_source".equals(request.optString("operation"))) {
+                if (RootUiAgentCapture.hasSelection()) {
+                    return new JSONObject().put("same_source",
+                            RootUiAgentCapture.isCurrentSource(request.getString("package")));
+                }
                 if (pressWindow != null) {
                     return new JSONObject().put("same_source",
                             verifyPressRegion(request.getString("package")) != null);
@@ -188,58 +238,36 @@ public final class RootNodeCaptureMain {
             }
             pressWindow = null;
             pressRegion = null;
+            RootUiAgentCapture.reset();
             boolean press = request.optBoolean("press_lookup", false);
-            boolean wechatWindowRejected = false;
             automation.clearCache();
             AccessibilityNodeInfo root = press ? automation.getRootInActiveWindow()
                     : awaitRoot(automation, eventLock, eventVersion);
-            if (root == null && press && request.optBoolean("allow_text")) {
-                JSONObject conversation = captureUnexposedConversation(request);
-                if (conversation.optBoolean("found")
-                        || !"no_supported_visible_wechat_window".equals(conversation.optString("reason")))
-                    return conversation;
-                wechatWindowRejected = true;
-                // Keep the existing semantics-startup wait for other applications.
-                root = awaitRoot(automation, eventLock, eventVersion);
-            }
-            if (root == null) return new JSONObject().put("found", false).put("reason", "window_not_ready");
+            if (root == null) return RootUiAgentCapture.capture(request);
             long rootAt = SystemClock.uptimeMillis();
             try {
                 JSONObject result = capture(root, request);
                 long capturedAt = SystemClock.uptimeMillis();
                 String source = string(root.getPackageName());
-                boolean wechatPress = press && "com.tencent.mm".equals(source);
-                if (!wechatPress) {
-                    AccessibilityNodeInfo current = automation.getRootInActiveWindow();
-                    try {
-                        if (current == null || current.getWindowId() != root.getWindowId()
-                                || !java.util.Objects.equals(string(current.getPackageName()), source)) {
-                            result = new JSONObject().put("found", false).put("reason", "window_changed");
-                        }
-                    } finally {
-                        if (current != null) current.recycle();
+                AccessibilityNodeInfo current = automation.getRootInActiveWindow();
+                try {
+                    if (current == null || current.getWindowId() != root.getWindowId()
+                            || !java.util.Objects.equals(string(current.getPackageName()), source)) {
+                        result = new JSONObject().put("found", false).put("reason", "window_changed");
                     }
+                } finally {
+                    if (current != null) current.recycle();
                 }
-                String rejection = result.optString("reason");
-                boolean canUseWeChatWindowCapture = press && request.optBoolean("allow_text", true)
-                        && "com.tencent.mm".equals(source)
-                        && !wechatWindowRejected
-                        && !"excluded_input_method".equals(rejection)
-                        && !"excluded_app".equals(rejection)
-                        && !"excluded_hold_control".equals(rejection)
-                        && !"content_type_disabled".equals(rejection)
-                        && !"window_changed".equals(rejection);
-                if (!result.optBoolean("found") && canUseWeChatWindowCapture) {
-                    JSONObject windowCapture = captureUnexposedConversation(request);
-                    if (windowCapture.optBoolean("found")
-                            || !"no_supported_visible_wechat_window".equals(windowCapture.optString("reason"))) {
-                        return windowCapture.put("root_ms", rootAt - started)
-                                .put("fallback_reason", rejection.isEmpty() ? "no_content_candidate" : rejection)
-                                .put("capture_ms", capturedAt - rootAt)
-                                .put("verify_ms", SystemClock.uptimeMillis() - capturedAt);
-                    }
+                // WeChat and other custom-rendered hosts can replace the active
+                // accessibility root while a long press is being classified. The
+                // existing native-View path already verifies the WMS window and
+                // source package; use it for this explicit press-only failure too.
+                if (press && !result.optBoolean("found")
+                        && "window_changed".equals(result.optString("reason"))) {
+                    result = RootUiAgentCapture.capture(request);
                 }
-                return result.put("window_id", root.getWindowId()).put("root_ms", rootAt - started)
+                return result.put("window_id", result.optInt("window_id", root.getWindowId()))
+                        .put("root_ms", rootAt - started)
                         .put("capture_ms", capturedAt - rootAt)
                         .put("verify_ms", SystemClock.uptimeMillis() - capturedAt);
             } finally {
@@ -250,7 +278,7 @@ public final class RootNodeCaptureMain {
         }
     }
 
-    private static PressWindowSnapshot.ParseResult readPressWindow() throws IOException, InterruptedException {
+    static PressWindowSnapshot.ParseResult readPressWindow() throws IOException, InterruptedException {
         Process dump = new ProcessBuilder("/system/bin/dumpsys", "-t", "1", "window")
                 .redirectErrorStream(true).start();
         try {
@@ -260,51 +288,6 @@ public final class RootNodeCaptureMain {
         } finally {
             dump.destroy();
         }
-    }
-
-    private static JSONObject captureUnexposedConversation(JSONObject request) throws Exception {
-        JSONObject absent = new JSONObject().put("found", false);
-        if (!request.optBoolean("allow_text") || keyguardLocked())
-            return absent.put("reason", "text_disabled_or_locked");
-        final PressWindowSnapshot.ParseResult parsed;
-        try { parsed = readPressWindow(); }
-        catch (IOException error) {
-            System.err.println("Press window inspection failed: " + error.getMessage());
-            return absent.put("reason", "window_inspection_failed");
-        }
-        if (parsed.snapshot == null) {
-            System.err.println("Press window capture rejected reason=" + parsed.reason);
-            return absent.put("reason", "window_" + parsed.reason);
-        }
-        PressWindowSnapshot window = parsed.snapshot;
-        if (!PressWindowSnapshot.isSupportedWeChatWindow(window.packageName, window.windowName)) {
-            System.err.println("Press window capture rejected reason=unsupported_wechat_component");
-            return absent.put("reason", "no_supported_visible_wechat_window");
-        }
-        JSONArray blocked = request.getJSONArray("blocked");
-        for (int i = 0; i < blocked.length(); i++) {
-            if (window.packageName.equals(blocked.getString(i))) {
-                System.err.println("Press window capture rejected reason=excluded_app");
-                return absent.put("reason", "excluded_app");
-            }
-        }
-        Rect region = window.regionAt((float) request.getDouble("x"), (float) request.getDouble("y"),
-                request.getInt("width"), request.getInt("height"), (float) request.getDouble("density"));
-        if (region == null) {
-            System.err.println("Press window capture rejected reason=press_region_obscured");
-            return absent.put("reason", "press_region_obscured");
-        }
-        pressWindow = window;
-        pressRegion = region;
-        pressX = (float) request.getDouble("x");
-        pressY = (float) request.getDouble("y");
-        pressDensity = (float) request.getDouble("density");
-        pressWidth = request.getInt("width");
-        pressHeight = request.getInt("height");
-        return new JSONObject().put("found", true).put("package", window.packageName)
-                .put("kind", "ocr_region").put("window_id", WINDOW_MANAGER_CAPTURE)
-                .put("left", region.left).put("top", region.top)
-                .put("right", region.right).put("bottom", region.bottom);
     }
 
     private static JSONObject windowResult(Rect region) throws Exception {
@@ -322,7 +305,7 @@ public final class RootNodeCaptureMain {
             screenshot = automation.takeScreenshot();
         } catch (RuntimeException error) {
             System.err.println("Press screenshot failed: " + error.getClass().getSimpleName());
-            return new JSONObject().put("same_window", false).put("reason", "系统无法截取当前微信页面");
+            return new JSONObject().put("same_window", false).put("reason", "系统无法截取当前页面");
         }
         long screenshotMs = SystemClock.uptimeMillis() - screenshotStarted;
         if (screenshot == null) {
@@ -362,10 +345,62 @@ public final class RootNodeCaptureMain {
     /** Captures and crops an image node inside the helper to avoid a slow full-screen su screencap. */
     private static JSONObject captureImageRegion(JSONObject request, UiAutomation automation)
             throws Exception {
+        String source = request.getString("package");
+        Rect requested = new Rect(request.getInt("left"), request.getInt("top"),
+                request.getInt("right"), request.getInt("bottom"));
+        int windowId = request.getInt("window_id");
+        ImageWindowCheck checkWindow = () -> {
+            if (keyguardLocked()) return false;
+            if (windowId == -1) return RootUiAgentCapture.currentBounds(source, requested) != null;
+            automation.clearCache();
+            AccessibilityNodeInfo root = automation.getRootInActiveWindow();
+            try {
+                return root != null && root.getWindowId() == windowId
+                        && source.equals(string(root.getPackageName()));
+            } finally {
+                if (root != null) root.recycle();
+            }
+        };
+        PressWindowSnapshot mediaWindow = null;
+        if (request.optBoolean("prefer_original") && !keyguardLocked()) {
+            try {
+                mediaWindow = captureNativeMedia(source, request.getInt("user_id"),
+                        (float) request.getDouble("x"), (float) request.getDouble("y"), requested);
+            } catch (Exception error) {
+                System.err.println("Native media reference unavailable: " + error.getClass().getSimpleName());
+            }
+        }
+        if (mediaWindow != null) {
+            PressWindowSnapshot current = readPressWindow().snapshot;
+            boolean same = current != null && mediaWindow.sameWindow(current)
+                    && current.permits(requested) && (windowId == -1
+                    ? !keyguardLocked() && RootUiAgentCapture.matchesSelection(source, requested, current)
+                    : checkWindow.isCurrent());
+            return imageCaptureReply(requested, same ? OriginalImage.READY : OriginalImage.WINDOW_CHANGED,
+                    checkWindow, automation::takeScreenshot);
+        }
+        return imageCaptureReply(requested, OriginalImage.UNAVAILABLE, checkWindow, automation::takeScreenshot);
+    }
+
+    enum OriginalImage { UNAVAILABLE, READY, WINDOW_CHANGED }
+
+    interface ImageWindowCheck {
+        boolean isCurrent() throws Exception;
+    }
+
+    static JSONObject imageCaptureReply(Rect requested, OriginalImage original,
+            ImageWindowCheck checkWindow, java.util.function.Supplier<Bitmap> captureScreen)
+            throws Exception {
+        if (original == OriginalImage.READY) {
+            return windowResult(requested).put("media_encoded", true);
+        }
+        if (original == OriginalImage.WINDOW_CHANGED) {
+            return new JSONObject().put("same_window", false).put("reason", "按压窗口已变化");
+        }
         long screenshotStarted = SystemClock.uptimeMillis();
         Bitmap screenshot;
         try {
-            screenshot = automation.takeScreenshot();
+            screenshot = captureScreen.get();
         } catch (RuntimeException error) {
             System.err.println("Image screenshot failed: " + error.getClass().getSimpleName());
             return new JSONObject().put("same_window", false).put("reason", "系统无法截取当前页面");
@@ -377,24 +412,13 @@ public final class RootNodeCaptureMain {
         Bitmap cropped = null;
         try {
             long verifyStarted = SystemClock.uptimeMillis();
-            String source = request.getString("package");
-            int windowId = request.getInt("window_id");
-            automation.clearCache();
-            AccessibilityNodeInfo root = automation.getRootInActiveWindow();
-            boolean same;
-            try {
-                same = root != null && root.getWindowId() == windowId
-                        && source.equals(string(root.getPackageName()));
-            } finally {
-                if (root != null) root.recycle();
-            }
+            Rect crop = new Rect(requested);
+            boolean same = checkWindow.isCurrent();
             long verifyMs = SystemClock.uptimeMillis() - verifyStarted;
             if (!same) {
                 return new JSONObject().put("same_window", false).put("reason", "按压窗口已变化")
                         .put("screenshot_ms", screenshotMs).put("verify_ms", verifyMs);
             }
-            Rect crop = new Rect(request.getInt("left"), request.getInt("top"),
-                    request.getInt("right"), request.getInt("bottom"));
             if (!crop.intersect(0, 0, screenshot.getWidth(), screenshot.getHeight())) {
                 return new JSONObject().put("same_window", false).put("reason", "图片区域已移出屏幕");
             }
@@ -414,10 +438,29 @@ public final class RootNodeCaptureMain {
         }
     }
 
+    private static PressWindowSnapshot captureNativeMedia(String source, int userId, float x,
+            float y, Rect bounds)
+            throws Exception {
+        PressWindowSnapshot.ParseResult parsed = readPressWindow();
+        PressWindowSnapshot window = parsed.snapshot;
+        if (window == null || !source.equals(window.packageName) || !window.permits(bounds)
+                || !bounds.contains((int)x, (int)y)) return null;
+        int slash = window.windowName.indexOf('/');
+        if (slash < 0 || slash == window.windowName.length() - 1) return null;
+        try (SystemUiAgent.Media media = SystemUiAgent.readMedia(source,
+                window.windowName.substring(slash + 1), userId, x, y, bounds)) {
+            if (media == null) return null;
+            int count;
+            try (java.io.InputStream input = media.open()) {
+                count = RootMediaPipe.write(input, System.out);
+            }
+            return count > 0 ? window : null;
+        }
+    }
+
     private static Rect verifyPressRegion(String source) throws Exception {
         pressVerificationError = "";
         if (pressWindow == null || pressRegion == null || !source.equals(pressWindow.packageName)
-                || !PressWindowSnapshot.isSupportedWeChatWindow(source, pressWindow.windowName)
                 || keyguardLocked()) {
             pressVerificationError = "source_changed_or_locked";
             System.err.println("Press window verification rejected reason=" + pressVerificationError);
@@ -431,8 +474,7 @@ public final class RootNodeCaptureMain {
                 return null;
             }
             PressWindowSnapshot current = parsed.snapshot;
-            if (!PressWindowSnapshot.isSupportedWeChatWindow(current.packageName, current.windowName)
-                    || !pressWindow.sameWindow(current)) {
+            if (!pressWindow.sameWindow(current)) {
                 pressVerificationError = "window_identity_changed";
                 System.err.println("Press window verification rejected reason=" + pressVerificationError);
                 return null;
@@ -453,7 +495,7 @@ public final class RootNodeCaptureMain {
         }
     }
 
-    private static boolean keyguardLocked() throws ReflectiveOperationException {
+    static boolean keyguardLocked() throws ReflectiveOperationException {
         Class<?> manager = Class.forName("android.view.IWindowManager");
         android.os.IBinder binder = (android.os.IBinder) Class.forName("android.os.ServiceManager")
                 .getMethod("getService", String.class).invoke(null, "window");
@@ -700,29 +742,122 @@ public final class RootNodeCaptureMain {
     static boolean holdControlAtPoint(List<AccessibilityNodeSnapshot> nodes, float x, float y, String source) {
         for (AccessibilityNodeSnapshot label : nodes) {
             if (!label.visible || !source.equals(label.packageName)
-                    || !label.bounds.contains((int) x, (int) y)
-                    || (!holdLabel(label.text) && !holdLabel(label.contentDescription))) continue;
+                    || !label.bounds.contains((int) x, (int) y)) continue;
+            if (isCommonInteractiveControl(label)) return true;
+            if (label.enabled && label.rangeControl) return true;
+            String text = normalizeHoldText(label.text);
+            String description = normalizeHoldText(label.contentDescription);
+            boolean exactVoicePrompt = HOLD_PROMPTS.contains(text) || HOLD_PROMPTS.contains(description);
+            boolean embeddedVoicePrompt = !exactVoicePrompt
+                    && (containsHoldLabel(text) || containsHoldLabel(description));
+            boolean videoSpeedPrompt = VIDEO_SPEED_HOLD_PROMPTS.contains(text)
+                    || VIDEO_SPEED_HOLD_PROMPTS.contains(description);
+            boolean cameraCapturePrompt = CAMERA_CAPTURE_PROMPTS.contains(text)
+                    || CAMERA_CAPTURE_PROMPTS.contains(description);
+            boolean actionMenuPrompt = ACTION_MENU_PROMPTS.contains(text)
+                    || ACTION_MENU_PROMPTS.contains(description);
+            if (!exactVoicePrompt && !embeddedVoicePrompt && !videoSpeedPrompt
+                    && !cameraCapturePrompt && !actionMenuPrompt) continue;
+            if (actionMenuPrompt && label.enabled && isActionMenuControlClass(label.className)
+                    && label.clickable) return true;
             for (AccessibilityNodeSnapshot control : nodes) {
-                if (control.visible && source.equals(control.packageName)
-                        && (control.clickable || control.longClickable)
-                        && control.bounds.contains(label.bounds)) return true;
+                if (!control.visible || !source.equals(control.packageName)
+                        || !isScopedControl(control, label)) continue;
+                boolean interactive = control.editable || control.clickable || control.longClickable;
+                // Explicit hold controls keep their gesture even when accessibility
+                // reports them disabled. Preserve the pre-slider avoidance rule.
+                if (videoSpeedPrompt && !control.editable && interactive) return true;
+                if (cameraCapturePrompt && label.enabled && control.enabled
+                        && !control.editable && interactive) return true;
+                if (actionMenuPrompt && label.enabled && control.enabled
+                        && !control.editable && control.clickable
+                        && isActionMenuControlClass(control.className)) return true;
+                boolean voiceControl = !embeddedVoicePrompt || control.editable
+                        || ((control.clickable || control.longClickable)
+                        && (isVoiceButtonClass(control.className) || control != label));
+                boolean voicePrompt = exactVoicePrompt || embeddedVoicePrompt;
+                if (voicePrompt && !videoSpeedPrompt && !cameraCapturePrompt
+                        && interactive && voiceControl) return true;
             }
         }
         return false;
     }
 
-    private static boolean holdLabel(String text) {
-        if (text == null) return false;
-        return switch (text.replaceAll("\\s+", "").toLowerCase(java.util.Locale.ROOT)) {
-            case "按住说话", "按住录音", "按住发送", "松开发送", "松开结束录音", "松开取消",
-                    "上滑取消", "手指上滑取消发送", "松开转文字", "holdtotalk",
-                    "presstotalk", "holdtorecord", "releasetosend", "releasetocancel",
-                    "releasetostoprecording", "slideuptocancel" -> true;
-            default -> false;
-        };
+    /**
+     * Prevent the press action from competing with controls that own a long hold,
+     * such as buttons, fields, switches, sliders, menus, and media surfaces.
+     * Text and image nodes remain eligible so ordinary content can still be picked.
+     */
+    private static boolean isCommonInteractiveControl(AccessibilityNodeSnapshot node) {
+        if (!node.enabled || node.password || (!node.clickable && !node.longClickable)) return false;
+        String className = node.className == null
+                ? "" : node.className.toLowerCase(java.util.Locale.ROOT);
+        boolean hasLabel = (node.text != null && !node.text.trim().isEmpty())
+                || (node.contentDescription != null && !node.contentDescription.trim().isEmpty());
+        if (!hasLabel) return false;
+        if (className.contains("image")
+                || ((node.text == null || node.text.trim().isEmpty())
+                && isImageDescription(node.contentDescription))) return false;
+        if (node.editable) return true;
+        if (className.contains("button") || className.contains("switch")
+                || className.contains("checkbox") || className.contains("radiobutton")
+                || className.contains("seekbar") || className.contains("slider")
+                || className.contains("spinner") || className.contains("ratingbar")
+                || className.contains("progressbar") || className.contains("menuitem")
+                || className.contains("surfaceview") || className.contains("textureview")
+                || className.contains("webview") || className.contains("mapview")
+                || className.contains("videoview") || className.endsWith("playerview")
+                || className.contains("videoplayer") || className.contains("mediaplayer")) {
+            return true;
+        }
+        // Compose and vendor controls are often exposed as a leaf android.view.View.
+        // Do not apply this to TextView prose or to a container holding a message label.
+        return node.leaf && !className.endsWith("textview")
+                && !className.endsWith("edittext")
+                && ("android.view.view".equals(className)
+                || node.text == null || node.text.trim().isEmpty());
     }
 
-    private static JSONObject contentResult(AccessibilityCandidateSelector.Selection selection,
+    private static boolean isImageDescription(String description) {
+        if (description == null) return false;
+        String normalized = description.trim().toLowerCase(java.util.Locale.ROOT);
+        return "图片".equals(normalized) || "图像".equals(normalized)
+                || "image".equals(normalized) || "photo".equals(normalized);
+    }
+
+    private static boolean isScopedControl(AccessibilityNodeSnapshot control,
+                                           AccessibilityNodeSnapshot label) {
+        if (control == label) return true;
+        if (control.depth + 1 != label.depth || !control.bounds.contains(label.bounds)) return false;
+        long controlArea = (long) control.bounds.width() * control.bounds.height();
+        long labelArea = (long) label.bounds.width() * label.bounds.height();
+        return labelArea > 0 && controlArea <= labelArea * 16L;
+    }
+
+    private static boolean containsHoldLabel(String normalized) {
+        for (String phrase : HOLD_PROMPTS) {
+            if (normalized.contains(phrase)) return true;
+        }
+        return false;
+    }
+
+    private static String normalizeHoldText(String text) {
+        return text == null ? "" : HOLD_WHITESPACE.matcher(text).replaceAll("")
+                .toLowerCase(java.util.Locale.ROOT);
+    }
+
+    private static boolean isVoiceButtonClass(String className) {
+        return className != null && className.endsWith("Button");
+    }
+
+    private static boolean isActionMenuControlClass(String className) {
+        if (className == null) return false;
+        return className.endsWith("Button") || className.endsWith("button")
+                || className.endsWith("MenuItemView")
+                || "android.view.MenuItem".equals(className);
+    }
+
+    static JSONObject contentResult(AccessibilityCandidateSelector.Selection selection,
                                             String source, int nodeCount) throws org.json.JSONException {
         AccessibilityCandidate candidate = selection.candidate;
         return new JSONObject().put("found", true).put("package", source)
@@ -767,7 +902,7 @@ public final class RootNodeCaptureMain {
             snapshots.removeIf(node -> Rect.intersects(node.bounds, password));
         }
         AccessibilityCandidateSelector.Selection selection = AccessibilityCandidateSelector.select(
-                classifier.classify(snapshots), x, y);
+                classifier.classify(snapshots), x, y, allowImages);
         if (selection == null || !source.equals(selection.candidate.sourcePackage)) return null;
         // Images wait for the complete password scan. A generic blank View is not an image request.
         if (selection.isImage()) return allowImages && selection.candidate.strongImage ? selection : null;
@@ -796,8 +931,9 @@ public final class RootNodeCaptureMain {
                 .packageName(string(node.getPackageName())).className(className)
                 .viewId(node.getViewIdResourceName()).text(string(node.getText()))
                 .contentDescription(string(node.getContentDescription()))
-                .visible(node.isVisibleToUser()).editable(node.isEditable())
+                .visible(node.isVisibleToUser()).enabled(node.isEnabled()).editable(node.isEditable())
                 .clickable(node.isClickable()).longClickable(node.isLongClickable())
+                .rangeControl(isAdjustableRangeControl(node, className))
                 .important(node.isImportantForAccessibility()).leaf(count == 0)
                 .insideWebView(insideWeb).depth(depth).traversalOrder(nodes.size()).build());
         for (int i = 0; i < count; i++) {
@@ -809,6 +945,34 @@ public final class RootNodeCaptureMain {
                 child.recycle();
             }
         }
+    }
+
+    private static boolean isAdjustableRangeControl(AccessibilityNodeInfo node, String className) {
+        if (!node.isVisibleToUser() || !node.isEnabled()) return false;
+        AccessibilityNodeInfo.RangeInfo range = node.getRangeInfo();
+        boolean hasRange = range != null;
+        List<AccessibilityNodeInfo.AccessibilityAction> actions = node.getActionList();
+        boolean canSetProgress = hasAction(actions,
+                AccessibilityNodeInfo.AccessibilityAction.ACTION_SET_PROGRESS);
+        boolean canAdjustByScroll = node.isScrollable()
+                || hasAction(actions, AccessibilityNodeInfo.AccessibilityAction.ACTION_SCROLL_FORWARD)
+                || hasAction(actions, AccessibilityNodeInfo.AccessibilityAction.ACTION_SCROLL_BACKWARD);
+        boolean standardSliderRole = className != null
+                && (className.endsWith("SeekBar") || className.endsWith("Slider"));
+        if (hasRange) return canSetProgress || canAdjustByScroll || standardSliderRole
+                && (node.isClickable() || node.isLongClickable());
+        return standardSliderRole && (canSetProgress || canAdjustByScroll
+                || node.isClickable() || node.isLongClickable());
+    }
+
+    private static boolean hasAction(List<AccessibilityNodeInfo.AccessibilityAction> actions,
+                                     AccessibilityNodeInfo.AccessibilityAction expected) {
+        if (actions == null) return false;
+        int actionId = expected.getId();
+        for (AccessibilityNodeInfo.AccessibilityAction action : actions) {
+            if (action != null && action.getId() == actionId) return true;
+        }
+        return false;
     }
 
     private static String string(CharSequence value) {

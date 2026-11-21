@@ -29,22 +29,13 @@ final class GestureConfig {
     int selectionTransformLevel = ConfigContract.DEFAULT_SELECTION_TRANSFORM_LEVEL;
     boolean hideSystemRecentsClear = ConfigContract.DEFAULT_HIDE_SYSTEM_RECENTS_CLEAR;
     boolean forceCircularIcons = ConfigContract.DEFAULT_FORCE_CIRCULAR_ICONS;
-    final boolean sideGestureEnabled;
-    final int sideTriggerPercent;
-    final int sideIconSizeDp;
-    final int sideTopSafeMarginPercent;
+    boolean moreAppsEnhanced = ConfigContract.DEFAULT_MORE_APPS_ENHANCED;
     final boolean showSelectedAppName;
-    final boolean sideFollowFinger;
-    final int sideLayoutMode;
-    final boolean sideFanList;
-    final boolean sideRingList;
-    final int sideRingSizePercent;
-    final boolean sideWheelMode;
-    final int sideReverseCancelPercent;
     final int triggerPercent;
     final int selectionRadiusPercent;
     final int hotWidthPercent;
     final int hotHeightPercent;
+    final int hotBottomGapDp;
     final int iconSizeDp;
     boolean customWindowPortraitEnabled =
             ConfigContract.DEFAULT_CUSTOM_WINDOW_PORTRAIT_ENABLED;
@@ -64,6 +55,7 @@ final class GestureConfig {
     final int positionY;
     final int outsideSingleAction;
     final int outsideDoubleAction;
+    final int outsideLongAction;
     final List<TargetSpec> targets;
     final boolean honeycombEnabled;
     final int honeycombMode;
@@ -91,45 +83,15 @@ final class GestureConfig {
             ConfigContract.DEFAULT_BOTTOM_PORTRAIT_SECOND_STAGE_ENABLED;
     boolean bottomLandscapeSecondStageEnabled =
             ConfigContract.DEFAULT_BOTTOM_LANDSCAPE_SECOND_STAGE_ENABLED;
-    boolean sidePortraitEnabled = ConfigContract.DEFAULT_SIDE_PORTRAIT_ENABLED;
-    boolean sideLandscapeEnabled = ConfigContract.DEFAULT_SIDE_LANDSCAPE_ENABLED;
-    int sidePortraitLayoutMode = ConfigContract.DEFAULT_SIDE_LAYOUT_MODE;
-    int sideLandscapeLayoutMode = ConfigContract.DEFAULT_SIDE_LAYOUT_MODE;
     int landscapeWidthPercent = ConfigContract.DEFAULT_LANDSCAPE_WIDTH_PERCENT;
     int landscapeHeightPercent = ConfigContract.DEFAULT_LANDSCAPE_HEIGHT_PERCENT;
     int landscapePositionX = ConfigContract.DEFAULT_LANDSCAPE_POSITION_X;
     int landscapePositionY = ConfigContract.DEFAULT_LANDSCAPE_POSITION_Y;
     int honeycombMaxTargets = ConfigContract.DEFAULT_HONEYCOMB_MAX_TARGETS;
-    int sideMaxTargets = ConfigContract.DEFAULT_SIDE_MAX_TARGETS;
-    boolean sideFollowHoneycomb = ConfigContract.DEFAULT_SIDE_FOLLOW_HONEYCOMB;
-    boolean sideDirectionHorizontal = true;
-    boolean sideDirectionUp = true;
-    boolean sideDirectionDown = true;
-    boolean sideHoldEnabled = ConfigContract.DEFAULT_SIDE_HOLD_ENABLED;
-    int sideHoldDelayMs = ConfigContract.DEFAULT_SIDE_HOLD_DELAY_MS;
-    int sideTaskMaxCount = ConfigContract.DEFAULT_SIDE_TASK_MAX_COUNT;
-    int sideTaskCardWidthDp = ConfigContract.DEFAULT_SIDE_TASK_CARD_WIDTH_DP;
-    int sideTaskCardHeightDp = ConfigContract.DEFAULT_SIDE_TASK_CARD_HEIGHT_DP;
-    int sideTaskCardCornerDp = ConfigContract.DEFAULT_SIDE_TASK_CARD_CORNER_DP;
-    int sideTaskIconSizeDp = ConfigContract.DEFAULT_SIDE_TASK_ICON_SIZE_DP;
-    int sideTaskIconGapDp = ConfigContract.DEFAULT_SIDE_TASK_ICON_GAP_DP;
-    int sideTaskFingerOffsetDp = ConfigContract.DEFAULT_SIDE_TASK_FINGER_OFFSET_DP;
-    int sideTaskLayoutMode = ConfigContract.DEFAULT_SIDE_TASK_LAYOUT_MODE;
-    boolean sideTaskReverseOrder = ConfigContract.DEFAULT_SIDE_TASK_REVERSE_ORDER;
-    boolean sideTaskShowName = ConfigContract.DEFAULT_SIDE_TASK_SHOW_NAME;
-    int sideTaskMotionMode = ConfigContract.DEFAULT_SIDE_TASK_MOTION_MODE;
-    int sideTaskSwipeSpeedPercent =
-            ConfigContract.DEFAULT_SIDE_TASK_SWIPE_SPEED_PERCENT;
-    int sideTaskAnimationSpeed = ConfigContract.DEFAULT_SIDE_TASK_ANIMATION_SPEED;
     boolean honeycombCenteredSystemAnimation =
             ConfigContract.DEFAULT_HONEYCOMB_CENTERED_SYSTEM_ANIMATION;
-    boolean sideTaskExtendedDownwardTolerance =
-            ConfigContract.DEFAULT_SIDE_TASK_EXTENDED_DOWNWARD_TOLERANCE;
-    boolean sideFullscreen = ConfigContract.DEFAULT_SIDE_FULLSCREEN;
     boolean bottomFullscreen = ConfigContract.DEFAULT_BOTTOM_FULLSCREEN;
     boolean bottomHoneycombFreeform = ConfigContract.DEFAULT_BOTTOM_HONEYCOMB_FREEFORM;
-    boolean sidePortraitFullscreen = ConfigContract.DEFAULT_SIDE_PORTRAIT_FULLSCREEN;
-    boolean sideLandscapeFullscreen = ConfigContract.DEFAULT_SIDE_LANDSCAPE_FULLSCREEN;
     boolean bottomPortraitFullscreen = ConfigContract.DEFAULT_BOTTOM_PORTRAIT_FULLSCREEN;
     boolean bottomLandscapeFullscreen = ConfigContract.DEFAULT_BOTTOM_LANDSCAPE_FULLSCREEN;
     boolean bottomPortraitHoneycombFreeform =
@@ -137,12 +99,6 @@ final class GestureConfig {
     boolean bottomLandscapeHoneycombFreeform =
             ConfigContract.DEFAULT_BOTTOM_LANDSCAPE_HONEYCOMB_FREEFORM;
     int bottomHoneycombSettleMs = ConfigContract.DEFAULT_BOTTOM_HONEYCOMB_SETTLE_MS;
-    boolean sideAnimationsEnabled = ConfigContract.DEFAULT_SIDE_ANIMATIONS_ENABLED;
-    int sideAnimationSpeed = ConfigContract.DEFAULT_SIDE_ANIMATION_SPEED;
-    int sideRevealAmount = ConfigContract.DEFAULT_SIDE_REVEAL_AMOUNT;
-    int sideRotationDegrees = ConfigContract.DEFAULT_SIDE_ROTATION_DEGREES;
-    int sideSelectionScalePercent = ConfigContract.DEFAULT_SIDE_SELECTION_SCALE_PERCENT;
-    boolean sideSelectionRing = ConfigContract.DEFAULT_SIDE_SELECTION_RING;
     boolean honeycombFollowFinger = true;
     boolean honeycombLandscapeEnabled = ConfigContract.DEFAULT_HONEYCOMB_LANDSCAPE_ENABLED;
     int honeycombFixedXPercent = ConfigContract.DEFAULT_HONEYCOMB_FIXED_X_PERCENT;
@@ -159,9 +115,14 @@ final class GestureConfig {
     int honeycombDiscSizePercent = ConfigContract.DEFAULT_HONEYCOMB_DISC_SIZE_PERCENT;
     boolean honeycombShowSelectedName = ConfigContract.DEFAULT_HONEYCOMB_SHOW_SELECTED_NAME;
     int outsideTapWindowMs = ConfigContract.DEFAULT_OUTSIDE_TAP_WINDOW_MS;
+    boolean outsideEnabled = ConfigContract.DEFAULT_OUTSIDE_ENABLED;
     boolean outsidePortraitEnabled = ConfigContract.DEFAULT_OUTSIDE_PORTRAIT_ENABLED;
     boolean outsideLandscapeEnabled = ConfigContract.DEFAULT_OUTSIDE_LANDSCAPE_ENABLED;
-    List<TargetSpec> sideTargets = Collections.emptyList();
+    boolean notificationFreeformEnabled = ConfigContract.DEFAULT_NOTIFICATION_FREEFORM_ENABLED;
+    boolean miniMediaControlsEnabled = ConfigContract.DEFAULT_MINI_MEDIA_CONTROLS_ENABLED;
+    boolean miniMediaAutoMute = ConfigContract.DEFAULT_MINI_MEDIA_AUTO_MUTE;
+    boolean removeFreeformBlacklist = ConfigContract.DEFAULT_REMOVE_FREEFORM_BLACKLIST;
+    boolean removeFreeformCountLimit = ConfigContract.DEFAULT_REMOVE_FREEFORM_COUNT_LIMIT;
     Set<String> gestureExcludedPackages = Collections.emptySet();
 
     static final class TargetSpec {
@@ -196,7 +157,16 @@ final class GestureConfig {
                     Math.max(0, userId));
         }
 
+        static TargetSpec moreApps() {
+            return new TargetSpec("", com.leaf.hyperdragshare.gestures.config.AppTarget.MORE_APPS_PACKAGE,
+                    "", "更多应用", "", 0);
+        }
+
         boolean isShortcut() { return !packageName.isEmpty() && !shortcutId.isEmpty(); }
+        boolean isMoreApps() {
+            return com.leaf.hyperdragshare.gestures.config.AppTarget.MORE_APPS_PACKAGE.equals(packageName)
+                    && shortcutId.isEmpty() && component.isEmpty();
+        }
         boolean isLauncherShortcut() {
             return isShortcut() && !shortcutIntentUri.isEmpty();
         }
@@ -206,16 +176,13 @@ final class GestureConfig {
                           boolean fanAnimationsEnabled, int fanAnimationSpeed,
                           int fanRevealAmount, int fanRotationDegrees,
                           int fanSelectionScalePercent, boolean fanSelectionRing,
-                          boolean sideGestureEnabled, int sideTriggerPercent,
-                          int sideIconSizeDp, int sideTopSafeMarginPercent,
-                          boolean showSelectedAppName, boolean sideFollowFinger,
-                          int sideLayoutMode, int sideRingSizePercent,
-                          boolean sideWheelMode,
-                          int sideReverseCancelPercent,
+                           boolean showSelectedAppName,
                           int triggerPercent, int selectionRadiusPercent,
-                          int hotWidthPercent, int hotHeightPercent, int iconSizeDp,
+                          int hotWidthPercent, int hotHeightPercent, int hotBottomGapDp,
+                          int iconSizeDp,
                           int widthPercent, int heightPercent, int positionX,
                           int positionY, int outsideSingleAction, int outsideDoubleAction,
+                          int outsideLongAction,
                           List<TargetSpec> targets, boolean honeycombEnabled,
                           int honeycombMode,
                           int honeycombIconSizeDp, int honeycombSpacingDp,
@@ -240,26 +207,7 @@ final class GestureConfig {
                 ConfigContract.MIN_FAN_SELECTION_SCALE_PERCENT,
                 ConfigContract.MAX_FAN_SELECTION_SCALE_PERCENT);
         this.fanSelectionRing = fanSelectionRing;
-        this.sideGestureEnabled = sideGestureEnabled;
-        this.sideTriggerPercent = clamp(sideTriggerPercent,
-                ConfigContract.MIN_SIDE_TRIGGER_PERCENT,
-                ConfigContract.MAX_SIDE_TRIGGER_PERCENT);
-        this.sideIconSizeDp = clamp(sideIconSizeDp, 34, 64);
-        this.sideTopSafeMarginPercent = clamp(sideTopSafeMarginPercent, 8, 35);
         this.showSelectedAppName = showSelectedAppName;
-        this.sideFollowFinger = sideFollowFinger;
-        this.sideLayoutMode = clamp(sideLayoutMode,
-                ConfigContract.SIDE_LAYOUT_LIST,
-                ConfigContract.SIDE_LAYOUT_SYSTEM_RECENTS);
-        this.sideFanList = this.sideLayoutMode == ConfigContract.SIDE_LAYOUT_FAN;
-        this.sideRingList = this.sideLayoutMode == ConfigContract.SIDE_LAYOUT_RING;
-        this.sideRingSizePercent = clamp(sideRingSizePercent,
-                ConfigContract.MIN_SIDE_RING_SIZE_PERCENT,
-                ConfigContract.MAX_SIDE_RING_SIZE_PERCENT);
-        this.sideWheelMode = false;
-        this.sideReverseCancelPercent = clamp(sideReverseCancelPercent,
-                ConfigContract.MIN_SIDE_REVERSE_CANCEL_PERCENT,
-                ConfigContract.MAX_SIDE_REVERSE_CANCEL_PERCENT);
         this.triggerPercent = clamp(triggerPercent, 6, 24);
         this.selectionRadiusPercent = clamp(selectionRadiusPercent,
                 ConfigContract.MIN_SELECTION_RADIUS_PERCENT,
@@ -267,6 +215,9 @@ final class GestureConfig {
         this.hotWidthPercent = clamp(hotWidthPercent, 5, 20);
         this.hotHeightPercent = clamp(hotHeightPercent, 3,
                 ConfigContract.MAX_HOT_HEIGHT_PERCENT);
+        this.hotBottomGapDp = clamp(hotBottomGapDp,
+                ConfigContract.MIN_HOT_BOTTOM_GAP_DP,
+                ConfigContract.MAX_HOT_BOTTOM_GAP_DP);
         this.iconSizeDp = clamp(iconSizeDp, ConfigContract.MIN_ICON_SIZE_DP,
                 ConfigContract.MAX_ICON_SIZE_DP);
         this.widthPercent = clamp(widthPercent, 40, 90);
@@ -275,6 +226,7 @@ final class GestureConfig {
         this.positionY = clamp(positionY, 0, 100);
         this.outsideSingleAction = supportedOutsideAction(outsideSingleAction);
         this.outsideDoubleAction = supportedOutsideAction(outsideDoubleAction);
+        this.outsideLongAction = supportedOutsideAction(outsideLongAction);
         this.targets = Collections.unmodifiableList(targets);
         this.honeycombEnabled = honeycombEnabled;
         this.honeycombMode = clamp(honeycombMode,
@@ -308,24 +260,17 @@ final class GestureConfig {
                 ConfigContract.DEFAULT_FAN_REVEAL_AMOUNT,
                 ConfigContract.DEFAULT_FAN_ROTATION_DEGREES,
                 ConfigContract.DEFAULT_FAN_SELECTION_SCALE_PERCENT,
-                ConfigContract.DEFAULT_FAN_SELECTION_RING,
-                ConfigContract.DEFAULT_SIDE_GESTURE_ENABLED,
-                ConfigContract.DEFAULT_SIDE_TRIGGER_PERCENT,
-                ConfigContract.DEFAULT_SIDE_ICON_SIZE_DP,
-                ConfigContract.DEFAULT_SIDE_TOP_SAFE_MARGIN_PERCENT,
-                ConfigContract.DEFAULT_SHOW_SELECTED_APP_NAME,
-                ConfigContract.DEFAULT_SIDE_FOLLOW_FINGER,
-                ConfigContract.DEFAULT_SIDE_LAYOUT_MODE,
-                ConfigContract.DEFAULT_SIDE_RING_SIZE_PERCENT,
-                ConfigContract.DEFAULT_SIDE_WHEEL_MODE,
-                ConfigContract.DEFAULT_SIDE_REVERSE_CANCEL_PERCENT,
+                 ConfigContract.DEFAULT_FAN_SELECTION_RING,
+                 ConfigContract.DEFAULT_SHOW_SELECTED_APP_NAME,
                 ConfigContract.DEFAULT_TRIGGER_PERCENT,
                 ConfigContract.DEFAULT_SELECTION_RADIUS_PERCENT,
                 ConfigContract.DEFAULT_HOT_WIDTH_PERCENT, ConfigContract.DEFAULT_HOT_HEIGHT_PERCENT,
+                ConfigContract.DEFAULT_HOT_BOTTOM_GAP_DP,
                 ConfigContract.DEFAULT_ICON_SIZE_DP,
                 ConfigContract.DEFAULT_WIDTH_PERCENT, ConfigContract.DEFAULT_HEIGHT_PERCENT,
                 ConfigContract.DEFAULT_POSITION_X, ConfigContract.DEFAULT_POSITION_Y,
                 ConfigContract.DEFAULT_OUTSIDE_SINGLE_ACTION, ConfigContract.DEFAULT_OUTSIDE_DOUBLE_ACTION,
+                ConfigContract.DEFAULT_OUTSIDE_LONG_ACTION,
                 new ArrayList<>(), ConfigContract.DEFAULT_HONEYCOMB_ENABLED,
                 ConfigContract.DEFAULT_HONEYCOMB_MODE,
                 ConfigContract.DEFAULT_HONEYCOMB_ICON_SIZE_DP,
@@ -352,7 +297,9 @@ final class GestureConfig {
                 if (raw instanceof JSONObject) {
                     JSONObject object = (JSONObject) raw;
                     String type = object.optString("type");
-                    if ("shortcut".equals(type) || "launcher_shortcut".equals(type)) {
+                    if ("more_apps".equals(type)) {
+                        target = TargetSpec.moreApps();
+                    } else if ("shortcut".equals(type) || "launcher_shortcut".equals(type)) {
                         String packageName = object.optString("package");
                         String shortcutId = object.optString("id");
                         if (!packageName.isEmpty() && !shortcutId.isEmpty()) {
@@ -391,33 +338,14 @@ final class GestureConfig {
                         ConfigContract.DEFAULT_FAN_SELECTION_SCALE_PERCENT),
                 bundle.getBoolean(ConfigContract.KEY_FAN_SELECTION_RING,
                         ConfigContract.DEFAULT_FAN_SELECTION_RING),
-                bundle.getBoolean(ConfigContract.KEY_SIDE_GESTURE_ENABLED, ConfigContract.DEFAULT_SIDE_GESTURE_ENABLED),
-                bundle.getInt(ConfigContract.KEY_SIDE_TRIGGER_PERCENT, ConfigContract.DEFAULT_SIDE_TRIGGER_PERCENT),
-                bundle.getInt(ConfigContract.KEY_SIDE_ICON_SIZE_DP,
-                        bundle.getInt(ConfigContract.KEY_ICON_SIZE_DP,
-                                ConfigContract.DEFAULT_SIDE_ICON_SIZE_DP)),
-                bundle.getInt(ConfigContract.KEY_SIDE_TOP_SAFE_MARGIN_PERCENT,
-                        ConfigContract.DEFAULT_SIDE_TOP_SAFE_MARGIN_PERCENT),
-                bundle.getBoolean(ConfigContract.KEY_SHOW_SELECTED_APP_NAME,
-                        bundle.getBoolean(ConfigContract.KEY_SIDE_SHOW_APP_NAMES,
-                                ConfigContract.DEFAULT_SHOW_SELECTED_APP_NAME)),
-                bundle.getBoolean(ConfigContract.KEY_SIDE_FOLLOW_FINGER,
-                        ConfigContract.DEFAULT_SIDE_FOLLOW_FINGER),
-                bundle.getInt(ConfigContract.KEY_SIDE_LAYOUT_MODE,
-                        bundle.getBoolean(ConfigContract.KEY_SIDE_FAN_LIST,
-                                ConfigContract.DEFAULT_SIDE_FAN_LIST)
-                                ? ConfigContract.SIDE_LAYOUT_FAN
-                                : ConfigContract.DEFAULT_SIDE_LAYOUT_MODE),
-                bundle.getInt(ConfigContract.KEY_SIDE_RING_SIZE_PERCENT,
-                        ConfigContract.DEFAULT_SIDE_RING_SIZE_PERCENT),
-                bundle.getBoolean(ConfigContract.KEY_SIDE_WHEEL_MODE,
-                        ConfigContract.DEFAULT_SIDE_WHEEL_MODE),
-                bundle.getInt(ConfigContract.KEY_SIDE_REVERSE_CANCEL_PERCENT,
-                        ConfigContract.DEFAULT_SIDE_REVERSE_CANCEL_PERCENT),
+                 bundle.getBoolean(ConfigContract.KEY_SHOW_SELECTED_APP_NAME,
+                         ConfigContract.DEFAULT_SHOW_SELECTED_APP_NAME),
                 bundle.getInt(ConfigContract.KEY_TRIGGER_PERCENT, ConfigContract.DEFAULT_TRIGGER_PERCENT),
                 bundle.getInt(ConfigContract.KEY_SELECTION_RADIUS_PERCENT, ConfigContract.DEFAULT_SELECTION_RADIUS_PERCENT),
                 bundle.getInt(ConfigContract.KEY_HOT_WIDTH_PERCENT, ConfigContract.DEFAULT_HOT_WIDTH_PERCENT),
                 bundle.getInt(ConfigContract.KEY_HOT_HEIGHT_PERCENT, ConfigContract.DEFAULT_HOT_HEIGHT_PERCENT),
+                bundle.getInt(ConfigContract.KEY_HOT_BOTTOM_GAP_DP,
+                        ConfigContract.DEFAULT_HOT_BOTTOM_GAP_DP),
                 bundle.getInt(ConfigContract.KEY_ICON_SIZE_DP, ConfigContract.DEFAULT_ICON_SIZE_DP),
                 bundle.getInt(ConfigContract.KEY_WIDTH_PERCENT, ConfigContract.DEFAULT_WIDTH_PERCENT),
                 bundle.getInt(ConfigContract.KEY_HEIGHT_PERCENT, ConfigContract.DEFAULT_HEIGHT_PERCENT),
@@ -425,6 +353,7 @@ final class GestureConfig {
                 bundle.getInt(ConfigContract.KEY_POSITION_Y, ConfigContract.DEFAULT_POSITION_Y),
                 bundle.getInt(ConfigContract.KEY_OUTSIDE_SINGLE_ACTION, ConfigContract.DEFAULT_OUTSIDE_SINGLE_ACTION),
                 bundle.getInt(ConfigContract.KEY_OUTSIDE_DOUBLE_ACTION, ConfigContract.DEFAULT_OUTSIDE_DOUBLE_ACTION),
+                bundle.getInt(ConfigContract.KEY_OUTSIDE_LONG_ACTION, ConfigContract.DEFAULT_OUTSIDE_LONG_ACTION),
                 targets,
                 bundle.getBoolean(ConfigContract.KEY_HONEYCOMB_ENABLED,
                         ConfigContract.DEFAULT_HONEYCOMB_ENABLED),
@@ -451,12 +380,30 @@ final class GestureConfig {
                 ConfigContract.DEFAULT_FAN_MAX_TARGETS), 3, 24);
         result.gestureExcludedPackages = normalizeGestureExcludedPackages(
                 bundle.getStringArrayList(ConfigContract.KEY_GESTURE_EXCLUDED_PACKAGES));
+        result.notificationFreeformEnabled = bundle.getBoolean(
+                ConfigContract.KEY_NOTIFICATION_FREEFORM_ENABLED,
+                ConfigContract.DEFAULT_NOTIFICATION_FREEFORM_ENABLED);
+        result.miniMediaControlsEnabled = bundle.getBoolean(
+                ConfigContract.KEY_MINI_MEDIA_CONTROLS_ENABLED,
+                ConfigContract.DEFAULT_MINI_MEDIA_CONTROLS_ENABLED);
+        result.miniMediaAutoMute = bundle.getBoolean(
+                ConfigContract.KEY_MINI_MEDIA_AUTO_MUTE,
+                ConfigContract.DEFAULT_MINI_MEDIA_AUTO_MUTE);
+        result.removeFreeformBlacklist = bundle.getBoolean(
+                ConfigContract.KEY_REMOVE_FREEFORM_BLACKLIST,
+                ConfigContract.DEFAULT_REMOVE_FREEFORM_BLACKLIST);
+        result.removeFreeformCountLimit = bundle.getBoolean(
+                ConfigContract.KEY_REMOVE_FREEFORM_COUNT_LIMIT,
+                ConfigContract.DEFAULT_REMOVE_FREEFORM_COUNT_LIMIT);
         result.hideSystemRecentsClear = bundle.getBoolean(
                 ConfigContract.KEY_HIDE_SYSTEM_RECENTS_CLEAR,
                 ConfigContract.DEFAULT_HIDE_SYSTEM_RECENTS_CLEAR);
         result.forceCircularIcons = bundle.getBoolean(
                 ConfigContract.KEY_FORCE_CIRCULAR_ICONS,
                 ConfigContract.DEFAULT_FORCE_CIRCULAR_ICONS);
+        result.moreAppsEnhanced = bundle.getBoolean(
+                ConfigContract.KEY_MORE_APPS_ENHANCED,
+                ConfigContract.DEFAULT_MORE_APPS_ENHANCED);
         boolean legacyFixedRows = bundle.getBoolean(
                 ConfigContract.KEY_FAN_FIXED_SEVEN_ROWS,
                 ConfigContract.DEFAULT_FAN_FIXED_SEVEN_ROWS);
@@ -522,20 +469,6 @@ final class GestureConfig {
                         ConfigContract.DEFAULT_NATIVE_WINDOW_SCALE_PERCENT),
                 ConfigContract.MIN_NATIVE_WINDOW_SCALE_PERCENT,
                 ConfigContract.MAX_NATIVE_WINDOW_SCALE_PERCENT);
-        result.sidePortraitEnabled = bundle.getBoolean(
-                ConfigContract.KEY_SIDE_PORTRAIT_ENABLED,
-                ConfigContract.DEFAULT_SIDE_PORTRAIT_ENABLED);
-        result.sideLandscapeEnabled = bundle.getBoolean(
-                ConfigContract.KEY_SIDE_LANDSCAPE_ENABLED,
-                ConfigContract.DEFAULT_SIDE_LANDSCAPE_ENABLED);
-        result.sidePortraitLayoutMode = clamp(bundle.getInt(
-                        ConfigContract.KEY_SIDE_PORTRAIT_LAYOUT_MODE,
-                        result.sideLayoutMode), ConfigContract.SIDE_LAYOUT_LIST,
-                ConfigContract.SIDE_LAYOUT_SYSTEM_RECENTS);
-        result.sideLandscapeLayoutMode = clamp(bundle.getInt(
-                        ConfigContract.KEY_SIDE_LANDSCAPE_LAYOUT_MODE,
-                        result.sideLayoutMode), ConfigContract.SIDE_LAYOUT_LIST,
-                ConfigContract.SIDE_LAYOUT_SYSTEM_RECENTS);
         result.landscapeWidthPercent = clamp(bundle.getInt(
                 ConfigContract.KEY_LANDSCAPE_WIDTH_PERCENT,
                 ConfigContract.DEFAULT_LANDSCAPE_WIDTH_PERCENT),
@@ -557,7 +490,9 @@ final class GestureConfig {
                 ConfigContract.DEFAULT_LANDSCAPE_POSITION_Y), 0, 100);
         ArrayList<String> positionOwners = new ArrayList<>();
         for (TargetSpec target : honeycombTargets) {
-            positionOwners.add(com.leaf.hyperdragshare.gestures.config.HoneycombPositions.identity(
+            positionOwners.add(target.isMoreApps()
+                    ? com.leaf.hyperdragshare.gestures.config.AppTarget.MORE_APPS_POSITION_ID
+                    : com.leaf.hyperdragshare.gestures.config.HoneycombPositions.identity(
                     target.component, target.packageName, target.shortcutId,
                     target.shortcutIntentUri, target.userId));
         }
@@ -569,82 +504,6 @@ final class GestureConfig {
         result.honeycombMaxTargets = clamp(bundle.getInt(
                 ConfigContract.KEY_HONEYCOMB_MAX_TARGETS,
                 ConfigContract.DEFAULT_HONEYCOMB_MAX_TARGETS), 1, 60);
-        result.sideMaxTargets = clamp(bundle.getInt(ConfigContract.KEY_SIDE_MAX_TARGETS,
-                ConfigContract.DEFAULT_SIDE_MAX_TARGETS), 1, 36);
-        result.sideFollowHoneycomb = bundle.getBoolean(
-                ConfigContract.KEY_SIDE_FOLLOW_HONEYCOMB,
-                ConfigContract.DEFAULT_SIDE_FOLLOW_HONEYCOMB);
-        result.sideDirectionHorizontal = bundle.getBoolean(
-                ConfigContract.KEY_SIDE_DIRECTION_HORIZONTAL, true);
-        result.sideDirectionUp = bundle.getBoolean(ConfigContract.KEY_SIDE_DIRECTION_UP, true);
-        result.sideDirectionDown = bundle.getBoolean(ConfigContract.KEY_SIDE_DIRECTION_DOWN, true);
-        result.sideHoldEnabled = bundle.getBoolean(ConfigContract.KEY_SIDE_HOLD_ENABLED,
-                ConfigContract.DEFAULT_SIDE_HOLD_ENABLED);
-        result.sideHoldDelayMs = clamp(bundle.getInt(ConfigContract.KEY_SIDE_HOLD_DELAY_MS,
-                        ConfigContract.DEFAULT_SIDE_HOLD_DELAY_MS),
-                ConfigContract.MIN_SIDE_HOLD_DELAY_MS,
-                ConfigContract.MAX_SIDE_HOLD_DELAY_MS);
-        result.sideTaskMaxCount = clamp(bundle.getInt(ConfigContract.KEY_SIDE_TASK_MAX_COUNT,
-                        ConfigContract.DEFAULT_SIDE_TASK_MAX_COUNT),
-                ConfigContract.MIN_SIDE_TASK_MAX_COUNT,
-                ConfigContract.MAX_SIDE_TASK_MAX_COUNT);
-        result.sideTaskCardWidthDp = clamp(bundle.getInt(
-                        ConfigContract.KEY_SIDE_TASK_CARD_WIDTH_DP,
-                        ConfigContract.DEFAULT_SIDE_TASK_CARD_WIDTH_DP),
-                ConfigContract.MIN_SIDE_TASK_CARD_WIDTH_DP,
-                ConfigContract.MAX_SIDE_TASK_CARD_WIDTH_DP);
-        result.sideTaskCardHeightDp = clamp(bundle.getInt(
-                        ConfigContract.KEY_SIDE_TASK_CARD_HEIGHT_DP,
-                        ConfigContract.DEFAULT_SIDE_TASK_CARD_HEIGHT_DP),
-                ConfigContract.MIN_SIDE_TASK_CARD_HEIGHT_DP,
-                ConfigContract.MAX_SIDE_TASK_CARD_HEIGHT_DP);
-        result.sideTaskCardCornerDp = clamp(bundle.getInt(
-                        ConfigContract.KEY_SIDE_TASK_CARD_CORNER_DP,
-                        ConfigContract.DEFAULT_SIDE_TASK_CARD_CORNER_DP),
-                ConfigContract.MIN_SIDE_TASK_CARD_CORNER_DP,
-                ConfigContract.MAX_SIDE_TASK_CARD_CORNER_DP);
-        result.sideTaskIconSizeDp = clamp(bundle.getInt(
-                        ConfigContract.KEY_SIDE_TASK_ICON_SIZE_DP,
-                        ConfigContract.DEFAULT_SIDE_TASK_ICON_SIZE_DP),
-                ConfigContract.MIN_SIDE_TASK_ICON_SIZE_DP,
-                ConfigContract.MAX_SIDE_TASK_ICON_SIZE_DP);
-        result.sideTaskIconGapDp = clamp(bundle.getInt(
-                        ConfigContract.KEY_SIDE_TASK_ICON_GAP_DP,
-                        ConfigContract.DEFAULT_SIDE_TASK_ICON_GAP_DP),
-                ConfigContract.MIN_SIDE_TASK_ICON_GAP_DP,
-                ConfigContract.MAX_SIDE_TASK_ICON_GAP_DP);
-        result.sideTaskFingerOffsetDp = clamp(bundle.getInt(
-                        ConfigContract.KEY_SIDE_TASK_FINGER_OFFSET_DP,
-                        ConfigContract.DEFAULT_SIDE_TASK_FINGER_OFFSET_DP),
-                ConfigContract.MIN_SIDE_TASK_FINGER_OFFSET_DP,
-                ConfigContract.MAX_SIDE_TASK_FINGER_OFFSET_DP);
-        result.sideTaskLayoutMode = clamp(bundle.getInt(
-                        ConfigContract.KEY_SIDE_TASK_LAYOUT_MODE,
-                ConfigContract.DEFAULT_SIDE_TASK_LAYOUT_MODE),
-                ConfigContract.SIDE_TASK_LAYOUT_FLAT,
-                ConfigContract.SIDE_TASK_LAYOUT_ICONS);
-        result.sideTaskReverseOrder = bundle.getBoolean(
-                ConfigContract.KEY_SIDE_TASK_REVERSE_ORDER,
-                ConfigContract.DEFAULT_SIDE_TASK_REVERSE_ORDER);
-        result.sideTaskShowName = bundle.getBoolean(
-                ConfigContract.KEY_SIDE_TASK_SHOW_NAME,
-                ConfigContract.DEFAULT_SIDE_TASK_SHOW_NAME);
-        result.sideTaskMotionMode = clamp(bundle.getInt(
-                        ConfigContract.KEY_SIDE_TASK_MOTION_MODE,
-                        ConfigContract.DEFAULT_SIDE_TASK_MOTION_MODE),
-                ConfigContract.SIDE_TASK_MOTION_APPLE,
-                ConfigContract.SIDE_TASK_MOTION_MARBLE);
-        result.sideTaskSwipeSpeedPercent = clamp(bundle.getInt(
-                        ConfigContract.KEY_SIDE_TASK_SWIPE_SPEED_PERCENT,
-                        ConfigContract.DEFAULT_SIDE_TASK_SWIPE_SPEED_PERCENT),
-                ConfigContract.MIN_SIDE_TASK_SWIPE_SPEED_PERCENT,
-                ConfigContract.MAX_SIDE_TASK_SWIPE_SPEED_PERCENT);
-        result.sideTaskAnimationSpeed = clamp(bundle.getInt(
-                        ConfigContract.KEY_SIDE_TASK_ANIMATION_SPEED,
-                        ConfigContract.DEFAULT_SIDE_TASK_ANIMATION_SPEED), 0, 4);
-        result.sideTaskExtendedDownwardTolerance = bundle.getBoolean(
-                ConfigContract.KEY_SIDE_TASK_EXTENDED_DOWNWARD_TOLERANCE,
-                ConfigContract.DEFAULT_SIDE_TASK_EXTENDED_DOWNWARD_TOLERANCE);
         result.bottomAnimationSpeed = clamp(bundle.getInt(
                         ConfigContract.KEY_BOTTOM_ANIMATION_SPEED,
                         result.fanAnimationSpeed),
@@ -660,19 +519,12 @@ final class GestureConfig {
         result.honeycombCenteredSystemAnimation = bundle.getBoolean(
                 ConfigContract.KEY_HONEYCOMB_CENTERED_SYSTEM_ANIMATION,
                 ConfigContract.DEFAULT_HONEYCOMB_CENTERED_SYSTEM_ANIMATION);
-        result.sideFullscreen = bundle.getBoolean(
-                ConfigContract.KEY_SIDE_FULLSCREEN,
-                ConfigContract.DEFAULT_SIDE_FULLSCREEN);
         result.bottomFullscreen = bundle.getBoolean(
                 ConfigContract.KEY_BOTTOM_FULLSCREEN,
                 ConfigContract.DEFAULT_BOTTOM_FULLSCREEN);
         result.bottomHoneycombFreeform = bundle.getBoolean(
                 ConfigContract.KEY_BOTTOM_HONEYCOMB_FREEFORM,
                 ConfigContract.DEFAULT_BOTTOM_HONEYCOMB_FREEFORM);
-        result.sidePortraitFullscreen = bundle.getBoolean(
-                ConfigContract.KEY_SIDE_PORTRAIT_FULLSCREEN, result.sideFullscreen);
-        result.sideLandscapeFullscreen = bundle.getBoolean(
-                ConfigContract.KEY_SIDE_LANDSCAPE_FULLSCREEN, result.sideFullscreen);
         result.bottomPortraitFullscreen = bundle.getBoolean(
                 ConfigContract.KEY_BOTTOM_PORTRAIT_FULLSCREEN, result.bottomFullscreen);
         result.bottomLandscapeFullscreen = bundle.getBoolean(
@@ -683,32 +535,6 @@ final class GestureConfig {
         result.bottomLandscapeHoneycombFreeform = bundle.getBoolean(
                 ConfigContract.KEY_BOTTOM_LANDSCAPE_HONEYCOMB_FREEFORM,
                 result.bottomHoneycombFreeform);
-        result.sideAnimationsEnabled = bundle.getBoolean(
-                ConfigContract.KEY_SIDE_ANIMATIONS_ENABLED,
-                ConfigContract.DEFAULT_SIDE_ANIMATIONS_ENABLED);
-        result.sideAnimationSpeed = clamp(bundle.getInt(
-                        ConfigContract.KEY_SIDE_ANIMATION_SPEED,
-                        ConfigContract.DEFAULT_SIDE_ANIMATION_SPEED),
-                ConfigContract.MIN_FAN_ANIMATION_SPEED,
-                ConfigContract.MAX_FAN_ANIMATION_SPEED);
-        result.sideRevealAmount = clamp(bundle.getInt(
-                        ConfigContract.KEY_SIDE_REVEAL_AMOUNT,
-                        ConfigContract.DEFAULT_SIDE_REVEAL_AMOUNT),
-                ConfigContract.MIN_FAN_REVEAL_AMOUNT,
-                ConfigContract.MAX_FAN_REVEAL_AMOUNT);
-        result.sideRotationDegrees = clamp(bundle.getInt(
-                        ConfigContract.KEY_SIDE_ROTATION_DEGREES,
-                        ConfigContract.DEFAULT_SIDE_ROTATION_DEGREES),
-                ConfigContract.MIN_FAN_ROTATION_DEGREES,
-                ConfigContract.MAX_FAN_ROTATION_DEGREES);
-        result.sideSelectionScalePercent = clamp(bundle.getInt(
-                        ConfigContract.KEY_SIDE_SELECTION_SCALE_PERCENT,
-                        ConfigContract.DEFAULT_SIDE_SELECTION_SCALE_PERCENT),
-                ConfigContract.MIN_FAN_SELECTION_SCALE_PERCENT,
-                ConfigContract.MAX_FAN_SELECTION_SCALE_PERCENT);
-        result.sideSelectionRing = bundle.getBoolean(
-                ConfigContract.KEY_SIDE_SELECTION_RING,
-                ConfigContract.DEFAULT_SIDE_SELECTION_RING);
         result.honeycombFollowFinger = bundle.getBoolean(
                 ConfigContract.KEY_HONEYCOMB_FOLLOW_FINGER,
                 ConfigContract.DEFAULT_HONEYCOMB_FOLLOW_FINGER);
@@ -752,15 +578,14 @@ final class GestureConfig {
                 ConfigContract.DEFAULT_OUTSIDE_TAP_WINDOW_MS),
                 ConfigContract.MIN_OUTSIDE_TAP_WINDOW_MS,
                 ConfigContract.MAX_OUTSIDE_TAP_WINDOW_MS);
+        result.outsideEnabled = bundle.getBoolean(ConfigContract.KEY_OUTSIDE_ENABLED,
+                ConfigContract.DEFAULT_OUTSIDE_ENABLED);
         result.outsidePortraitEnabled = bundle.getBoolean(
                 ConfigContract.KEY_OUTSIDE_PORTRAIT_ENABLED,
-                bundle.getBoolean(ConfigContract.KEY_OUTSIDE_ENABLED,
-                        ConfigContract.DEFAULT_OUTSIDE_PORTRAIT_ENABLED));
+                ConfigContract.DEFAULT_OUTSIDE_PORTRAIT_ENABLED);
         result.outsideLandscapeEnabled = bundle.getBoolean(
                 ConfigContract.KEY_OUTSIDE_LANDSCAPE_ENABLED,
                 ConfigContract.DEFAULT_OUTSIDE_LANDSCAPE_ENABLED);
-        result.sideTargets = Collections.unmodifiableList(parseTargets(bundle.getString(
-                ConfigContract.KEY_SIDE_COMPONENTS, "[]"), 36));
         return result;
     }
 
@@ -790,11 +615,6 @@ final class GestureConfig {
         return false;
     }
 
-    boolean sideEnabledFor(boolean landscape) {
-        return sideGestureEnabled
-                && (landscape ? sideLandscapeEnabled : sidePortraitEnabled);
-    }
-
     boolean bottomSecondStageEnabledFor(boolean landscape) {
         return landscape ? bottomLandscapeSecondStageEnabled
                 : bottomPortraitSecondStageEnabled;
@@ -809,16 +629,8 @@ final class GestureConfig {
                 : bottomPortraitHoneycombFreeform;
     }
 
-    int sideLayoutModeFor(boolean landscape) {
-        return landscape ? sideLandscapeLayoutMode : sidePortraitLayoutMode;
-    }
-
-    boolean sideFullscreenFor(boolean landscape) {
-        return landscape ? sideLandscapeFullscreen : sidePortraitFullscreen;
-    }
-
     boolean honeycombEnabledFor(boolean landscape) {
-        return honeycombEnabled;
+        return honeycombEnabled && (!landscape || honeycombLandscapeEnabled);
     }
 
     boolean customWindowBoundsEnabledFor(boolean landscape) {
@@ -826,7 +638,8 @@ final class GestureConfig {
     }
 
     boolean outsideEnabledFor(boolean landscape) {
-        return landscape ? outsideLandscapeEnabled : outsidePortraitEnabled;
+        return outsideEnabled
+                && (landscape ? outsideLandscapeEnabled : outsidePortraitEnabled);
     }
 
     int windowWidthPercent(boolean landscape) {
@@ -869,7 +682,9 @@ final class GestureConfig {
                 if (rawTarget instanceof JSONObject) {
                     JSONObject object = (JSONObject) rawTarget;
                     String type = object.optString("type");
-                    if ("shortcut".equals(type) || "launcher_shortcut".equals(type)) {
+                    if ("more_apps".equals(type)) {
+                        target = TargetSpec.moreApps();
+                    } else if ("shortcut".equals(type) || "launcher_shortcut".equals(type)) {
                         String packageName = object.optString("package");
                         String shortcutId = object.optString("id");
                         if (!packageName.isEmpty() && !shortcutId.isEmpty()) {

@@ -9,19 +9,31 @@ import android.os.Looper;
 import android.os.PowerManager;
 import android.os.SystemClock;
 import android.view.MotionEvent;
+import android.view.ViewConfiguration;
 import android.widget.Toast;
 
 import java.io.IOException;
 import java.util.LinkedHashSet;
+import java.util.LinkedHashMap;
+import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 /** One press pipeline for both hosts: classify once, then use the confirmed gesture's result. */
-final class PressCaptureSource {
+final class PressCaptureSource implements RootTouchSource.ContactListener, PressOcrFlow.Host {
+    interface OcrRequest {
+        void cancel();
+    }
+
+    interface OcrRecognizer {
+        OcrRequest recognize(Context context, android.graphics.Bitmap bitmap,
+                             AicrOcrClient.Callback callback);
+    }
+
     private static final String TAG = "DragShare/Press";
-    private static final float WECHAT_DRAG_DISTANCE_DP = 36f;
+    private static final float DIRECT_DRAG_DISTANCE_DP = 36f;
     private static final long READER_RETRY_FIRST_MS = 3000L;
     private static final long READER_RETRY_MAX_MS = 30000L;
     private final Context context;
@@ -30,51 +42,138 @@ final class PressCaptureSource {
     private volatile DragShareSettings settings;
     private final Handler main = new Handler(Looper.getMainLooper());
     private final ExecutorService worker = Executors.newSingleThreadExecutor();
+    private final ExecutorService recordingWorker = Executors.newSingleThreadExecutor();
     private final BackgroundTouchBlocker blocker;
     private final PressTriggerDetector detector = new PressTriggerDetector();
+    private final OcrRecognizer ocrRecognizer;
     private final Runnable classify = this::classifyPress;
     private final Runnable fire = this::firePress;
+    private long scheduledClassification = -1L;
+    private long scheduledConfirmation = -1L;
     private volatile SharedRootNodeCapture.Connection nodeSession;
     private volatile boolean stopped;
     private long readerRetryDelayMs;
     private boolean readerFailureShown;
     private boolean readerOpening;
+    private String readerAttemptId = "-";
     private IBinder.DeathRecipient leaseDeath;
     private final Runnable readerRetry = () -> {
         if (stopped || nodeSession != null) return;
         DragShareLog.i(TAG, "press reader retry started");
         openReader();
     };
-    private AicrOcrClient.Request activeOcrRequest;
-    private PendingWeChat pendingWeChat;
+    private final PressOcrFlow pressOcr = new PressOcrFlow(this);
+    private OcrRequest activeOcrRequest;
     private volatile long generation;
     private volatile boolean pointerDown;
     private volatile long downTime = -1L;
+    private volatile PressReleaseMode.Mode releaseMode = PressReleaseMode.Mode.NONE;
+    private volatile boolean released;
     private boolean lookupRunning;
     private boolean displayQueued;
+    private boolean directDragArmed;
+    private boolean captureCandidateReady;
+    private String captureCandidateSource;
+    private String recordingCheckedSource;
+    private boolean recordingCheckRunning;
+    private boolean portalImageTakeoverPending;
     private long confirmedAt;
+    private long inputReceivedElapsedRealtime = -1L;
     private CapturedContent cached;
+    private CapturedContent portalAwaitingControlCheck;
+    private CapturedContent portalPreviewDuringLookup;
+    private final Map<String, PortalContentCaptureSource.OriginalImageRequest> originalRequests = new LinkedHashMap<>();
     private float downX;
     private float downY;
     private float latestX;
     private float latestY;
-    private boolean weChatImageDragIntent;
+    private boolean twoFingerContactSequence;
+    private volatile boolean twoFingerModeForGesture;
 
-    private static final class PendingWeChat {
-        final CapturedContent content;
-        final long request;
-        final long started;
-        boolean ocrComplete;
-        String text;
-        Exception error;
-        boolean textDelivered;
-        boolean textWindowAccepted;
+    @Override public String operationId() {
+        return OperationTrace.id("press", downTime);
+    }
 
-        PendingWeChat(CapturedContent content, long request) {
-            this.content = content;
-            this.request = request;
-            this.started = SystemClock.elapsedRealtime();
+    @Override public Context context() {
+        return context;
+    }
+
+    @Override public DragShareController controller() {
+        return controller;
+    }
+
+    @Override public DragShareSettings settings() {
+        return settings;
+    }
+
+    @Override public BackgroundTouchBlocker blocker() {
+        return blocker;
+    }
+
+    @Override public boolean isStopped() {
+        return stopped;
+    }
+
+    @Override public boolean isPointerDown() {
+        return pointerDown;
+    }
+
+    @Override public boolean isReleased() {
+        return released;
+    }
+
+    @Override public boolean isTwoFingerMode() {
+        return twoFingerModeForGesture;
+    }
+
+    @Override public PressReleaseMode.Mode releaseMode() {
+        return releaseMode;
+    }
+
+    @Override public long downTime() {
+        return downTime;
+    }
+
+    @Override public float downX() {
+        return downX;
+    }
+
+    @Override public float downY() {
+        return downY;
+    }
+
+    @Override public long confirmedAt() {
+        return confirmedAt;
+    }
+
+    @Override public long generation() {
+        return generation;
+    }
+
+    @Override public void recycleContent(CapturedContent content) {
+        recycle(content);
+    }
+
+    @Override public void startTouchBlocker(long request) {
+        if (pointerDown && controller.inputCanBlockHostTouch()) {
+            controller.notePressDiagnostics(downTime, null, null, "press_background_block_requested");
+            blocker.startAsync(() -> !stopped && request == generation && pointerDown);
         }
+    }
+
+    @Override public void cancelActiveOcr() {
+        if (activeOcrRequest != null) {
+            activeOcrRequest.cancel();
+            activeOcrRequest = null;
+        }
+    }
+
+    @Override public void setActiveOcr(OcrRequest request) {
+        activeOcrRequest = request;
+    }
+
+    @Override public OcrRecognizer ocrRecognizer() {
+        return ocrRecognizer;
     }
 
     PressCaptureSource(
@@ -82,11 +181,25 @@ final class PressCaptureSource {
             RootTouchSource input,
             DragShareController controller,
             DragShareSettings settings) {
+        this(context, input, controller, settings, (ocrContext, bitmap, callback) -> {
+            AicrOcrClient.Request request = AicrOcrClient.recognize(ocrContext, bitmap, callback);
+            return request::cancel;
+        });
+    }
+
+    PressCaptureSource(
+            Context context,
+            RootTouchSource input,
+            DragShareController controller,
+            DragShareSettings settings,
+            OcrRecognizer ocrRecognizer) {
         this.context = context;
         this.input = input;
         this.controller = controller;
         this.settings = settings;
+        this.ocrRecognizer = ocrRecognizer;
         blocker = new BackgroundTouchBlocker(context);
+        if (input != null) input.setContactListener(this);
         ModuleActivation.reportPressReader(context, false, "");
         openReader();
     }
@@ -95,30 +208,39 @@ final class PressCaptureSource {
     private void openReader() {
         if (stopped || nodeSession != null || readerOpening) return;
         readerOpening = true;
+        String attemptId = RootConnectionDiagnostics.newAttempt();
+        readerAttemptId = attemptId;
         worker.execute(() -> {
             long connectionStarted = SystemClock.elapsedRealtime();
             try {
-                SharedRootNodeCapture.Connection ready = SharedRootNodeCapture.open(context, false);
+                SharedRootNodeCapture.Connection ready = SharedRootNodeCapture.open(context, false, attemptId);
                 DragShareLog.i(TAG, "connection stage=press_reader_ready elapsed_ms="
                         + (SystemClock.elapsedRealtime() - connectionStarted));
                 main.post(() -> {
                     readerOpening = false;
                     if (stopped) {
+                        recordRootEvent(ready.connectionAttemptId(), "release", -1L);
                         ready.close();
                         return;
                     }
                     IBinder.DeathRecipient death = () -> main.post(() -> {
                         if (stopped || nodeSession != ready) return;
+                        recordRootEvent(ready.connectionAttemptId(), "binder_death", -1L);
                         DragShareLog.w(TAG, "press reader lease died; reconnecting to the module process");
                         readerFailed(ready, "取词服务进程已退出，正在重连。", true);
                     });
                     if (!ready.linkToDeath(death)) {
+                        readerAttemptId = ready.connectionAttemptId();
+                        recordRootEvent(ready.connectionAttemptId(), "connect_failed", -1L);
+                        recordRootEvent(ready.connectionAttemptId(), "release", -1L);
                         ready.close();
                         readerFailed(null, "取词连接已失效，正在重连。", false);
                         return;
                     }
                     nodeSession = ready;
                     leaseDeath = death;
+                    readerAttemptId = ready.connectionAttemptId();
+                    recordRootEvent(ready.connectionAttemptId(), "lease_ready", -1L);
                     main.removeCallbacks(readerRetry);
                     readerRetryDelayMs = 0L;
                     readerFailureShown = false;
@@ -128,9 +250,11 @@ final class PressCaptureSource {
             } catch (IOException | SecurityException | IllegalStateException error) {
                 DragShareLog.w(TAG, "connection stage=press_reader_failed elapsed_ms="
                         + (SystemClock.elapsedRealtime() - connectionStarted));
-                DragShareLog.w(TAG, "cannot prepare press reader", error);
+                DragShareLog.w(TAG, "cannot prepare press reader error=" + error.getClass().getSimpleName());
                 main.post(() -> {
                     readerOpening = false;
+                    readerAttemptId = attemptId;
+                    recordRootEvent(attemptId, "connect_failed", -1L);
                     if (!stopped) readerFailed(null, "取词连接未建立，正在重连。" + error.getMessage(), false);
                 });
             }
@@ -140,12 +264,24 @@ final class PressCaptureSource {
     void updateSettings(DragShareSettings updated) {
         DragShareSettings previous = settings;
         settings = updated;
-        if (previous.pauseAutomaticInGames != updated.pauseAutomaticInGames
+        boolean pressConfigurationChanged =
+                previous.twoFingerLongPressTimeoutMillis != updated.twoFingerLongPressTimeoutMillis
+                || previous.disableSingleFingerInLandscape != updated.disableSingleFingerInLandscape;
+        boolean capturePolicyChanged = previous.pauseAutomaticInGames != updated.pauseAutomaticInGames
                 || !previous.manualGamePackages.equals(updated.manualGamePackages)
-                || !previous.accessibilityBlacklistedPackages.equals(updated.accessibilityBlacklistedPackages)) {
+                || !previous.accessibilityBlacklistedPackages.equals(updated.accessibilityBlacklistedPackages);
+        if (capturePolicyChanged) {
             if (Looper.myLooper() == Looper.getMainLooper()) cancelGesture();
             else main.post(this::cancelGesture);
+        } else if (pressConfigurationChanged) {
+            if (Looper.myLooper() == Looper.getMainLooper()) cancelUnconfirmedPressCandidate();
+            else main.post(this::cancelUnconfirmedPressCandidate);
         }
+    }
+
+    private void cancelUnconfirmedPressCandidate() {
+        if (detector.isActive() && !detector.isFired()) cancelGesture();
+        else controller.endPressPipeline(downTime);
     }
 
     void onPointerEvent(int action, float x, float y, long time) {
@@ -155,11 +291,25 @@ final class PressCaptureSource {
 
     private void handlePointer(int action, float x, float y, long time) {
         if (stopped) return;
+        if (twoFingerContactSequence) return;
+        if (action == MotionEvent.ACTION_CANCEL) {
+            cancelGesture();
+            return;
+        }
+        if (action == MotionEvent.ACTION_MOVE && !detector.isActive()) return;
         latestX = x;
         latestY = y;
         if (action == MotionEvent.ACTION_DOWN) {
             cancelGesture();
             downTime = time;
+            inputReceivedElapsedRealtime = SystemClock.elapsedRealtime();
+            logTiming("root_down", downTime,
+                    "eventLagMs=" + Math.max(0L, SystemClock.uptimeMillis() - time));
+            releaseMode = PressReleaseMode.Mode.NONE;
+            released = false;
+            // Combined triggers: a lone press is always a single-finger drag
+            // candidate; a second finger may still upgrade it before confirmation.
+            twoFingerModeForGesture = false;
             detector.start(x, y, time, settings.resolvePressConfirmationTimeoutMillis());
             pointerDown = true;
             downX = x;
@@ -172,19 +322,46 @@ final class PressCaptureSource {
             return;
         }
         boolean hadFired = detector.isFired();
-        if (action != MotionEvent.ACTION_DOWN) detector.onPointerEvent(action, x, y, 1);
-        if (action == MotionEvent.ACTION_UP) pointerDown = false;
-        if (action == MotionEvent.ACTION_MOVE
-                && Math.hypot(x - downX, y - downY) > WECHAT_DRAG_DISTANCE_DP
-                        * context.getResources().getDisplayMetrics().density) {
-            weChatImageDragIntent = true;
-            if (pendingWeChat != null) dragWeChatImage(x, y);
+        // Once the two-finger hold has fired, the remaining finger owns the
+        // drag stream. Do not feed its single-pointer MOVE/UP back into the
+        // two-pointer qualification detector.
+        if (action != MotionEvent.ACTION_DOWN && !detector.isFired()) {
+            detector.onPointerEvent(action, x, y, 1);
         }
-        if (action == MotionEvent.ACTION_UP) finishWeChatPress();
+        if (action == MotionEvent.ACTION_UP) {
+            // A single-finger hold is only a drag candidate while the finger remains down.
+            // Releasing it cancels the live preview; two-finger release still opens
+            // the text segmentation flow.
+            releaseMode = hadFired && twoFingerModeForGesture
+                    ? PressReleaseMode.Mode.NORMAL
+                    : PressReleaseMode.Mode.NONE;
+            released = true;
+            pointerDown = false;
+            controller.cancelHoldingImagePreview(downTime);
+        }
+        if (action == MotionEvent.ACTION_MOVE && !twoFingerModeForGesture
+                && detector.isFired() && !directDragArmed
+                && Math.hypot(x - downX, y - downY) > DIRECT_DRAG_DISTANCE_DP
+                        * context.getResources().getDisplayMetrics().density) {
+            directDragArmed = true;
+            if (cached != null && !released) routeConfirmedContentIfReady();
+            else controller.takeoverHoldingImagePreview(latestX, latestY, downTime);
+        }
+        if (action == MotionEvent.ACTION_UP) pressOcr.finishPress();
         if (action == MotionEvent.ACTION_UP && hadFired) {
-            main.removeCallbacks(classify);
-            main.removeCallbacks(fire);
+            schedulePressCallbacks(-1L, -1L);
             blocker.stopAsync();
+            detector.cancel();
+            if (releaseMode == PressReleaseMode.Mode.NONE) {
+                cancelGesture();
+            } else if (cached != null) {
+                display();
+            } else {
+                // BigBang or an active image menu may already have consumed
+                // the payload at confirmation. Preserve an in-flight OCR or
+                // Root capture callback so it can finish after this release.
+                finishConfirmedReleaseKeepingAsyncWork();
+            }
             return;
         }
         if (!detector.isActive()) {
@@ -194,50 +371,273 @@ final class PressCaptureSource {
         schedule();
     }
 
+    @Override
+    public boolean onContactEvent(int action, float x, float y, float secondX, float secondY,
+                                  int pointerCount, long eventTime) {
+        if (Looper.myLooper() == Looper.getMainLooper()) {
+            return handleContactEvent(action, x, y, secondX, secondY, pointerCount, eventTime);
+        } else {
+            main.post(() -> handleContactEvent(action, x, y, secondX, secondY,
+                    pointerCount, eventTime));
+            return false;
+        }
+    }
+
+    private boolean handleContactEvent(int action, float x, float y, float secondX, float secondY,
+                                       int pointerCount, long eventTime) {
+        if (stopped) return false;
+        boolean contactReleased = action == MotionEvent.ACTION_POINTER_UP
+                || action == MotionEvent.ACTION_UP;
+        boolean initialTwoFingerDown = pointerCount == 2 && action == MotionEvent.ACTION_DOWN
+                && !pointerDown && !detector.isActive();
+        if (initialTwoFingerDown) {
+            if (!canStartInitialTwoFingerCandidate(controller,
+                    x, y, secondX, secondY)) {
+                return false;
+            }
+            twoFingerModeForGesture = true;
+            releaseMode = PressReleaseMode.Mode.NONE;
+            released = false;
+            downTime = eventTime;
+            downX = x;
+            downY = y;
+            pointerDown = true;
+            latestX = x;
+            latestY = y;
+            detector.startTwoFinger(x, y, secondX, secondY, eventTime,
+                    settings.resolveTwoFingerPressConfirmationTimeoutMillis(),
+                    ViewConfiguration.get(context).getScaledTouchSlop());
+            twoFingerContactSequence = true;
+            if (!allowed()) {
+                cancelGesture();
+                return false;
+            }
+            schedule();
+            return true;
+        }
+        if (pointerCount == 2 && action == MotionEvent.ACTION_POINTER_DOWN) {
+            if (twoFingerModeForGesture
+                    || !canStartTwoFingerCandidate(controller, detector, eventTime,
+                    x, y, secondX, secondY, singleFingerSuppressed())) return false;
+            detector.startTwoFinger(x, y, secondX, secondY, eventTime,
+                    settings.resolveTwoFingerPressConfirmationTimeoutMillis(),
+                    ViewConfiguration.get(context).getScaledTouchSlop());
+            twoFingerModeForGesture = true;
+            twoFingerContactSequence = true;
+            releaseMode = PressReleaseMode.Mode.NONE;
+            released = false;
+            pointerDown = true;
+            latestX = x;
+            latestY = y;
+            schedule();
+            return true;
+        }
+        if (!twoFingerContactSequence) return false;
+        if (pointerCount == 2 && action == MotionEvent.ACTION_MOVE) {
+            detector.onTwoPointerEvent(MotionEvent.ACTION_MOVE, x, y, secondX, secondY, pointerCount);
+            if (!detector.isActive()) {
+                cancelGesture();
+            } else {
+                schedule();
+            }
+            return true;
+        }
+        if (pointerCount != 2 || action == MotionEvent.ACTION_CANCEL
+                || action == MotionEvent.ACTION_POINTER_UP || action == MotionEvent.ACTION_UP) {
+            boolean released = action == MotionEvent.ACTION_UP
+                    || action == MotionEvent.ACTION_POINTER_UP;
+            boolean confirmed = detector.isFired();
+            if (action == MotionEvent.ACTION_POINTER_UP && confirmed) {
+                // The first finger may leave after qualification. Keep the accepted
+                // candidate alive until the remaining Root stream really releases.
+                twoFingerContactSequence = false;
+                pointerDown = true;
+                return true;
+            }
+            if (released && confirmed && !controller.isActive()) {
+                // Match a confirmed single-finger release: let accepted OCR/capture work
+                // finish after the Root stream cancels its now-invalid physical drag.
+                pointerDown = false;
+                releaseMode = PressReleaseMode.resolve(twoFingerModeForGesture);
+                this.released = true;
+                detector.cancel();
+                schedulePressCallbacks(-1L, -1L);
+                blocker.stopAsync();
+                pressOcr.finishPress();
+                if (releaseMode == PressReleaseMode.Mode.NONE) {
+                    cancelGesture();
+                } else if (cached != null) {
+                    display();
+                }
+            } else {
+                cancelGesture();
+            }
+            if (pointerCount == 0 || action == MotionEvent.ACTION_CANCEL) {
+                twoFingerContactSequence = false;
+            }
+            // RootTouchSource uses false only for an unconfirmed pointer
+            // reduction; it then emits one synthetic Root CANCEL and drops
+            // the remaining raw frames until all contacts are released.
+            return !(released && !confirmed);
+        }
+        return true;
+    }
+
+    static boolean canStartTwoFingerCandidate(DragShareController controller,
+                                              PressTriggerDetector detector,
+                                              long eventTime,
+                                              float x, float y, float secondX, float secondY,
+                                              boolean singleFingerSuppressed) {
+        return controller != null && !controller.isActive()
+                && detector != null && detector.isActive() && !detector.isFired()
+                && (singleFingerSuppressed || eventTime < detector.deadline())
+                && Float.isFinite(x) && Float.isFinite(y)
+                && Float.isFinite(secondX) && Float.isFinite(secondY);
+    }
+
+    static boolean canStartInitialTwoFingerCandidate(DragShareController controller,
+                                                     float x, float y, float secondX, float secondY) {
+        return controller != null && !controller.isActive()
+                && Float.isFinite(x) && Float.isFinite(y)
+                && Float.isFinite(secondX) && Float.isFinite(secondY);
+    }
+
     /** Prefer the host's actual text/image result over the same press's approximate OCR region. */
-    boolean acceptWeChatPortalContent(CapturedContent content) {
-        if (Looper.myLooper() != Looper.getMainLooper() || stopped || !pointerDown
-                || !detector.isActive() || !"com.tencent.mm".equals(content.sourcePackage)
-                || !settings.isSharingEnabled(content.isImage())
-                || !controller.canContinuePress(downTime)) return false;
-        PendingWeChat pending = pendingWeChat;
-        if (!content.isImage() && pending != null && pending.textWindowAccepted) {
-            // OCR has already opened this press's text window; do not replace it with
-            // a second text result, and keep its screenshot available for an image drag.
+    boolean acceptPortalContent(CapturedContent content) {
+        boolean livePress = pointerDown && detector.isActive();
+        boolean releasedConfirmedPress = released
+                && releaseMode != PressReleaseMode.Mode.NONE
+                && confirmedAt > 0L;
+        boolean ownsCurrentPress = Looper.myLooper() == Looper.getMainLooper()
+                && !stopped && (livePress || releasedConfirmedPress)
+                && controller.canContinuePress(downTime);
+        if (!ownsCurrentPress) {
+            OperationTrace.event(operationId(), "portal_capture", "rejected_press_not_owned");
+            return false;
+        }
+        if (!settings.isSharingEnabled(content.isImage())) {
+            OperationTrace.event(operationId(), "portal_capture", "rejected_sharing_disabled");
+            return false;
+        }
+        // Keep the Root control check authoritative while it is still in flight.
+        if (!twoFingerModeForGesture && lookupRunning && !captureCandidateReady) {
+            if (portalAwaitingControlCheck != null
+                    && portalAwaitingControlCheck.keepsSourceFileOver(content, downX, downY)) {
+                recycle(content);
+                return true;
+            }
+            recycle(portalAwaitingControlCheck);
+            portalAwaitingControlCheck = content;
             return true;
         }
-        boolean imageTakeover = content.isImage() && pending != null;
-        if (imageTakeover && pending.textWindowAccepted && !dismissWeChatTextWindow()) {
+        recycle(portalAwaitingControlCheck);
+        portalAwaitingControlCheck = null;
+        OperationTrace.event(operationId(), "portal_capture", "accepted");
+        if (!twoFingerModeForGesture && content.isImage() && ((directDragArmed && controller.isActive())
+                || (cached != null && cached.keepsSourceFileOver(content, downX, downY))
+                || controller.holdsSourceFileOver(content, downTime, downX, downY))) {
             recycle(content);
-            showFailure("无法收起本次分词窗口，图片拖拽未接管");
             return true;
         }
-        generation++;
-        pendingWeChat = null;
-        weChatImageDragIntent = false;
-        if (pending != null && pending.ocrComplete) recycle(pending.content);
-        if (activeOcrRequest != null) {
-            activeOcrRequest.cancel();
-            activeOcrRequest = null;
+        PressOcrFlow.Candidate pending = pressOcr.candidate();
+        if (pending != null && pending.textWindowAccepted) {
+            // OCR has already opened this press's segmentation window; do not replace it
+            // with a late Portal payload from the same physical gesture.
+            if (content.isImage()) recycle(content);
+            return true;
         }
+        boolean imageTakeover = !twoFingerModeForGesture && content.isImage() && ownsCurrentPress
+                && detector.isFired()
+                && (pending != null || controller.isActive());
+        // Show the thumbnail immediately after the control check while the same node's
+        // media is still being read. The result may upgrade the held preview until drag starts.
+        boolean keepImageLookup = lookupRunning && !twoFingerModeForGesture && content.isImage()
+                && !content.hasSourceFile() && content.sourcePackage != null
+                && content.sourcePackage.equals(captureCandidateSource);
+        portalPreviewDuringLookup = keepImageLookup ? content : null;
+        if (!keepImageLookup) {
+            generation++;
+            lookupRunning = false;
+        }
+        pressOcr.acceptPortalTakeover();
         recycle(cached);
         cached = content;
-        lookupRunning = false;
+        captureCandidateReady = true;
+        captureCandidateSource = content.sourcePackage;
         displayQueued = false;
-        controller.notePressPipeline(downTime);
-        DragShareLog.i(TAG, "press accepted native portal source=com.tencent.mm kind="
+        portalImageTakeoverPending = imageTakeover;
+        if (singleFingerSuppressed()) {
+            schedule();
+            return true;
+        }
+        if (!twoFingerModeForGesture || detector.isFired()) {
+            controller.notePressPipeline(downTime);
+        }
+        DragShareLog.i(TAG, "press accepted native portal kind="
                 + (content.isImage() ? "image" : "text"));
-        if (imageTakeover) {
-            cached = null;
-            displayQueued = false;
-            controller.showImageForPressTakeover(content, latestX, latestY, settings, downTime);
-        } else if (detector.isFired()) display();
+        if (released && releaseMode != PressReleaseMode.Mode.NONE) display();
+        else if (detector.isFired()) routeConfirmedContentIfReady();
         else schedule();
         return true;
     }
 
+    void loadPortalOriginal(Object service, PortalContentCaptureSource.ImageReference reference,
+                            boolean hasPreview) {
+        if (!pointerDown || !detector.isActive() || !controller.canContinuePress(downTime)
+                || originalRequests.containsKey(reference.url())) return;
+        long press = downTime;
+        var request = PortalContentCaptureSource.loadOriginalImageAsync(service, reference, image -> {
+            if (image == null) return;
+            if (hasPreview) {
+                replacePortalImage(image, press);
+                return;
+            }
+            main.post(() -> {
+                if (press != downTime || !acceptPortalContent(image)) recycle(image);
+            });
+        });
+        originalRequests.put(reference.url(), request);
+    }
+
+    /** Replaces a timed-out Portal thumbnail while this same press still owns the UI. */
+    void replacePortalImage(CapturedContent replacement, long requestDownTime) {
+        if (replacement == null || !replacement.isImage()) return;
+        main.post(() -> {
+            if (stopped || requestDownTime != downTime) {
+                recycle(replacement);
+                return;
+            }
+            if (controller.replacePendingImagePreview(replacement, requestDownTime)) return;
+            boolean livePress = pointerDown && detector.isActive();
+            boolean releasedConfirmedPress = released
+                    && releaseMode != PressReleaseMode.Mode.NONE
+                    && confirmedAt > 0L;
+            if (!livePress && !releasedConfirmedPress) {
+                recycle(replacement);
+                return;
+            }
+            if (portalAwaitingControlCheck != null && portalAwaitingControlCheck.isImage()) {
+                if (CapturedContent.shouldReplaceImage(portalAwaitingControlCheck, replacement)) {
+                    recycle(portalAwaitingControlCheck);
+                    portalAwaitingControlCheck = replacement;
+                } else recycle(replacement);
+            } else if (cached != null && cached.isImage()) {
+                if (!CapturedContent.shouldReplaceImage(cached, replacement)) {
+                    recycle(replacement);
+                    return;
+                }
+                recycle(cached);
+                cached = replacement;
+            } else {
+                recycle(replacement);
+            }
+        });
+    }
+
     private boolean allowed() {
-        return !stopped && nodeSession != null && input.isReady()
+        // Capture still requires its Root lease; touch can come from the MIUI
+        // fallback while the evdev reader is unavailable.
+        return !stopped && nodeSession != null
                 && (settings.isSharingEnabled(false) || settings.isSharingEnabled(true))
                 && controller.canContinuePress(downTime)
                 && context.getSystemService(PowerManager.class).isInteractive()
@@ -245,17 +645,38 @@ final class PressCaptureSource {
     }
 
     private void schedule() {
-        main.removeCallbacks(classify);
-        main.removeCallbacks(fire);
-        if (detector.classificationDeadline() >= 0L) main.postAtTime(classify, detector.classificationDeadline());
-        if (detector.isActive() && !detector.isFired()) main.postAtTime(fire, detector.deadline());
+        // Keep the first contact eligible for a second finger, without capturing
+        // or confirming a disabled single-finger hold.
+        if (singleFingerSuppressed()) {
+            schedulePressCallbacks(-1L, -1L);
+        } else {
+            schedulePressCallbacks(detector.classificationDeadline(),
+                    detector.isActive() && !detector.isFired() ? detector.deadline() : -1L);
+        }
+    }
+
+    private void schedulePressCallbacks(long classification, long confirmation) {
+        if (classification != scheduledClassification) {
+            main.removeCallbacks(classify);
+            scheduledClassification = classification;
+            if (classification >= 0L) main.postAtTime(classify, classification);
+        }
+        if (confirmation != scheduledConfirmation) {
+            main.removeCallbacks(fire);
+            scheduledConfirmation = confirmation;
+            if (confirmation >= 0L) main.postAtTime(fire, confirmation);
+        }
     }
 
     private void classifyPress() {
-        if (allowed() && detector.takeClassification(SystemClock.uptimeMillis()) && cached == null) lookup();
+        scheduledClassification = -1L;
+        if (!singleFingerSuppressed() && allowed()
+                && detector.takeClassification(SystemClock.uptimeMillis()) && cached == null) lookup();
     }
 
     private void firePress() {
+        scheduledConfirmation = -1L;
+        if (singleFingerSuppressed()) return;
         if (!allowed()) {
             cancelGesture();
             return;
@@ -263,10 +684,40 @@ final class PressCaptureSource {
         long now = SystemClock.uptimeMillis();
         if (!detector.fire(now)) return;
         confirmedAt = now;
+        controller.notePressDiagnostics(downTime, cached == null ? null : cached.sourcePackage,
+                "ARMED", "press_duration_confirmed");
         controller.notePressPipeline(downTime);
         DragShareLog.i(TAG, "press confirmed by duration/movement elapsedMs=" + (now - detector.downTime()));
-        if (cached != null) display();
-        else if (!lookupRunning) lookup();
+        logTiming("confirmed", downTime, "");
+        if (!released && cached == null && !lookupRunning) lookup();
+        routeConfirmedContentIfReady();
+    }
+
+    /** Routes content by gesture kind after the duration threshold is reached. */
+    private void routeConfirmedContentIfReady() {
+        if (released || !pointerDown || !detector.isFired() || singleFingerSuppressed()) return;
+        CapturedContent content = cached;
+        if (twoFingerModeForGesture) {
+            if (content != null && settings.isSharingEnabled(content.isImage())) display();
+            return;
+        }
+        if ((content == null && !captureCandidateReady) || !allowConfirmedSingleFinger(
+                content == null ? captureCandidateSource : content.sourcePackage)) return;
+        if (captureCandidateReady) startTouchBlocker(generation);
+        if (content == null || !settings.isSharingEnabled(content.isImage())) return;
+        if (portalImageTakeoverPending) {
+            portalImageTakeoverPending = false;
+            cached = null;
+            controller.showContentForPressTakeover(content, latestX, latestY, settings, downTime);
+            return;
+        }
+        if (directDragArmed) {
+            display();
+            return;
+        }
+        cached = null;
+        controller.showPendingImagePreview(content, controller.latestPointerX(),
+                controller.latestPointerY(), settings, downTime, true);
     }
 
     private void lookup() {
@@ -281,26 +732,41 @@ final class PressCaptureSource {
         long requestDownTime = downTime;
         float x = downX, y = downY;
         boolean earlyCapture = !detector.isFired();
-        Set<String> excluded = new LinkedHashSet<>(settings.accessibilityBlacklistedPackages);
-        excluded.addAll(AccessibilityBlacklist.builtInPackages(context));
+        logTiming("capture_start", requestDownTime, "early=" + earlyCapture);
         AtomicBoolean excludedByPolicy = new AtomicBoolean();
         worker.execute(() -> {
             long lookupStarted = SystemClock.elapsedRealtime();
+            OperationTrace.event(OperationTrace.id("press", requestDownTime), "capture", "started");
             try {
-                if (request != generation || stopped) return;
+                if (request != generation || stopped) {
+                    OperationTrace.event(OperationTrace.id("press", requestDownTime), "capture",
+                            "late_ignored");
+                    return;
+                }
+                Set<String> excluded = new LinkedHashSet<>(settings.accessibilityBlacklistedPackages);
+                excluded.addAll(AccessibilityBlacklist.builtInPackages(context));
                 SharedRootNodeCapture.Connection.PressResult result = session.capturePress(x, y, excluded,
-                        settings.isSharingEnabled(false), settings.isSharingEnabled(true), earlyCapture, source ->
-                                acceptAutomaticSource(request, source, excludedByPolicy));
+                        settings.isSharingEnabled(false), settings.isSharingEnabled(true), earlyCapture,
+                        source ->
+                                acceptAutomaticSource(request, source, excluded, excludedByPolicy),
+                        source -> onCaptureCandidateReady(request, source));
                 CapturedContent content = result.content;
+                OperationTrace.event(OperationTrace.id("press", requestDownTime), "capture",
+                        content == null ? "empty" : "returned");
+                OperationTrace.event(OperationTrace.id("press", requestDownTime), "capture_kind",
+                        captureKindOutcome(content));
                 DragShareLog.i(TAG, "press capture returned elapsed_ms="
                         + (SystemClock.elapsedRealtime() - lookupStarted)
+                        + " fromDownMs=" + elapsedFromDown(requestDownTime)
                         + " kind=" + (content == null ? "none" : content.isImage() ? "image" : "text"));
                 if (content == null && result.rejectionReason != null) {
                     DragShareLog.i(TAG, "press lookup rejected reason=" + result.rejectionReason);
                 }
                 if (result.policyExcluded) excludedByPolicy.set(true);
                 main.post(() -> {
-                    if (request != generation || !allowed()) {
+                    if (request != generation || !captureResultStillOwned(requestDownTime)) {
+                        OperationTrace.event(OperationTrace.id("press", requestDownTime), "capture",
+                                "late_ignored");
                         DragShareLog.i(TAG, "press payload dropped kind="
                                 + (content == null ? "none" : content.isImage() ? "image" : "text")
                                 + " reason=" + (stopped ? "stopped"
@@ -310,24 +776,64 @@ final class PressCaptureSource {
                         return;
                     }
                     lookupRunning = false;
-                    if (content == null) {
-                        if (detector.isFired() && !excludedByPolicy.get()) {
-                            showFailure("当前位置没有可读取的文字或安全识字区域");
+                    if (portalPreviewDuringLookup != null) {
+                        CapturedContent preview = portalPreviewDuringLookup;
+                        portalPreviewDuringLookup = null;
+                        if (content != null && content.keepsSourceFileOver(preview, downX, downY)) {
+                            replacePortalImage(content, requestDownTime);
+                        } else recycle(content);
+                        return;
+                    }
+                    if (portalAwaitingControlCheck != null) {
+                        CapturedContent portal = portalAwaitingControlCheck;
+                        portalAwaitingControlCheck = null;
+                        if (!excludedByPolicy.get()
+                                && !"excluded_hold_control".equals(result.rejectionReason)
+                                && (content == null || !content.keepsSourceFileOver(portal, downX, downY))
+                                && acceptPortalContent(portal)) {
+                            recycle(content);
+                            return;
                         }
-                        cancelGesture();
+                        recycle(portal);
+                    }
+                    if (content == null) {
+                        if (excludedByPolicy.get()
+                                || "excluded_hold_control".equals(result.rejectionReason)) {
+                            cancelGesture();
+                        } else {
+                            // A missing node is not a cancelled touch. Taplus may still
+                            // return the actual message while this same hold is down.
+                            OperationTrace.event(operationId(), "capture", "waiting_for_portal");
+                            schedule();
+                        }
                         return;
                     }
                     cached = content;
-                    if (detector.isFired()) display();
-                    else schedule();
+                    if (singleFingerSuppressed()) {
+                        schedule();
+                        return;
+                    }
+                    controller.notePressDiagnostics(requestDownTime, content.sourcePackage,
+                            detector.isFired() ? "ARMED" : "PENDING", "capture_result_available");
+                    if (released) {
+                        if (releaseMode != PressReleaseMode.Mode.NONE) display();
+                        else cancelGesture();
+                    } else if (detector.isFired()) {
+                        routeConfirmedContentIfReady();
+                    } else schedule();
                 });
             } catch (IOException | SecurityException error) {
-                DragShareLog.w(TAG, "press lookup failed", error);
+                OperationTrace.event(OperationTrace.id("press", requestDownTime), "capture",
+                        "failed_" + error.getClass().getSimpleName());
+                DragShareLog.w(TAG, "press lookup failed error=" + error.getClass().getSimpleName());
                 main.post(() -> {
-                    if (stopped) return;
+                    if (stopped || request != generation || requestDownTime != downTime) return;
                     if (error instanceof SharedRootNodeCapture.ConnectionFailedException || error instanceof SecurityException) {
                         readerFailed(session, "取词连接已中断，正在重连。" + error.getMessage(), false);
-                    } else if (request == generation) {
+                    } else if (portalPreviewDuringLookup != null) {
+                        portalPreviewDuringLookup = null;
+                        lookupRunning = false;
+                    } else {
                         if (detector.isFired()) showFailure("本次按压未完成：" + error.getMessage());
                         cancelGesture();
                     }
@@ -339,9 +845,56 @@ final class PressCaptureSource {
         });
     }
 
-    private boolean acceptAutomaticSource(long request, String source, AtomicBoolean excludedByPolicy) {
+    private boolean captureResultStillOwned(long requestDownTime) {
+        if (requestDownTime != downTime || stopped) return false;
+        return pointerDown ? allowed() : released && releaseMode != PressReleaseMode.Mode.NONE;
+    }
+
+    private void onCaptureCandidateReady(long request, String source) {
+        main.post(() -> {
+            if (request != generation || stopped || !pointerDown) return;
+            captureCandidateReady = true;
+            captureCandidateSource = source;
+            logTiming("capture_candidate_ready", downTime, "");
+            if (!twoFingerModeForGesture) routeConfirmedContentIfReady();
+        });
+    }
+
+    private boolean allowConfirmedSingleFinger(String source) {
+        SharedRootNodeCapture.Connection session = nodeSession;
+        if (source == null || session == null || source.equals(recordingCheckedSource)) return true;
+        if (recordingCheckRunning) return false;
+        recordingCheckRunning = true;
+        long press = downTime;
+        recordingWorker.execute(() -> {
+            boolean recording = session.startedMicRecording(source, press);
+            main.post(() -> {
+                if (stopped || press != downTime || !pointerDown || !detector.isFired()
+                        || twoFingerModeForGesture) return;
+                recordingCheckRunning = false;
+                if (!allowed()) {
+                    cancelGesture();
+                    return;
+                }
+                String current = cached == null ? captureCandidateSource : cached.sourcePackage;
+                if (source.equals(current)) {
+                    if (recording) {
+                        OperationTrace.event(operationId(), "drag_decision", "excluded_active_voice_recording");
+                        cancelGesture();
+                        return;
+                    }
+                    recordingCheckedSource = source;
+                }
+                routeConfirmedContentIfReady();
+            });
+        });
+        return false;
+    }
+
+    private boolean acceptAutomaticSource(long request, String source, Set<String> excluded,
+                                          AtomicBoolean excludedByPolicy) {
         if (request != generation || !allowed()) return false;
-        if (AccessibilityBlacklist.isBlocked(context, settings, source)
+        if (excluded.contains(source)
                 || GameCapturePolicy.shouldPause(context, settings, source)) {
             excludedByPolicy.set(true);
             return false;
@@ -350,12 +903,13 @@ final class PressCaptureSource {
     }
 
     private void display() {
+        if (singleFingerSuppressed()) return;
         if (displayQueued) return;
         displayQueued = true;
         CapturedContent content = cached;
         cached = null;
         long request = generation;
-        if (request != generation || !allowed()) {
+        if (request != generation || (!released && !allowed())) {
             DragShareLog.i(TAG, "press handoff dropped reason="
                     + (stopped ? "stopped" : "source_unavailable"));
             recycle(content);
@@ -363,18 +917,35 @@ final class PressCaptureSource {
         }
         DragShareLog.i(TAG, "press handoff ready elapsedFromConfirmMs="
                 + (SystemClock.uptimeMillis() - confirmedAt));
-        if (content.isImage()) openImage(request, content);
-        else openText(request, content);
+        logTiming("handoff", request, "");
+        if (!twoFingerModeForGesture) {
+            OperationTrace.event(operationId(), "drag_decision", captureKindOutcome(content));
+            controller.show(content, controller.latestPointerX(),
+                    controller.latestPointerY(), settings, downTime);
+        } else if (content.isImage()) {
+            openImageForSegmentation(request, content);
+        } else {
+            openText(request, content);
+        }
+    }
+
+    private boolean singleFingerSuppressed() {
+        return !twoFingerModeForGesture && settings.disableSingleFingerInLandscape
+                && context.getResources().getConfiguration().orientation
+                == android.content.res.Configuration.ORIENTATION_LANDSCAPE;
     }
 
     private void openText(long request, CapturedContent content) {
+        String operation = operationId();
         Bundle text = new Bundle();
         text.putString("text", content.text);
-        text.putLong("press_confirmed_at", confirmedAt);
+        text.putLong("press_confirmed_at", confirmedAt > 0L ? confirmedAt : downTime);
+        text.putBoolean("drag_preview", releaseMode == PressReleaseMode.Mode.DRAG_PREVIEW);
         text.putString("before_text", content.beforeText);
         text.putString("after_text", content.afterText);
         text.putInt("x", Math.round(downX));
         text.putInt("y", Math.round(downY));
+        OperationTrace.put(text, operation);
         if ("com.android.settings".equals(content.sourcePackage)) {
             try {
                 android.content.Intent bridge = new android.content.Intent();
@@ -383,12 +954,14 @@ final class PressCaptureSource {
                 bridge.putExtra(ImageOcrActivity.EXTRA_BIGBANG_ARGS, text);
                 bridge.addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK);
                 context.startActivity(bridge);
+                OperationTrace.event(operation, "text_window", "activity_launch_returned");
                 DragShareLog.i(TAG, "Settings text panel handed to Activity window");
                 Bundle accepted = new Bundle();
                 accepted.putBoolean("accepted", true);
-                completeHandoff(accepted, request);
+                completeHandoff(accepted, request, operation);
             } catch (SecurityException | IllegalStateException error) {
-                DragShareLog.w(TAG, "cannot open Settings text panel", error);
+                OperationTrace.event(operation, "text_window", "failed_" + error.getClass().getSimpleName());
+                DragShareLog.w(TAG, "cannot open Settings text panel error=" + error.getClass().getSimpleName());
                 showFailure("无法打开分词窗口：" + error.getMessage());
                 controller.endPressPipeline(downTime);
                 blocker.stopAsync();
@@ -396,182 +969,37 @@ final class PressCaptureSource {
             return;
         }
         try {
+            OperationTrace.event(operation, "text_window", "requested");
             Bundle result = context.getContentResolver().call(
                     ImageStagingClient.BASE_URI, "open_bigbang_window", null, text);
-            completeHandoff(result, request);
+            completeHandoff(result, request, operation);
         } catch (SecurityException | IllegalStateException error) {
-            DragShareLog.w(TAG, "cannot open press text window", error);
+            OperationTrace.event(operation, "text_window", "failed_" + error.getClass().getSimpleName());
+            DragShareLog.w(TAG, "cannot open press text window error=" + error.getClass().getSimpleName());
             showFailure("无法打开分词窗口：" + error.getMessage());
             controller.endPressPipeline(downTime);
             blocker.stopAsync();
         }
     }
 
-    private void openImage(long request, CapturedContent content) {
-        if (content.pressOcrRegion && "com.tencent.mm".equals(content.sourcePackage)) {
-            openWeChatOcrDirect(request, content);
-            return;
-        }
-        if (!pointerDown) {
-            DragShareLog.i(TAG, "image press ended before drag preview was ready");
-            recycle(content);
-            controller.endPressPipeline(downTime);
-            return;
-        }
-        DragShareLog.i(TAG, "image press handed to drag menu source=" + content.sourcePackage);
-        controller.show(content, controller.latestPointerX(), controller.latestPointerY(), settings);
+    /** Two-finger image holds always mean segmentation; OCR supplies the text payload. */
+    private void openImageForSegmentation(long request, CapturedContent content) {
+        OperationTrace.event(operationId(), "image_decision", "segmentation_ocr");
+        pressOcr.startOcrDirect(request, content);
     }
 
-    private void openWeChatOcrDirect(long request, CapturedContent content) {
-        if (weChatImageDragIntent) {
-            weChatImageDragIntent = false;
-            CapturedContent image = CapturedContent.image(content.bitmap,
-                    content.sourcePackage, content.sourceBounds, true);
-            DragShareLog.i(TAG, "WeChat press moved to image before OCR started");
-            controller.showImageForPressTakeover(image, latestX, latestY, settings, downTime);
-            return;
-        }
-        PendingWeChat pending = new PendingWeChat(content, request);
-        pendingWeChat = pending;
-        startTouchBlocker(request);
-        DragShareLog.i(TAG, "WeChat OCR started elapsedFromConfirmMs="
-                + (SystemClock.uptimeMillis() - confirmedAt) + "; gesture decides text or image");
-        activeOcrRequest = AicrOcrClient.recognize(context, content.bitmap, (text, error) -> {
-            if (pending != pendingWeChat || request != generation || stopped) {
-                recycle(content);
-                return;
-            }
-            activeOcrRequest = null;
-            pending.ocrComplete = true;
-            pending.text = text;
-            pending.error = error;
-            DragShareLog.i(TAG, "WeChat OCR finished elapsedMs="
-                    + (SystemClock.elapsedRealtime() - pending.started)
-                    + " characters=" + (text == null ? 0 : text.length()));
-            deliverWeChatText();
-        });
-    }
-
-    private void dragWeChatImage(float x, float y) {
-        PendingWeChat pending = pendingWeChat;
-        if (pending.textWindowAccepted && !dismissWeChatTextWindow()) {
-            showFailure("无法收起本次分词窗口，图片拖拽未接管");
-            return;
-        }
-        CapturedContent source = pending.content;
-        android.graphics.Bitmap bitmap = pending.ocrComplete
-                ? source.bitmap
-                : source.bitmap.copy(android.graphics.Bitmap.Config.ARGB_8888, false);
-        pendingWeChat = null;
-        generation++;
-        weChatImageDragIntent = false;
-        if (!pending.ocrComplete && activeOcrRequest != null) {
-            activeOcrRequest.cancel();
-            activeOcrRequest = null;
-        }
-        blocker.stopAsync();
-        if (bitmap == null) {
-            if (pending.ocrComplete) recycle(source);
-            controller.endPressPipeline(downTime);
-            showFailure("无法准备拖拽图片");
-            return;
-        }
-        CapturedContent image = CapturedContent.image(bitmap, source.sourcePackage,
-                source.sourceBounds, true);
-        DragShareLog.i(TAG, "WeChat press moved to image drag elapsedFromConfirmMs="
-                + (SystemClock.uptimeMillis() - confirmedAt));
-        controller.showImageForPressTakeover(image, x, y, settings, downTime);
-    }
-
-    private void deliverWeChatText() {
-        PendingWeChat pending = pendingWeChat;
-        if (pending == null || !pending.ocrComplete) return;
-        if (pending.textDelivered) {
-            finishWeChatCandidateIfReleased(pending);
-            return;
-        }
-        if (pending.error != null) {
-            if (pointerDown) return;
-            pendingWeChat = null;
-            recycle(pending.content);
-            DragShareLog.w(TAG, "WeChat OCR direct failed", pending.error);
-            showFailure("微信文字识别失败：" + pending.error.getMessage());
-            controller.endPressPipeline(downTime);
-            blocker.stopAsync();
-            return;
-        }
-        if (pending.text == null || pending.text.isBlank()) {
-            if (pointerDown) return;
-            pendingWeChat = null;
-            recycle(pending.content);
-            showFailure("这次按压没有识别出文字");
-            controller.endPressPipeline(downTime);
-            blocker.stopAsync();
-            return;
-        }
-        pending.textDelivered = true;
-        Bundle recognized = new Bundle();
-        recognized.putString("text", pending.text);
-        recognized.putLong("press_confirmed_at", confirmedAt);
-        recognized.putInt("x", Math.round(downX));
-        recognized.putInt("y", Math.round(downY));
-        try {
-            Bundle result = context.getContentResolver().call(ImageStagingClient.BASE_URI,
-                    BigBangOverlayLauncher.METHOD_OPEN, null, recognized);
-            completeHandoff(result, pending.request);
-            if (pending.textWindowAccepted) {
-                DragShareLog.i(TAG, "WeChat OCR text window accepted; image candidate retained until root release");
-            }
-        } catch (SecurityException | IllegalStateException | IllegalArgumentException failure) {
-            DragShareLog.w(TAG, "cannot open WeChat text panel", failure);
-            showFailure("无法显示微信识别结果：" + failure.getMessage());
-            controller.endPressPipeline(downTime);
-            blocker.stopAsync();
-        }
-        finishWeChatCandidateIfReleased(pending);
-    }
-
-    private void finishWeChatPress() {
-        PendingWeChat pending = pendingWeChat;
-        if (pending != null && pending.ocrComplete) deliverWeChatText();
-    }
-
-    private void finishWeChatCandidateIfReleased(PendingWeChat pending) {
-        if (!pointerDown && pendingWeChat == pending) {
-            pendingWeChat = null;
-            recycle(pending.content);
-        }
-    }
-
-    private boolean dismissWeChatTextWindow() {
-        Bundle request = new Bundle();
-        request.putLong("press_confirmed_at", confirmedAt);
-        try {
-            Bundle result = context.getContentResolver().call(ImageStagingClient.BASE_URI,
-                    BigBangOverlayLauncher.METHOD_DISMISS_PRESS, null, request);
-            return result != null && result.getBoolean("accepted");
-        } catch (SecurityException | IllegalStateException | IllegalArgumentException error) {
-            DragShareLog.w(TAG, "cannot dismiss this WeChat press window", error);
-            return false;
-        }
-    }
-
-    private void completeHandoff(Bundle result, long request) {
+    @Override public void completeHandoff(Bundle result, long request, String operation) {
         if (result != null && result.getBoolean("accepted")) {
-            PendingWeChat pending = pendingWeChat;
+            OperationTrace.event(operation, "text_window", "accepted");
+            PressOcrFlow.Candidate pending = pressOcr.candidate();
             if (pending != null && pending.request == request) pending.textWindowAccepted = true;
             startTouchBlocker(request);
             controller.handoffToPress(downTime);
         } else {
+            OperationTrace.event(operation, "text_window", "rejected");
             DragShareLog.w(TAG, "press window request was not accepted");
             controller.endPressPipeline(downTime);
             blocker.stopAsync();
-        }
-    }
-
-    private void startTouchBlocker(long request) {
-        if (pointerDown) {
-            blocker.startAsync(() -> !stopped && request == generation && pointerDown);
         }
     }
 
@@ -579,29 +1007,83 @@ final class PressCaptureSource {
         if (content != null && content.isImage()) content.bitmap.recycle();
     }
 
+    private static String captureKindOutcome(CapturedContent content) {
+        if (content == null) return "unknown";
+        String source = content.sourcePackage == null ? "unknown" : content.sourcePackage;
+        if (!content.isImage()) return source + "_text";
+        switch (content.imageOrigin) {
+            case REFERENCED_MEDIA: return source + "_image_media_reference";
+            case PORTAL_MEDIA: return source + "_image_portal_media";
+            case NODE_CAPTURE: return source + "_image_node_capture";
+            case SCREEN_CAPTURE: return source + "_image_screen_capture";
+            default: return source + "_image_unknown";
+        }
+    }
+
+    private long elapsedFromDown(long requestDownTime) {
+        return requestDownTime < 0L
+                ? -1L : Math.max(0L, SystemClock.uptimeMillis() - requestDownTime);
+    }
+
+    private void logTiming(String stage, long requestDownTime, String details) {
+        DragShareLog.i(TAG, "press timing stage=" + stage
+                + " fromDownMs=" + elapsedFromDown(requestDownTime)
+                + " inputElapsedMs=" + (inputReceivedElapsedRealtime < 0L
+                ? -1L : Math.max(0L, SystemClock.elapsedRealtime() - inputReceivedElapsedRealtime))
+                + (details == null || details.isEmpty() ? "" : " " + details));
+    }
+
     void cancelGesture() {
+        if (pointerDown || detector.isActive() || cached != null || pressOcr.hasCandidate() || lookupRunning) {
+            controller.notePressDiagnostics(downTime, null, null, "press_detector_cleanup");
+        }
         controller.endPressPipeline(downTime);
         generation++;
         pointerDown = false;
-        PendingWeChat pending = pendingWeChat;
-        pendingWeChat = null;
-        weChatImageDragIntent = false;
+        released = false;
+        releaseMode = PressReleaseMode.Mode.NONE;
+        PressOcrFlow.Candidate pending = pressOcr.clearForCancel();
         if (pending != null && pending.ocrComplete) recycle(pending.content);
+        if (!released) controller.cancelHoldingImagePreview(downTime);
         if (activeOcrRequest != null) {
             activeOcrRequest.cancel();
             activeOcrRequest = null;
         }
-        main.removeCallbacks(classify);
-        main.removeCallbacks(fire);
+        schedulePressCallbacks(-1L, -1L);
         detector.cancel();
+        twoFingerModeForGesture = false;
         lookupRunning = false;
         displayQueued = false;
+        directDragArmed = false;
+        captureCandidateReady = false;
+        originalRequests.values().forEach(PortalContentCaptureSource.OriginalImageRequest::cancel);
+        originalRequests.clear();
+        captureCandidateSource = null;
+        recordingCheckedSource = null;
+        recordingCheckRunning = false;
+        portalImageTakeoverPending = false;
+        inputReceivedElapsedRealtime = -1L;
         recycle(cached);
         cached = null;
+        recycle(portalAwaitingControlCheck);
+        portalAwaitingControlCheck = null;
+        portalPreviewDuringLookup = null;
         blocker.stopAsync();
     }
 
-    private void showFailure(String reason) {
+    private void finishConfirmedReleaseKeepingAsyncWork() {
+        controller.endPressPipeline(downTime);
+        pointerDown = false;
+        released = true;
+        schedulePressCallbacks(-1L, -1L);
+        detector.cancel();
+        twoFingerContactSequence = false;
+        displayQueued = false;
+        directDragArmed = false;
+        blocker.stopAsync();
+    }
+
+    @Override public void showFailure(String reason) {
         Toast.makeText(context, reason, Toast.LENGTH_LONG).show();
     }
 
@@ -613,12 +1095,16 @@ final class PressCaptureSource {
         nodeSession = null;
         cancelGesture();
         if (failed != null) {
+            recordRootEvent(failed.connectionAttemptId(), "release", -1L);
             failed.unlinkFromDeath(leaseDeath);
             failed.close();
         }
         leaseDeath = null;
         ModuleActivation.reportPressReader(context, false, reason);
-        if (reconnectNow) openReader();
+        if (reconnectNow) {
+            if (failed != null) recordRootEvent(failed.connectionAttemptId(), "retry_scheduled", 0L);
+            openReader();
+        }
         else scheduleReaderRetry();
     }
 
@@ -628,6 +1114,7 @@ final class PressCaptureSource {
         readerRetryDelayMs = readerRetryDelayMs <= 0L
                 ? READER_RETRY_FIRST_MS
                 : Math.min(readerRetryDelayMs * 2L, READER_RETRY_MAX_MS);
+        recordRootEvent(readerAttemptId, "retry_scheduled", readerRetryDelayMs);
         DragShareLog.i(TAG, "press reader retry scheduled in_ms=" + readerRetryDelayMs);
         if (readerRetryDelayMs >= READER_RETRY_MAX_MS && !readerFailureShown) {
             readerFailureShown = true;
@@ -639,20 +1126,32 @@ final class PressCaptureSource {
     void stop() {
         Runnable stop = () -> {
             stopped = true;
+            if (input != null) {
+                input.clearContactListener(this);
+            }
+            twoFingerContactSequence = false;
             main.removeCallbacks(readerRetry);
             cancelGesture();
             SharedRootNodeCapture.Connection session = nodeSession;
             nodeSession = null;
             ModuleActivation.reportPressReader(context, false, "");
             if (session != null) {
+                recordRootEvent(session.connectionAttemptId(), "release", -1L);
                 session.unlinkFromDeath(leaseDeath);
                 session.close();
             }
             leaseDeath = null;
             blocker.close();
             worker.shutdownNow();
+            recordingWorker.shutdownNow();
         };
         if (Looper.myLooper() == Looper.getMainLooper()) stop.run();
         else main.post(stop);
+    }
+
+    private void recordRootEvent(String attemptId, String outcome, long retryIntervalMs) {
+        if (retryIntervalMs >= 0L) RootConnectionDiagnostics.retry(attemptId, retryIntervalMs);
+        else RootConnectionDiagnostics.event(attemptId, outcome);
+        ModuleActivation.reportRootConnectionEvent(context, attemptId, outcome, retryIntervalMs);
     }
 }

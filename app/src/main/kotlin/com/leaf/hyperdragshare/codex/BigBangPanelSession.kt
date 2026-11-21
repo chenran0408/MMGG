@@ -14,6 +14,7 @@ import android.view.View
 import android.view.ViewGroup
 import android.widget.Toast
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableFloatStateOf
@@ -39,13 +40,15 @@ internal class BigBangPanelSession(private val context: Context, private val act
     }
     private val main = Handler(Looper.getMainLooper())
     private var closed = false
+    private val callbackOwner = BigBangCallbackOwner()
+    private var selectionSummaryToken: BigBangCallbackOwner.Token? = null
     private val clearCopyFeedback = Runnable {
         if (!closed) copyFeedback = null
     }
     private var selectionSummaryFrameScheduled = false
     private val selectionSummaryFrameCallback = Choreographer.FrameCallback {
         selectionSummaryFrameScheduled = false
-        if (!closed) updateSelectionSummary()
+        if (selectionSummaryToken?.let(callbackOwner::owns) == true) updateSelectionSummary()
     }
     private var boomChipPage: BoomChipPage? = null
     private lateinit var legacyContentView: View
@@ -69,6 +72,9 @@ internal class BigBangPanelSession(private val context: Context, private val act
     private var lastCountedOriginal: String? = null
     private var selectedCharacterCount by mutableIntStateOf(0)
     private var hasTextSelection by mutableStateOf(false)
+    private var dragPreviewEnabled by mutableStateOf(false)
+    private var selectedDragText by mutableStateOf("")
+    private var selectionToolbarVisible by mutableStateOf(false)
     private var isSegmenting by mutableStateOf(true)
     private var isRecognizing by mutableStateOf(false)
     private var copying by mutableStateOf(false)
@@ -78,6 +84,7 @@ internal class BigBangPanelSession(private val context: Context, private val act
     private var beforeText: String? = null
     private var afterText: String? = null
     private var directActionText by mutableStateOf("")
+    val directAction by derivedStateOf { directTextDestination(directActionText, wholeTextOnly = true) }
     private var directText by mutableStateOf<String?>(null)
 
     private fun updateSelectionSummary() {
@@ -87,14 +94,24 @@ internal class BigBangPanelSession(private val context: Context, private val act
             lastCountedOriginal = original
             totalCharacterCount = original?.codePointCount(0, original.length) ?: 0
         }
-        hasTextSelection = page.hasSelection()
+        val gestureActive = page.isSelectionGestureActive()
+        val selected = page.hasSelection()
+        selectionToolbarVisible = selectionToolbarVisibleAfterGesture(
+            selectionToolbarVisible,
+            selected,
+            gestureActive,
+        )
+        hasTextSelection = selected
         selectedCharacterCount = page.selectedCharacterCount()
-        directActionText = if (page.hasSelection()) page.selectedTextOrOriginal().orEmpty() else ""
+        val actionText = if (selected) page.selectedTextOrOriginal().orEmpty() else original.orEmpty()
+        if (!gestureActive) directActionText = actionText
+        selectedDragText = if (selected) actionText else ""
     }
 
     private fun scheduleSelectionSummary() {
         if (closed || selectionSummaryFrameScheduled) return
         selectionSummaryFrameScheduled = true
+        selectionSummaryToken = callbackOwner.token()
         Choreographer.getInstance().postFrameCallback(selectionSummaryFrameCallback)
     }
 
@@ -164,7 +181,8 @@ internal class BigBangPanelSession(private val context: Context, private val act
                     onCopy = { copyText(selectedTextOrOriginal()) },
                     onSearch = { openSearch(selectedTextOrOriginal(), BoomActionHandler.SEARCH_WEB) },
                     onStash = { stashText(selectedTextOrOriginal()) },
-                    directAction = directTextDestination(directActionText),
+                    directAction = directAction,
+                    onOpenDirect = { destination -> actions.openExternal(destination.intent) },
                     copying = copying,
                     stashing = stashing,
                     canSplit = hasTextSelection && boomChipPage?.let {
@@ -174,6 +192,14 @@ internal class BigBangPanelSession(private val context: Context, private val act
                     totalCharacterCount = totalCharacterCount,
                     selectedCharacterCount = selectedCharacterCount,
                     hasTextSelection = hasTextSelection,
+                    dragPreviewEnabled = dragPreviewEnabled,
+                    selectedDragText = selectedDragText,
+                    onDragSelectedText = { text ->
+                        if (!closed && text.isNotBlank() && hasTextSelection) {
+                            actions.dragText(legacyContentView, text)
+                        }
+                    },
+                    selectionToolbarVisible = selectionToolbarVisible,
                     allTextSelected = boomChipPage?.mBoomActionHandler?.isAllSelected() == true,
                     isSegmenting = isSegmenting,
                     isRecognizing = isRecognizing,
@@ -197,9 +223,10 @@ internal class BigBangPanelSession(private val context: Context, private val act
     }
 
     fun open(text: String, touchX: Int, touchY: Int, savedState: Bundle? = null,
-        before: String? = null, after: String? = null) {
+        before: String? = null, after: String? = null, dragPreview: Boolean = false) {
         check(!closed) { "Create a new panel session after close" }
         isRecognizing = false
+        dragPreviewEnabled = dragPreview
         directText = null
         requests.invalidate()
         undoEditState = savedState?.getBundle(UNDO_EDIT)
@@ -267,7 +294,10 @@ internal class BigBangPanelSession(private val context: Context, private val act
     }
 
     fun close() {
+        if (closed) return
         closed = true
+        callbackOwner.close()
+        boomChipPage?.close()
         main.removeCallbacks(clearCopyFeedback)
         if (selectionSummaryFrameScheduled) {
             Choreographer.getInstance().removeFrameCallback(selectionSummaryFrameCallback)
@@ -432,6 +462,16 @@ internal class BigBangPanelSession(private val context: Context, private val act
         when (action) {
             BigBangMoreAction.Direct -> showDirectActions(selectedTextOrOriginal())
             BigBangMoreAction.Dictionary -> openSearch(selectedTextOrOriginal(), BoomActionHandler.SEARCH_DICTIONARY)
+            BigBangMoreAction.Share -> {
+                val text = selectedTextOrOriginal()
+                if (text.isNotBlank()) {
+                    val send = android.content.Intent(android.content.Intent.ACTION_SEND).apply {
+                        type = "text/plain"
+                        putExtra(android.content.Intent.EXTRA_TEXT, text)
+                    }
+                    actions.openExternal(android.content.Intent.createChooser(send, null))
+                }
+            }
             BigBangMoreAction.Split, BigBangMoreAction.Merge -> {
                 val page = boomChipPage ?: return
                 val previous = Bundle().also {
@@ -444,7 +484,8 @@ internal class BigBangPanelSession(private val context: Context, private val act
             }
             BigBangMoreAction.UndoEdit -> {
                 val state = undoEditState ?: return
-                open(state.getString(SAVED_TEXT).orEmpty(), launchTouchX, launchTouchY, state)
+                open(state.getString(SAVED_TEXT).orEmpty(), launchTouchX, launchTouchY, state,
+                    dragPreview = dragPreviewEnabled)
             }
             BigBangMoreAction.TextSize -> {
                 textSizeSp = BigBangSettings.nextTextSizeSp(textSizeSp)

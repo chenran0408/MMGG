@@ -4,7 +4,7 @@
 
 ## 图片识字
 
-图片拖拽菜单、中转站图片、系统图片分享及显式按压取图都进入 `ImageOcrOverlay`。图片在模块进程解码，软件 Bitmap 最长边限制为 4096 像素，再交给 AICR。识别完成或明确取消后才释放正在被读取的 Bitmap；关闭窗口后忽略迟到结果。成功后进入原页分词浮窗，失败在当前窗口说明原因。图片二维码识别仍由 ZXing 本地解码，不调用 AICR。
+图片拖拽菜单、中转站图片、系统图片分享及显式按压取图都进入 `ImageOcrOverlay`。图片在模块进程解码，软件 Bitmap 最长边限制为 4096 像素，再交给 AICR。识别完成或明确取消后才释放正在被读取的 Bitmap；关闭窗口后忽略迟到结果。成功后进入原页分词浮窗，失败在当前窗口说明原因。图片二维码/条码识别当前使用 AICR `IBarcodeService`，与 OCR V2 是不同插件协议；详见[系统文本、OCR、NER 与条码接口复用手册](SYSTEM_TEXT_AND_BARCODE.md)。
 
 悬浮窗权限或锁屏检查失败时不打开识别窗口。系统分享先在透明接收 Activity 中读取并暂存授权图片，再退出 Activity 并交给悬浮窗。图片 URI 授权与接收边界见 `docs/IMPLEMENTATION.md`。
 
@@ -16,4 +16,4 @@
 
 截图仍受系统 Root、悬浮窗、锁屏和来源窗口策略约束。此能力只做用户明确请求的图片或有限屏幕 OCR，不等同于完整小爱识屏，也不绕过安全窗口限制。AICR V2 结构化接口 `AicrOcrClient.recognizeWithLines` 会保留每一行返回的原始文字、polygon 和 box 坐标，不解释或转换这些几何数据。当前图片与屏幕窗口调用兼容的 `recognize` 文本接口，因此界面按文字展示结果，不将行框映射到原屏位置。
 
-协议与目标 ROM 验证记录见 `docs/AICR_OCR_FEASIBILITY.md` 和 `docs/DEVICE_VALIDATION.md`。设备验证记录可能包含历史版本信息；当前引擎行为以本页和源码为准。
+协议与目标 ROM 验证记录见 `docs/archive/2026-11-02/AICR_OCR_FEASIBILITY.md` 和 `docs/DEVICE_VALIDATION.md`。设备验证记录可能包含历史版本信息；当前引擎行为以本页和源码为准。

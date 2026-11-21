@@ -10,6 +10,7 @@ import android.content.pm.ResolveInfo;
 import android.graphics.drawable.Drawable;
 
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -22,13 +23,13 @@ final class ShareTargetRepository {
 
     private ShareTargetRepository() {}
 
-    @SuppressLint("QueryPermissionsNeeded")
-    static List<ShareTarget> query(Context context, CapturedContent payload) {
-        return query(context, payload == null ? "text/plain" : payload.mimeType());
+    static List<ShareTarget> queryMenu(Context context, CapturedContent payload, DragShareSettings settings) {
+        List<ShareTarget> apps = query(context, payload.mimeType(), settings.hiddenTargetKeys);
+        return applySettings(context, apps, settings, payload.isImage());
     }
 
     @SuppressLint("QueryPermissionsNeeded")
-    static List<ShareTarget> query(Context context, String mimeType) {
+    private static List<ShareTarget> query(Context context, String mimeType, Set<String> hiddenKeys) {
         PackageManager packageManager = context.getPackageManager();
         Intent prototype = new Intent(Intent.ACTION_SEND).setType(mimeType);
         List<ResolveInfo> resolveInfos = packageManager.queryIntentActivities(
@@ -49,7 +50,8 @@ final class ShareTargetRepository {
                 continue;
             }
             ComponentName component = new ComponentName(activity.packageName, activity.name);
-            if (!seen.add(component.flattenToString())) {
+            String key = component.flattenToString();
+            if (hiddenKeys.contains(key) || !seen.add(key)) {
                 continue;
             }
 
@@ -74,14 +76,14 @@ final class ShareTargetRepository {
     static List<ShareTarget> queryAll(Context context) {
         Map<String, ShareTarget> byKey = new LinkedHashMap<>();
         try {
-            for (ShareTarget target : query(context, "text/plain")) {
+            for (ShareTarget target : query(context, "text/plain", Collections.emptySet())) {
                 byKey.put(target.key(), target);
             }
         } catch (Throwable ignored) {
             // Keep image targets available if a ROM rejects one MIME query.
         }
         try {
-            for (ShareTarget target : query(context, "image/*")) {
+            for (ShareTarget target : query(context, "image/*", Collections.emptySet())) {
                 byKey.putIfAbsent(target.key(), target);
             }
         } catch (Throwable ignored) {
@@ -158,6 +160,10 @@ final class ShareTargetRepository {
             ShareTarget qrScan = visible.remove(DragShareSettings.TARGET_QR_SCAN);
             if (qrScan != null) {
                 result.add(qrScan);
+            }
+            ShareTarget imageOcr = visible.remove(DragShareSettings.TARGET_IMAGE_OCR);
+            if (imageOcr != null) {
+                result.add(imageOcr);
             }
         } else {
             ShareTarget textSegmentation = visible.remove(

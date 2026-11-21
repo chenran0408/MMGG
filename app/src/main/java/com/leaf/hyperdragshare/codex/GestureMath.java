@@ -5,6 +5,23 @@ final class GestureMath {
 
     private GestureMath() {}
 
+    static int initialMenuPosition(int configuredPosition, float touchX, int screenWidth) {
+        if (configuredPosition >= DragShareSettings.SIMPLE_MENU_POSITION_TOP
+                && configuredPosition <= DragShareSettings.SIMPLE_MENU_POSITION_RIGHT) {
+            return configuredPosition;
+        }
+        if (configuredPosition == DragShareSettings.SIMPLE_MENU_POSITION_NEAR_HAND) {
+            return touchX < Math.max(1, screenWidth) / 2f
+                    ? DragShareSettings.SIMPLE_MENU_POSITION_LEFT
+                    : DragShareSettings.SIMPLE_MENU_POSITION_RIGHT;
+        }
+        return DragShareSettings.SIMPLE_MENU_POSITION_BOTTOM;
+    }
+
+    static boolean followsDragEdge(int configuredPosition) {
+        return configuredPosition == DragShareSettings.SIMPLE_MENU_POSITION_DRAG_EDGE;
+    }
+
     static boolean shouldShowMenu(float pointerY, int triggerTop) {
         return pointerY >= triggerTop;
     }
@@ -84,6 +101,10 @@ final class GestureMath {
         return Math.max(minimum, Math.min(maximum, value));
     }
 
+    static boolean samePosition(int currentX, int currentY, int nextX, int nextY) {
+        return currentX == nextX && currentY == nextY;
+    }
+
     static int previewLeft(float pointerX, int previewWidth, int screenWidth, int margin) {
         return clamp(
                 Math.round(pointerX - previewWidth / 2f),
@@ -115,8 +136,11 @@ final class GestureMath {
         return Math.max(1f, 1.23f - distanceInItems * 0.13f);
     }
 
-    static boolean nearHandMenuOnRight(float tilt) {
-        return tilt > 0f;
+    static int nearHandMenuPosition(float originX, float pointerX, float slop, int current) {
+        float delta = pointerX - originX;
+        if (Math.abs(delta) <= Math.max(0f, slop)) return current;
+        return delta < 0f ? DragShareSettings.SIMPLE_MENU_POSITION_LEFT
+                : DragShareSettings.SIMPLE_MENU_POSITION_RIGHT;
     }
 
     static float[] mapRawPoint(

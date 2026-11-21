@@ -9,6 +9,7 @@ import android.os.ParcelFileDescriptor;
 import java.io.IOException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
 import java.util.concurrent.atomic.AtomicReference;
 
 final class ImageStagingClient {
@@ -53,19 +54,46 @@ final class ImageStagingClient {
     }
 
     static void stage(Context context, Bitmap bitmap, Callback callback) {
-        EXECUTOR.execute(() -> {
+        submit(context, bitmap, null, callback);
+    }
+
+    /** A prepared URI completes immediately; queued work belongs to the drag session. */
+    static Future<?> stage(Context context, CapturedContent content, Callback callback) {
+        if (content.mediaUri != null) {
+            callback.onStaged(content.mediaUri);
+            return null;
+        }
+        return submit(context, content.bitmap, content.encodedImage, callback);
+    }
+
+    private static Future<?> submit(Context context, Bitmap bitmap, byte[] original, Callback callback) {
+        return EXECUTOR.submit(() -> {
             try {
-                callback.onStaged(stagePng(context, bitmap));
+                Uri uri = original != null ? stageEncoded(context, original) : stagePng(context, bitmap);
+                callback.onStaged(uri);
             } catch (Throwable error) {
                 callback.onFailure(error);
             }
         });
     }
 
+    /** Original compressed bytes only cross Binder through a descriptor, never a byte[] extra. */
+    static Uri stageEncoded(Context context, byte[] bytes) throws Throwable {
+        return stageStream(context, output -> output.write(bytes));
+    }
+
+    private interface StreamWriter {
+        void write(java.io.OutputStream output) throws IOException;
+    }
+
     private static Uri stagePng(Context context, Bitmap bitmap) throws Throwable {
         if (context == null || bitmap == null || bitmap.isRecycled()) {
             throw new IllegalArgumentException("Bitmap is unavailable");
         }
+        return stageStream(context, output -> BitmapEncoder.writePng(bitmap, output));
+    }
+
+    private static Uri stageStream(Context context, StreamWriter writer) throws Throwable {
         ParcelFileDescriptor[] pipe = ParcelFileDescriptor.createPipe();
         ParcelFileDescriptor readSide = pipe[0];
         ParcelFileDescriptor writeSide = pipe[1];
@@ -73,7 +101,7 @@ final class ImageStagingClient {
         Thread encoder = new Thread(() -> {
             try (ParcelFileDescriptor.AutoCloseOutputStream output =
                          new ParcelFileDescriptor.AutoCloseOutputStream(writeSide)) {
-                BitmapEncoder.writePng(bitmap, output);
+                writer.write(output);
             } catch (Throwable error) {
                 encoderFailure.set(error);
             }

@@ -2,10 +2,17 @@ package com.leaf.hyperdragshare.codex;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertNotNull;
+import static org.junit.Assert.assertNull;
+import static org.junit.Assert.assertSame;
 import static org.junit.Assert.assertTrue;
 
 import android.graphics.Bitmap;
 import android.graphics.Rect;
+import android.content.Context;
+import android.content.pm.ProviderInfo;
+import android.os.Bundle;
+import android.view.WindowManager;
 import android.view.MotionEvent;
 
 import org.junit.Test;
@@ -14,14 +21,36 @@ import org.robolectric.RobolectricTestRunner;
 import org.robolectric.RuntimeEnvironment;
 import org.robolectric.annotation.Config;
 import org.robolectric.annotation.LooperMode;
+import org.robolectric.shadows.ShadowContentResolver;
+import org.robolectric.shadows.ShadowLog;
 import org.robolectric.shadows.ShadowLooper;
 
 import java.lang.reflect.Field;
+import java.io.File;
+import java.nio.file.Files;
+import java.util.Base64;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.TimeUnit;
 
 @RunWith(RobolectricTestRunner.class)
 @Config(manifest = Config.NONE)
 @LooperMode(LooperMode.Mode.PAUSED)
 public final class PressPreviewHandoffTest {
+    @Test public void nativeImageWithoutPhysicalRootGestureDoesNotCreateAnOrphanPreview() throws Exception {
+        DragShareController controller = controller();
+        Bitmap bitmap = Bitmap.createBitmap(2, 2, Bitmap.Config.ARGB_8888);
+        controller.reservePortalHostFloatWindowSuppression();
+        controller.show(CapturedContent.portalMediaImage(bitmap, "test.app", null),
+                20f, 30f, DragShareSettings.defaults());
+        ShadowLooper.shadowMainLooper().idle();
+        assertNull(field(controller, "session").get(controller));
+        assertFalse(controller.isActive());
+        assertFalse(controller.shouldSuppressPortalHostFloatWindow());
+        assertTrue(bitmap.isRecycled());
+        controller.destroy();
+    }
+
     @Test public void nativePreviewDoesNotCancelItsOwnPendingPress() throws Exception {
         DragShareController controller = controller();
         nativeSession(controller, 100L);
@@ -125,7 +154,7 @@ public final class PressPreviewHandoffTest {
         down(controller, 100L);
         controller.handoffToPress(100L);
         Bitmap bitmap = Bitmap.createBitmap(2, 2, Bitmap.Config.ARGB_8888);
-        controller.showImageForPressTakeover(
+        controller.showContentForPressTakeover(
                 CapturedContent.image(bitmap, "com.tencent.mm", new Rect(), true),
                 20f, 30f, DragShareSettings.defaults(), 100L);
         ShadowLooper.shadowMainLooper().idle();
@@ -145,7 +174,7 @@ public final class PressPreviewHandoffTest {
         controller.handoffToPress(100L);
         controller.acceptPointerEvent(MotionEvent.ACTION_DOWN, 20f, 30f, 1000L, "root");
         Bitmap bitmap = Bitmap.createBitmap(2, 2, Bitmap.Config.ARGB_8888);
-        controller.showImageForPressTakeover(
+        controller.showContentForPressTakeover(
                 CapturedContent.image(bitmap, "com.tencent.mm", new Rect(), true),
                 20f, 30f, DragShareSettings.defaults(), 100L);
         ShadowLooper.shadowMainLooper().idle();
@@ -154,6 +183,557 @@ public final class PressPreviewHandoffTest {
         assertEquals(1000L, field(controller, "rootDownTime").getLong(controller));
         assertEquals(-1L, field(controller, "pressHandoffTime").getLong(controller));
         controller.destroy();
+    }
+
+    @Test public void portalImageReplacesActiveRootImageWhenNoOcrIsPending() throws Exception {
+        DragShareController controller = controller();
+        down(controller, 100L);
+        Object rootSession = nativeSession(controller, 100L);
+        PressCaptureSource source = new PressCaptureSource(
+                RuntimeEnvironment.getApplication(), null, controller, DragShareSettings.defaults());
+        field(source, "pointerDown").setBoolean(source, true);
+        field(source, "downTime").setLong(source, 100L);
+        ((PressTriggerDetector) field(source, "detector").get(source)).start(20f, 30f, 100L, 500L);
+        Bitmap bitmap = Bitmap.createBitmap(2, 2, Bitmap.Config.ARGB_8888);
+        CapturedContent content = CapturedContent.portalMediaImage(
+                bitmap, "com.tencent.mm", new Rect(0, 0, 2, 2));
+
+        try {
+            assertTrue(source.acceptPortalContent(content));
+            assertFalse("Portal content arriving before confirmation must not take over the root drag",
+                    (boolean) field(rootSession, "cancelled").get(rootSession));
+            assertTrue(field(source, "cached").get(source) == content);
+        } finally {
+            source.stop();
+            controller.destroy();
+            if (!bitmap.isRecycled()) bitmap.recycle();
+            ShadowLooper.shadowMainLooper().idle();
+        }
+    }
+
+    @Test public void portalCannotOverrideAnInFlightHoldControlExclusion() throws Exception {
+        Context context = RuntimeEnvironment.getApplication();
+        DragShareController controller = controller();
+        down(controller, 100L);
+        PressCaptureSource source = new PressCaptureSource(
+                context, null, controller, DragShareSettings.defaults());
+        field(source, "pointerDown").setBoolean(source, true);
+        field(source, "downTime").setLong(source, 100L);
+        ((PressTriggerDetector) field(source, "detector").get(source)).start(20f, 30f, 100L, 500L);
+        IRootNodeLease lease = (IRootNodeLease) java.lang.reflect.Proxy.newProxyInstance(
+                IRootNodeLease.class.getClassLoader(), new Class<?>[]{IRootNodeLease.class},
+                (proxy, method, args) -> switch (method.getName()) {
+                    case "capture" -> {
+                        android.os.Bundle reason = new android.os.Bundle();
+                        reason.putString(RootNodeCaptureClient.KEY_CAPTURE_REASON, "excluded_hold_control");
+                        yield reason;
+                    }
+                    case "asBinder" -> new android.os.Binder();
+                    case "close" -> null;
+                    default -> throw new AssertionError(method.getName());
+                });
+        field(source, "nodeSession").set(source, new SharedRootNodeCapture.Connection(
+                context, new android.os.Binder(), android.os.Process.myUid(), lease));
+        try {
+            var lookup = PressCaptureSource.class.getDeclaredMethod("lookup");
+            lookup.setAccessible(true);
+            lookup.invoke(source);
+            assertTrue(source.acceptPortalContent(CapturedContent.text(
+                    "按住说话", "com.ss.android.ugc.aweme", null)));
+            assertFalse(field(source, "captureCandidateReady").getBoolean(source));
+            ((java.util.concurrent.ExecutorService) field(source, "worker").get(source))
+                    .submit(() -> {}).get(5, java.util.concurrent.TimeUnit.SECONDS);
+            ShadowLooper.shadowMainLooper().idle();
+            assertFalse(field(source, "pointerDown").getBoolean(source));
+            assertNull(field(source, "portalAwaitingControlCheck").get(source));
+        } finally {
+            source.stop();
+            controller.destroy();
+            ShadowLooper.shadowMainLooper().idle();
+        }
+    }
+
+    @Test public void portalThumbnailBeforeRootNodePreservesGif() throws Exception {
+        checkOverlappingCapture(ThumbnailArrival.BEFORE_NODE);
+    }
+
+    @Test public void portalThumbnailDuringMediaReadPreservesGif() throws Exception {
+        checkOverlappingCapture(ThumbnailArrival.DURING_MEDIA);
+    }
+
+    @Test public void portalThumbnailAfterRootResultPreservesGif() throws Exception {
+        checkOverlappingCapture(ThumbnailArrival.AFTER_ROOT);
+    }
+
+    private enum ThumbnailArrival { BEFORE_NODE, DURING_MEDIA, AFTER_ROOT }
+
+    @Test public void sourcePriorityRequiresTheSameAppAndTouchedImage() {
+        Bitmap bitmap = Bitmap.createBitmap(1, 1, Bitmap.Config.ARGB_8888);
+        try {
+            Rect bounds = new Rect(0, 0, 50, 60);
+            CapturedContent original = CapturedContent.stagedMediaImage(bitmap, "test.app", bounds,
+                    android.net.Uri.parse("content://test/media/1"), "image/gif");
+            assertFalse(original.keepsSourceFileOver(
+                    CapturedContent.portalMediaImage(bitmap, "other.app", bounds), 20f, 30f));
+            assertFalse(original.keepsSourceFileOver(CapturedContent.portalMediaImage(bitmap, "test.app",
+                    new Rect(50, 0, 100, 60)), 20f, 30f));
+        } finally {
+            bitmap.recycle();
+        }
+    }
+
+    @Test public void latePortalImageDoesNotReplaceAnAlreadyMovingDrag() throws Exception {
+        DragShareController controller = controller();
+        down(controller, 100L);
+        Bitmap current = Bitmap.createBitmap(2, 2, Bitmap.Config.ARGB_8888);
+        CapturedContent payload = CapturedContent.nodeImage(current, "test.app", new Rect(0, 0, 50, 60));
+        Object session = nativeSession(controller, 100L, payload);
+        PressCaptureSource source = new PressCaptureSource(RuntimeEnvironment.getApplication(), null,
+                controller, DragShareSettings.defaults());
+        field(source, "pointerDown").setBoolean(source, true);
+        field(source, "downTime").setLong(source, 100L);
+        field(source, "directDragArmed").setBoolean(source, true);
+        PressTriggerDetector detector = (PressTriggerDetector) field(source, "detector").get(source);
+        detector.start(20f, 30f, 100L, 500L);
+        assertTrue(detector.fire(600L));
+        Bitmap late = Bitmap.createBitmap(3, 3, Bitmap.Config.ARGB_8888);
+        try {
+            assertTrue(source.acceptPortalContent(CapturedContent.portalMediaImage(late, "test.app", payload.sourceBounds)));
+            assertSame(session, field(controller, "session").get(controller));
+            assertSame(payload, field(session, "payload").get(session));
+            assertFalse((boolean) field(session, "cancelled").get(session));
+            assertTrue(late.isRecycled());
+        } finally {
+            source.stop();
+            controller.destroy();
+            current.recycle();
+            ShadowLooper.shadowMainLooper().idle();
+        }
+    }
+
+    private void checkOverlappingCapture(ThumbnailArrival arrival) throws Exception {
+        Context context = RuntimeEnvironment.getApplication();
+        DragShareController controller = controller();
+        PressCaptureSource source = new PressCaptureSource(context, null, controller, DragShareSettings.defaults());
+        long time = android.os.SystemClock.uptimeMillis();
+        down(controller, time);
+        field(source, "pointerDown").setBoolean(source, true);
+        field(source, "downTime").setLong(source, time);
+        field(source, "downX").setFloat(source, 20f);
+        field(source, "downY").setFloat(source, 30f);
+        ((PressTriggerDetector) field(source, "detector").get(source)).start(20f, 30f, time, 3000L);
+        Rect bounds = new Rect(0, 0, 50, 60);
+        Bitmap thumbnail = Bitmap.createBitmap(8, 8, Bitmap.Config.ARGB_8888);
+        CapturedContent portal = CapturedContent.portalMediaImage(thumbnail, "test.app", bounds);
+        byte[] gif = Base64.getDecoder().decode("R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7");
+        File file = File.createTempFile("captured-", ".gif", context.getCacheDir());
+        Files.write(file.toPath(), gif);
+        CountDownLatch nodeAllowed = new CountDownLatch(1);
+        CountDownLatch readingImage = new CountDownLatch(1);
+        CountDownLatch imageAllowed = new CountDownLatch(1);
+        IRootNodeLease lease = (IRootNodeLease) java.lang.reflect.Proxy.newProxyInstance(
+                IRootNodeLease.class.getClassLoader(), new Class<?>[]{IRootNodeLease.class},
+                (proxy, method, args) -> switch (method.getName()) {
+                    case "capture" -> {
+                        assertTrue(nodeAllowed.await(5, TimeUnit.SECONDS));
+                        Bundle node = new Bundle();
+                        node.putString("package", "test.app");
+                        node.putParcelable("bounds", bounds);
+                        node.putBoolean("image", true);
+                        yield node;
+                    }
+                    case "captureImage" -> {
+                        readingImage.countDown();
+                        assertTrue(imageAllowed.await(5, TimeUnit.SECONDS));
+                        Bundle image = new Bundle();
+                        image.putParcelable("bitmap", Bitmap.createBitmap(1, 1, Bitmap.Config.ARGB_8888));
+                        image.putParcelable("bounds", bounds);
+                        image.putParcelable("media_uri", android.net.Uri.fromFile(file));
+                        image.putString("media_mime_type", "image/gif");
+                        yield image;
+                    }
+                    case "asBinder" -> new android.os.Binder();
+                    case "close" -> null;
+                    default -> throw new AssertionError(method.getName());
+                });
+        field(source, "nodeSession").set(source, new SharedRootNodeCapture.Connection(
+                context, new android.os.Binder(), android.os.Process.myUid(), lease));
+        try {
+            var lookup = PressCaptureSource.class.getDeclaredMethod("lookup");
+            lookup.setAccessible(true);
+            lookup.invoke(source);
+            if (arrival == ThumbnailArrival.BEFORE_NODE) assertTrue(source.acceptPortalContent(portal));
+            nodeAllowed.countDown();
+            assertTrue(readingImage.await(5, TimeUnit.SECONDS));
+            ShadowLooper.shadowMainLooper().idle();
+            if (arrival == ThumbnailArrival.DURING_MEDIA) {
+                assertTrue(source.acceptPortalContent(portal));
+                assertSame(portal, field(source, "cached").get(source));
+            }
+            imageAllowed.countDown();
+            ((ExecutorService) field(source, "worker").get(source)).submit(() -> {}).get(5, TimeUnit.SECONDS);
+            ShadowLooper.shadowMainLooper().idle();
+            if (arrival == ThumbnailArrival.AFTER_ROOT) assertTrue(source.acceptPortalContent(portal));
+            CapturedContent captured = (CapturedContent) field(source, "cached").get(source);
+            assertNotNull(captured);
+            assertEquals("image/gif", captured.mimeType());
+            assertEquals(android.net.Uri.fromFile(file), captured.mediaUri);
+            try (var input = context.getContentResolver().openInputStream(captured.mediaUri)) {
+                org.junit.Assert.assertArrayEquals(gif, input.readAllBytes());
+            }
+            assertTrue(thumbnail.isRecycled());
+        } finally {
+            nodeAllowed.countDown();
+            imageAllowed.countDown();
+            source.stop();
+            controller.destroy();
+            ShadowLooper.shadowMainLooper().idle();
+            Files.deleteIfExists(file.toPath());
+        }
+    }
+
+    @Test public void actualPortalImageReplacesAnActiveThumbnailPreview() throws Exception {
+        Context context = RuntimeEnvironment.getApplication();
+        registerShareProvider(context);
+        DragShareController controller = controller();
+        down(controller, 100L);
+        Bitmap thumbnailBitmap = Bitmap.createBitmap(2, 2, Bitmap.Config.ARGB_8888);
+        CapturedContent thumbnail = CapturedContent.nodeImage(
+                thumbnailBitmap, "com.tencent.mm", new Rect(0, 0, 2, 2));
+        Object thumbnailSession = nativeSession(controller, 100L, thumbnail);
+        PressCaptureSource source = new PressCaptureSource(
+                context, null, controller, DragShareSettings.defaults());
+        field(source, "pointerDown").setBoolean(source, true);
+        field(source, "downTime").setLong(source, 100L);
+        PressTriggerDetector detector = (PressTriggerDetector) field(source, "detector").get(source);
+        detector.start(20f, 30f, 100L, 500L);
+        assertTrue(detector.fire(600L));
+        Bitmap portalBitmap = Bitmap.createBitmap(3, 3, Bitmap.Config.ARGB_8888);
+        CapturedContent portal = CapturedContent.portalMediaImage(
+                portalBitmap, "com.tencent.mm", new Rect(0, 0, 3, 3));
+
+        try {
+            assertTrue(source.acceptPortalContent(portal));
+            ShadowLooper.shadowMainLooper().idle();
+
+            assertTrue((boolean) field(thumbnailSession, "cancelled").get(thumbnailSession));
+            Object activeSession = field(controller, "session").get(controller);
+            assertNotNull(activeSession);
+            CapturedContent shown = (CapturedContent) field(activeSession, "payload").get(activeSession);
+            assertTrue(shown.imageOrigin == CapturedContent.ImageOrigin.PORTAL_MEDIA);
+            assertTrue(shown.bitmap == portalBitmap);
+        } finally {
+            source.stop();
+            controller.destroy();
+            if (!thumbnailBitmap.isRecycled()) thumbnailBitmap.recycle();
+            if (!portalBitmap.isRecycled()) portalBitmap.recycle();
+            ShadowLooper.shadowMainLooper().idle();
+        }
+    }
+
+    @Test public void acceptedSegmentationTextIsNotReplacedByLatePortalImage() throws Exception {
+        Context context = RuntimeEnvironment.getApplication();
+        registerShareProvider(context);
+        DragShareController controller = controller();
+        down(controller, 100L);
+        PressCaptureSource source = new PressCaptureSource(
+                context, null, controller, DragShareSettings.defaults());
+        Bitmap screenshot = Bitmap.createBitmap(3, 3, Bitmap.Config.ARGB_8888);
+        Bitmap portalImage = Bitmap.createBitmap(4, 4, Bitmap.Config.ARGB_8888);
+        CapturedContent region = CapturedContent.pressOcrRegion(
+                screenshot, "com.tencent.mm", new Rect(10, 20, 300, 500));
+        Object pending = pendingOcr(region, 5L, true, "识别出的当前文字");
+        field(source, "pointerDown").setBoolean(source, true);
+        field(source, "downTime").setLong(source, 100L);
+        field(source, "confirmedAt").setLong(source, 600L);
+        field(source, "generation").setLong(source, 5L);
+        field(source, "twoFingerModeForGesture").setBoolean(source, true);
+        setCandidate(source, pending);
+        ((PressTriggerDetector) field(source, "detector").get(source))
+                .start(20f, 30f, 100L, 500L);
+        CapturedContent actualPortalImage = CapturedContent.portalMediaImage(
+                portalImage, "com.tencent.mm", new Rect(10, 20, 200, 220));
+
+        try {
+            assertTrue(source.acceptPortalContent(actualPortalImage));
+            ShadowLooper.shadowMainLooper().idle();
+
+            assertNull("late Portal media must not replace an accepted segmentation result",
+                    field(controller, "session").get(controller));
+            assertTrue(candidateOf(source) == pending);
+            assertFalse(screenshot.isRecycled());
+            assertTrue(portalImage.isRecycled());
+        } finally {
+            source.stop();
+            controller.destroy();
+            if (!screenshot.isRecycled()) screenshot.recycle();
+            if (!portalImage.isRecycled()) portalImage.recycle();
+            ShadowLooper.shadowMainLooper().idle();
+        }
+    }
+
+    @Test public void completedOcrTextOpensSegmentationWindowOnRelease() throws Exception {
+        Context context = RuntimeEnvironment.getApplication();
+        BigBangWindowProvider provider = new BigBangWindowProvider(context);
+        ShadowContentResolver.registerProviderInternal(ImageStagingClient.AUTHORITY, provider);
+        DragShareController controller = controller();
+        down(controller, 100L);
+        PressCaptureSource source = new PressCaptureSource(
+                context, null, controller, DragShareSettings.defaults());
+        Bitmap screenshot = Bitmap.createBitmap(3, 3, Bitmap.Config.ARGB_8888);
+        CapturedContent region = CapturedContent.pressOcrRegion(
+                screenshot, "com.tencent.mm", new Rect(10, 20, 300, 500));
+        Object pending = pendingOcr(region, 4L, false, "识别出的当前文字");
+        field(source, "pointerDown").setBoolean(source, false);
+        field(source, "released").setBoolean(source, true);
+        field(source, "releaseMode").set(source, PressReleaseMode.Mode.DRAG_PREVIEW);
+        field(source, "downTime").setLong(source, 100L);
+        field(source, "confirmedAt").setLong(source, 600L);
+        field(source, "generation").setLong(source, 4L);
+        setCandidate(source, pending);
+
+        try {
+            flowOf(source).finishPress();
+            ShadowLooper.shadowMainLooper().idle();
+
+            assertNotNull(provider.bigBangRequest);
+            assertEquals("识别出的当前文字", provider.bigBangRequest.getString("text"));
+            assertTrue(provider.bigBangRequest.getBoolean("drag_preview"));
+            assertTrue(screenshot.isRecycled());
+            assertNull(candidateOf(source));
+        } finally {
+            source.stop();
+            controller.destroy();
+            if (!screenshot.isRecycled()) screenshot.recycle();
+            ShadowLooper.shadowMainLooper().idle();
+        }
+    }
+
+    @Test public void holdPreviewStaysUntouchableAndTakeoverStartsTheSession() throws Exception {
+        holdImageAndDrag("root");
+    }
+
+    @Test public void fallbackImageCanStartAndCancelDragWithoutAnyPriorRootEvent() throws Exception {
+        holdImageAndDrag("miui");
+    }
+
+    private void holdImageAndDrag(String input) throws Exception {
+        DragShareController controller = controller();
+        controller.acceptPointerEvent(MotionEvent.ACTION_DOWN, 20f, 30f, 100L, input);
+        ShadowLooper.shadowMainLooper().idle();
+        Bitmap bitmap = Bitmap.createBitmap(4, 4, Bitmap.Config.ARGB_8888);
+        CapturedContent content = CapturedContent.portalMediaImage(
+                bitmap, "test.app", new Rect(0, 0, 4, 4));
+
+        try {
+            controller.showPendingImagePreview(content, 20f, 30f,
+                    DragShareSettings.defaults(), 100L, true);
+            ShadowLooper.shadowMainLooper().idle();
+
+            assertTrue(controller.hasPendingImagePreview());
+            assertFalse("live-hold preview must keep feeding the Root press stream",
+                    controller.hasInteractivePendingImagePreview());
+            WindowManager.LayoutParams params =
+                    (WindowManager.LayoutParams) field(controller, "previewParams").get(controller);
+            assertTrue((params.flags & WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE) != 0);
+            assertFalse(bitmap.isRecycled());
+
+            controller.takeoverHoldingImagePreview(30f, 40f, 100L);
+            ShadowLooper.shadowMainLooper().idle();
+
+            Object session = field(controller, "session").get(controller);
+            assertNotNull(session);
+            CapturedContent payload =
+                    (CapturedContent) field(session, "payload").get(session);
+            assertTrue(payload == content);
+            assertFalse(controller.hasPendingImagePreview());
+            assertFalse(bitmap.isRecycled());
+            controller.acceptPointerEvent(MotionEvent.ACTION_CANCEL, 30f, 40f, 900L, input);
+            ShadowLooper.shadowMainLooper().idle();
+            assertFalse(controller.isActive());
+            assertFalse(controller.isAwaitingRootRelease());
+        } finally {
+            controller.destroy();
+            if (!bitmap.isRecycled()) bitmap.recycle();
+            ShadowLooper.shadowMainLooper().idle();
+        }
+    }
+
+    @Test public void smallerReferencedMediaReplacesLargerNodePreview() throws Exception {
+        DragShareController controller = controller();
+        down(controller, 100L);
+        CapturedContent crop = CapturedContent.nodeImage(
+                Bitmap.createBitmap(8, 8, Bitmap.Config.ARGB_8888), "test.app", new Rect(0, 0, 8, 8));
+        CapturedContent media = CapturedContent.referencedMediaImage(
+                Bitmap.createBitmap(2, 6, Bitmap.Config.ARGB_8888), "test.app", crop.sourceBounds);
+        CapturedContent largerCrop = CapturedContent.nodeImage(
+                Bitmap.createBitmap(16, 16, Bitmap.Config.ARGB_8888), "test.app", crop.sourceBounds);
+        try {
+            controller.showPendingImagePreview(crop, 20f, 30f,
+                    DragShareSettings.defaults(), 100L, true);
+            ShadowLooper.shadowMainLooper().idle();
+            Object window = field(controller, "modernPreviewWindow").get(controller);
+            Object view = field(controller, "previewView").get(controller);
+            Object params = field(controller, "previewParams").get(controller);
+            assertNotNull(window);
+            assertTrue(controller.replacePendingImagePreview(media, 100L));
+            ShadowLooper.shadowMainLooper().idle();
+            assertSame(window, field(controller, "modernPreviewWindow").get(controller));
+            assertSame(view, field(controller, "previewView").get(controller));
+            assertSame(params, field(controller, "previewParams").get(controller));
+            var image = (android.widget.ImageView) field(view, "previewImage").get(view);
+            assertSame(media.bitmap, ((android.graphics.drawable.BitmapDrawable) image.getDrawable()).getBitmap());
+            assertSame(media, field(controller, "pendingImagePreview").get(controller));
+            assertTrue(crop.bitmap.isRecycled());
+            assertFalse(media.bitmap.isRecycled());
+            assertFalse("larger screenshot cannot displace reference bytes",
+                    CapturedContent.shouldReplaceImage(media, largerCrop));
+        } finally {
+            controller.destroy();
+            if (!crop.bitmap.isRecycled()) crop.bitmap.recycle();
+            if (!media.bitmap.isRecycled()) media.bitmap.recycle();
+            largerCrop.bitmap.recycle();
+            ShadowLooper.shadowMainLooper().idle();
+        }
+    }
+
+    @Test public void releaseCancelsHoldPreviewAndRecyclesPayload() throws Exception {
+        DragShareController controller = controller();
+        down(controller, 100L);
+        Bitmap bitmap = Bitmap.createBitmap(4, 4, Bitmap.Config.ARGB_8888);
+        CapturedContent content = CapturedContent.portalMediaImage(
+                bitmap, "test.app", new Rect(0, 0, 4, 4));
+
+        try {
+            controller.showPendingImagePreview(content, 20f, 30f,
+                    DragShareSettings.defaults(), 100L, true);
+            ShadowLooper.shadowMainLooper().idle();
+            controller.cancelHoldingImagePreview(100L);
+            ShadowLooper.shadowMainLooper().idle();
+
+            assertFalse(controller.hasPendingImagePreview());
+            assertTrue(bitmap.isRecycled());
+        } finally {
+            controller.destroy();
+            if (!bitmap.isRecycled()) bitmap.recycle();
+            ShadowLooper.shadowMainLooper().idle();
+        }
+    }
+
+    @Test public void cancelDropsHoldPreviewAndRecyclesPayload() throws Exception {
+        DragShareController controller = controller();
+        down(controller, 100L);
+        Bitmap bitmap = Bitmap.createBitmap(4, 4, Bitmap.Config.ARGB_8888);
+        CapturedContent content = CapturedContent.portalMediaImage(
+                bitmap, "test.app", new Rect(0, 0, 4, 4));
+
+        try {
+            controller.showPendingImagePreview(content, 20f, 30f,
+                    DragShareSettings.defaults(), 100L, true);
+            ShadowLooper.shadowMainLooper().idle();
+            controller.cancelHoldingImagePreview(100L);
+            ShadowLooper.shadowMainLooper().idle();
+
+            assertFalse(controller.hasPendingImagePreview());
+            assertTrue(bitmap.isRecycled());
+        } finally {
+            controller.destroy();
+            if (!bitmap.isRecycled()) bitmap.recycle();
+            ShadowLooper.shadowMainLooper().idle();
+        }
+    }
+
+    @Test public void unclassifiedPressOcrImageIsNotPresentedAsAnOriginal() throws Exception {
+        DragShareController controller = controller();
+        down(controller, 100L);
+        Context context = RuntimeEnvironment.getApplication();
+        boolean[] ocrStarted = {false};
+        PressCaptureSource source = new PressCaptureSource(context, null, controller,
+                DragShareSettings.defaults(), (ocrContext, image, callback) -> {
+                    ocrStarted[0] = true;
+                    return () -> { };
+                });
+        Bitmap bitmap = Bitmap.createBitmap(3, 3, Bitmap.Config.ARGB_8888);
+        CapturedContent candidate = CapturedContent.image(
+                bitmap, "com.tencent.mm", new Rect(10, 20, 300, 500), true);
+        field(source, "pointerDown").setBoolean(source, false);
+        field(source, "released").setBoolean(source, true);
+        field(source, "releaseMode").set(source, PressReleaseMode.Mode.NORMAL);
+        field(source, "downTime").setLong(source, 100L);
+        field(source, "confirmedAt").setLong(source, 700L);
+        field(source, "twoFingerModeForGesture").setBoolean(source, true);
+        PressTriggerDetector detector = (PressTriggerDetector) field(source, "detector").get(source);
+        detector.startTwoFinger(20f, 30f, 40f, 50f, 100L, 500L, 8f);
+        assertTrue(detector.fire(700L));
+
+        try {
+            assertTrue(source.acceptPortalContent(candidate));
+            ShadowLooper.shadowMainLooper().idle();
+
+            assertNull(field(controller, "session").get(controller));
+            assertTrue("two-finger image confirmation starts OCR", ocrStarted[0]);
+            assertTrue(flowOf(source).hasCandidate());
+            assertFalse("the OCR candidate remains owned until recognition finishes", bitmap.isRecycled());
+        } finally {
+            source.stop();
+            controller.destroy();
+            if (!bitmap.isRecycled()) bitmap.recycle();
+            ShadowLooper.shadowMainLooper().idle();
+        }
+    }
+
+    @Test public void portalMediaAndRootImagesHaveDistinctTrustedOrigins() {
+        Bitmap portalImage = Bitmap.createBitmap(2, 2, Bitmap.Config.ARGB_8888);
+        Bitmap rootImage = Bitmap.createBitmap(2, 2, Bitmap.Config.ARGB_8888);
+        Bitmap unknownImage = Bitmap.createBitmap(1, 1, Bitmap.Config.ARGB_8888);
+        Bitmap thumbnailImage = Bitmap.createBitmap(2, 2, Bitmap.Config.ARGB_8888);
+        Bitmap otherThumbnailImage = Bitmap.createBitmap(1, 1, Bitmap.Config.ARGB_8888);
+        try {
+            CapturedContent portal = CapturedContent.portalMediaImage(
+                    portalImage, "com.tencent.mm", new Rect(0, 0, 2, 2));
+            CapturedContent root = CapturedContent.screenCaptureImage(
+                    rootImage, "com.tencent.mm", new Rect(0, 0, 2, 2));
+            CapturedContent thumbnail = CapturedContent.nodeImage(
+                    thumbnailImage, "com.tencent.mm", new Rect(0, 0, 2, 2));
+
+            assertEquals(CapturedContent.ImageOrigin.PORTAL_MEDIA, portal.imageOrigin);
+            assertEquals(CapturedContent.ImageOrigin.SCREEN_CAPTURE, root.imageOrigin);
+            assertEquals(CapturedContent.ImageOrigin.NODE_CAPTURE, thumbnail.imageOrigin);
+            assertEquals(CapturedContent.ImageOrigin.UNKNOWN,
+                    CapturedContent.image(unknownImage, "com.tencent.mm", new Rect(), true).imageOrigin);
+        } finally {
+            if (!portalImage.isRecycled()) portalImage.recycle();
+            if (!rootImage.isRecycled()) rootImage.recycle();
+            if (!unknownImage.isRecycled()) unknownImage.recycle();
+            if (!thumbnailImage.isRecycled()) thumbnailImage.recycle();
+            if (!otherThumbnailImage.isRecycled()) otherThumbnailImage.recycle();
+        }
+    }
+
+    @Test public void portalImageCallbackFromOldDownTimeIsRejectedByPressSource() throws Exception {
+        DragShareController controller = controller();
+        down(controller, 100L);
+        controller.handoffToPress(100L);
+        controller.acceptPointerEvent(MotionEvent.ACTION_DOWN, 20f, 30f, 1000L, "root");
+        ShadowLooper.shadowMainLooper().idle();
+        PressCaptureSource source = new PressCaptureSource(
+                RuntimeEnvironment.getApplication(), null, controller, DragShareSettings.defaults());
+        field(source, "pointerDown").setBoolean(source, true);
+        field(source, "downTime").setLong(source, 100L);
+        ((PressTriggerDetector) field(source, "detector").get(source)).start(20f, 30f, 100L, 500L);
+        Bitmap bitmap = Bitmap.createBitmap(2, 2, Bitmap.Config.ARGB_8888);
+        CapturedContent content = CapturedContent.image(
+                bitmap, "com.tencent.mm", new Rect(0, 0, 2, 2), true);
+
+        try {
+            assertFalse(source.acceptPortalContent(content));
+            assertTrue(controller.canContinuePress(1000L));
+        } finally {
+            source.stop();
+            controller.destroy();
+            if (!bitmap.isRecycled()) bitmap.recycle();
+            ShadowLooper.shadowMainLooper().idle();
+        }
     }
 
     private static DragShareController controller() {
@@ -167,13 +747,52 @@ public final class PressPreviewHandoffTest {
 
     // Establish the passive native preview state without attaching real overlay windows.
     private static Object nativeSession(DragShareController controller, long downTime) throws Exception {
+        return nativeSession(controller, downTime,
+                CapturedContent.text("test", "test.app", null));
+    }
+
+    private static Object nativeSession(DragShareController controller, long downTime,
+                                        CapturedContent payload) throws Exception {
         Class<?> type = Class.forName(DragShareController.class.getName() + "$Session");
-        var constructor = type.getDeclaredConstructor(CapturedContent.class, long.class);
+        var constructor = type.getDeclaredConstructor(CapturedContent.class, long.class, String.class);
         constructor.setAccessible(true);
-        Object session = constructor.newInstance(CapturedContent.text("test", "test.app", null), downTime);
+        Object session = constructor.newInstance(payload, downTime, OperationTrace.id("press", downTime));
         field(controller, "session").set(controller, session);
         field(controller, "active").set(controller, true);
         return session;
+    }
+
+    private static Object pendingOcr(CapturedContent content, long request, boolean textWindowAccepted,
+                                        String text) throws Exception {
+        Class<?> type = Class.forName(PressOcrFlow.class.getName() + "$Candidate");
+        var constructor = type.getDeclaredConstructor(CapturedContent.class, long.class, String.class);
+        constructor.setAccessible(true);
+        Object pending = constructor.newInstance(content, request, OperationTrace.id("press", request));
+        field(pending, "ocrComplete").setBoolean(pending, true);
+        field(pending, "text").set(pending, text);
+        field(pending, "textDelivered").setBoolean(pending, textWindowAccepted);
+        field(pending, "textWindowAccepted").setBoolean(pending, textWindowAccepted);
+        return pending;
+    }
+
+    private static PressOcrFlow flowOf(PressCaptureSource source) throws Exception {
+        return (PressOcrFlow) field(source, "pressOcr").get(source);
+    }
+
+    private static Object candidateOf(PressCaptureSource source) throws Exception {
+        return field(flowOf(source), "candidate").get(flowOf(source));
+    }
+
+    private static void setCandidate(PressCaptureSource source, Object pending) throws Exception {
+        field(flowOf(source), "candidate").set(flowOf(source), pending);
+    }
+
+    private static void registerShareProvider(Context context) {
+        ShareImageProvider provider = new ShareImageProvider();
+        ProviderInfo info = new ProviderInfo();
+        info.authority = ImageStagingClient.AUTHORITY;
+        provider.attachInfo(context, info);
+        ShadowContentResolver.registerProviderInternal(ImageStagingClient.AUTHORITY, provider);
     }
 
     private static Field field(Object object, String name) throws Exception {
@@ -181,4 +800,45 @@ public final class PressPreviewHandoffTest {
         field.setAccessible(true);
         return field;
     }
+
+    private static String operationMessages() {
+        StringBuilder messages = new StringBuilder();
+        for (ShadowLog.LogItem item : ShadowLog.getLogsForTag("DragShare/Operation")) {
+            messages.append(item.msg).append('\n');
+        }
+        return messages.toString();
+    }
+
+    /** Accepts BigBang window opens so release-path tests can assert the delivered payload. */
+    private static final class BigBangWindowProvider extends android.content.ContentProvider {
+        Bundle bigBangRequest;
+
+        BigBangWindowProvider(Context context) {
+            ProviderInfo info = new ProviderInfo();
+            info.authority = ImageStagingClient.AUTHORITY;
+            attachInfo(context, info);
+        }
+
+        @Override public boolean onCreate() { return true; }
+        @Override public android.database.Cursor query(android.net.Uri uri, String[] projection,
+                String selection, String[] args, String order) { return null; }
+        @Override public String getType(android.net.Uri uri) { return null; }
+        @Override public android.net.Uri insert(android.net.Uri uri, android.content.ContentValues values) {
+            return null;
+        }
+        @Override public int delete(android.net.Uri uri, String selection, String[] args) { return 0; }
+        @Override public int update(android.net.Uri uri, android.content.ContentValues values,
+                String selection, String[] args) { return 0; }
+
+        @Override public Bundle call(String method, String arg, Bundle extras) {
+            if (BigBangOverlayLauncher.METHOD_OPEN.equals(method)) {
+                bigBangRequest = new Bundle(extras);
+                Bundle result = new Bundle();
+                result.putBoolean("accepted", true);
+                return result;
+            }
+            return Bundle.EMPTY;
+        }
+    }
+
 }

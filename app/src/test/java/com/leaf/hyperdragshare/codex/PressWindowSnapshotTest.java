@@ -50,16 +50,6 @@ public final class PressWindowSnapshotTest {
         assertEquals("com.tencent.mm/com.tencent.mm.ui.chatting.variants.ChattingMainUI",
                 parsed.snapshot.windowName);
         assertEquals(new Rect(0, 0, 1440, 3200), parsed.snapshot.bounds);
-        assertTrue(PressWindowSnapshot.isSupportedWeChatWindow(
-                parsed.snapshot.packageName, parsed.snapshot.windowName));
-        assertTrue(PressWindowSnapshot.isSupportedWeChatWindow("com.tencent.mm",
-                "com.tencent.mm/com.tencent.mm.plugin.webview.ui.tools.WebViewUI"));
-        assertTrue(PressWindowSnapshot.isSupportedWeChatWindow("com.tencent.mm",
-                "com.tencent.mm/com.tencent.mm.plugin.sns.ui.SnsTimeLineUI"));
-        assertFalse(PressWindowSnapshot.isSupportedWeChatWindow("com.example",
-                "com.tencent.mm/com.tencent.mm.ui.LauncherUI"));
-        assertFalse(PressWindowSnapshot.isSupportedWeChatWindow("com.tencent.mm",
-                "com.example/.Overlay"));
         assertEquals(new Rect(295, 456, 1418, 1544),
                 parsed.snapshot.regionAt(856, 1000, 1440, 3200, 3f));
         assertEquals(new Rect(0, 456, 1123, 1025),

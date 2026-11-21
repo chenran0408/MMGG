@@ -16,7 +16,7 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicBoolean;
 
-import de.robv.android.xposed.XposedBridge;
+import com.leaf.hyperdragshare.compat.xposed.XposedBridge;
 
 final class Log {
     private static final String PREFIX = "[FanFreeform] ";
@@ -80,7 +80,13 @@ final class Log {
             }
             LAST_LOG.put(key, now);
         }
-        XposedBridge.log(PREFIX + message + (throwable == null ? "" : ": " + throwable));
+        // The optional Xposed sink is unavailable in local JVM/Robolectric runs.
+        // Keep diagnostic recording and the feature functional when that sink is absent.
+        try {
+            XposedBridge.log(PREFIX + message + (throwable == null ? "" : ": " + throwable));
+        } catch (RuntimeException ignored) {
+            // The reporter/file sinks below remain available.
+        }
         StringBuilder line = new StringBuilder();
         line.append(FORMATTER.get().format(new Date())).append(' ').append(level).append(' ')
                 .append(message == null ? "" : message);

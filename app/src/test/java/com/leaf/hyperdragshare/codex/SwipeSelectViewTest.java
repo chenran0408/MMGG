@@ -4,10 +4,12 @@ import static org.junit.Assert.*;
 
 import android.content.Context;
 import android.app.Activity;
+import android.graphics.Rect;
 import android.os.SystemClock;
 import android.view.LayoutInflater;
 import android.view.MotionEvent;
 import android.view.View;
+import android.view.ViewGroup;
 import android.view.ViewConfiguration;
 import android.widget.LinearLayout;
 import org.junit.Test;
@@ -20,6 +22,7 @@ import org.robolectric.RuntimeEnvironment;
 import org.robolectric.annotation.Config;
 import org.robolectric.shadows.ShadowLooper;
 import java.time.Duration;
+import java.lang.reflect.Field;
 import java.util.TreeSet;
 import java.util.List;
 
@@ -34,12 +37,13 @@ public class SwipeSelectViewTest {
     private String dragged;
     private boolean accepted = true;
     private boolean cancelDuringDrag;
+    private int dismissals;
 
     private void open() {
         activity = Robolectric.buildActivity(Activity.class).setup();
         root = LayoutInflater.from(context).inflate(R.layout.boom_activity_layout, null, false);
         page = new BoomChipPage(context, root, false, new BoomChipPage.Actions() {
-            public void dismiss() { }
+            public void dismiss() { dismissals++; }
             public void copy(String text) { }
             public void search(String text, int type) { }
             public void share(String text) { }
@@ -75,15 +79,76 @@ public class SwipeSelectViewTest {
         event.recycle();
     }
 
-    @Test public void selectedWordsDragAtScrollEdgeAndSurviveSynchronousCancel() {
+    @Test public void tappingBlankSpaceAfterLastChipKeepsTheSelectionAndPanelOpen() {
+        open();
+        layoutWords();
+        touch(MotionEvent.ACTION_DOWN, 0);
+        touch(MotionEvent.ACTION_UP, 0);
+        assertEquals("甲", page.selectedTextOrOriginal());
+
+        LinearLayout row = (LinearLayout) words.getChildAt(0);
+        View last = row.getChildAt(row.getChildCount() - 1);
+        int endOfChips = row.getLeft() + last.getRight();
+        assertTrue("fixture needs blank space after the last chip", endOfChips < words.getWidth() - 1);
+        Rect bounds = new Rect(0, 0, words.getWidth(), words.getHeight());
+        ((ViewGroup) root).offsetDescendantRectToMyCoords(words, bounds);
+        float x = bounds.left + (endOfChips + words.getWidth()) / 2f;
+        float y = bounds.top + row.getTop() + row.getHeight() / 2f;
+        long down = SystemClock.uptimeMillis();
+        for (int action : new int[]{MotionEvent.ACTION_DOWN, MotionEvent.ACTION_UP}) {
+            MotionEvent event = MotionEvent.obtain(down, down, action, x, y, 0);
+            root.dispatchTouchEvent(event);
+            event.recycle();
+        }
+        ShadowLooper.shadowMainLooper().idle();
+
+        assertEquals(0, dismissals);
+        assertEquals("甲", page.selectedTextOrOriginal());
+        touch(MotionEvent.ACTION_DOWN, 1);
+        touch(MotionEvent.ACTION_UP, 1);
+        assertEquals("甲乙", page.selectedTextOrOriginal());
+    }
+
+    @Test public void selectedWordsDoNotStartGlobalDragFromChipBody() {
         open();
         page.restoreSelectionNow(new TreeSet<>(List.of(0, 1)));
         assertFalse(page.mScroller.canScrollVertically(-1));
-        cancelDuringDrag = true;
         touch(MotionEvent.ACTION_DOWN, 0);
         ShadowLooper.shadowMainLooper().idleFor(Duration.ofMillis(ViewConfiguration.getLongPressTimeout()));
-        assertEquals("甲乙", dragged);
+        assertNull(dragged);
         assertEquals(new TreeSet<>(List.of(0, 1)), page.mBoomActionHandler.mSelectedId);
+    }
+
+    @Test public void splitAndMergedSelectionRemainSelectableWithoutDraggingFromChipBody() {
+        open();
+        page.prepareForReinit();
+        assertTrue(page.initWords(new int[]{0, 0, 1, 4, 5, 5, -1},
+                "前中文😀后", -1, -1, -1));
+        layoutWords();
+        page.restoreSelectionNow(new TreeSet<>(List.of(1)));
+        assertTrue(page.splitSelectedWordsToChars());
+        layoutWords();
+        assertEquals("中文😀", page.selectedTextOrOriginal());
+        touch(MotionEvent.ACTION_DOWN, 1);
+        ShadowLooper.shadowMainLooper().idleFor(Duration.ofMillis(ViewConfiguration.getLongPressTimeout()));
+        assertNull(dragged);
+        assertEquals(new TreeSet<>(List.of(1, 2, 3)), page.mBoomActionHandler.mSelectedId);
+
+        assertTrue(page.mergeSelectedWords());
+        layoutWords();
+        assertEquals("中文😀", page.selectedTextOrOriginal());
+        dragged = null;
+        touch(MotionEvent.ACTION_DOWN, 1);
+        ShadowLooper.shadowMainLooper().idleFor(Duration.ofMillis(ViewConfiguration.getLongPressTimeout()));
+        assertNull(dragged);
+        assertEquals(new TreeSet<>(List.of(1)), page.mBoomActionHandler.mSelectedId);
+    }
+
+    private void layoutWords() {
+        root.measure(View.MeasureSpec.makeMeasureSpec(1080, View.MeasureSpec.EXACTLY),
+                View.MeasureSpec.makeMeasureSpec(800, View.MeasureSpec.EXACTLY));
+        root.layout(0, 0, 1080, 800);
+        root.getViewTreeObserver().dispatchOnGlobalLayout();
     }
 
     @Test public void selectedCharacterCountMatchesSelectedTextAcrossEmojiAndGaps() {
@@ -110,16 +175,15 @@ public class SwipeSelectViewTest {
         assertEquals(selected.codePointCount(0, selected.length()), page.selectedCharacterCount());
     }
 
-    @Test public void rejectedDragRestoresOriginalSelectionRatherThanAddingHeldWord() {
+    @Test public void chipLongPressDoesNotStartDragOrChangeSelectionUntilRelease() {
         open();
         page.restoreSelectionNow(new TreeSet<>(List.of(0)));
-        accepted = false;
         touch(MotionEvent.ACTION_DOWN, 1);
         ShadowLooper.shadowMainLooper().idleFor(Duration.ofMillis(ViewConfiguration.getLongPressTimeout()));
-        assertEquals("甲乙", dragged);
+        assertNull(dragged);
         assertEquals(new TreeSet<>(List.of(0)), page.mBoomActionHandler.mSelectedId);
         touch(MotionEvent.ACTION_UP, 1);
-        assertEquals(new TreeSet<>(List.of(0)), page.mBoomActionHandler.mSelectedId);
+        assertEquals(new TreeSet<>(List.of(0, 1)), page.mBoomActionHandler.mSelectedId);
     }
 
     @Test public void cancelledSwipePreservesOldSelectionAndNeverStartsDrag() {
@@ -132,6 +196,56 @@ public class SwipeSelectViewTest {
         assertNull(dragged);
         assertEquals(new TreeSet<>(List.of(2)), page.mBoomActionHandler.mSelectedId);
     }
+
+    @Test public void closingPageCancelsPendingLongPressDrag() {
+        open();
+        touch(MotionEvent.ACTION_DOWN, 0);
+        page.close();
+        ShadowLooper.shadowMainLooper().idleFor(Duration.ofMillis(ViewConfiguration.getLongPressTimeout()));
+        assertNull(dragged);
+        assertFalse(words.isSelectionGestureActive());
+    }
+
+    @Test public void closePreventsPendingSelectionRestoreFromTouchingPageState() {
+        open();
+        page.restoreSelectionNow(new TreeSet<>(List.of(1)));
+        page.setTextSizeSp(BigBangSettings.DEFAULT_TEXT_SIZE_SP + 1f);
+        assertTrue(page.mBoomActionHandler.mSelectedId.isEmpty());
+
+        page.close();
+        words.getViewTreeObserver().dispatchOnGlobalLayout();
+
+        assertTrue(page.mBoomActionHandler.mSelectedId.isEmpty());
+    }
+
+    @Test public void repeatedRebuildKeepsOnlyLatestSelectionRestoreListener() throws Exception {
+        open();
+        page.restoreSelectionNow(new TreeSet<>(List.of(1)));
+        page.setTextSizeSp(BigBangSettings.DEFAULT_TEXT_SIZE_SP + 1f);
+        page.setTextSizeSp(BigBangSettings.DEFAULT_TEXT_SIZE_SP + 2f);
+
+        assertNotNull(pendingSelectionRestoreListener());
+        words.getViewTreeObserver().dispatchOnGlobalLayout();
+        assertNull(pendingSelectionRestoreListener());
+    }
+
+    @Test public void closeRemovesPendingSelectionRestoreListener() throws Exception {
+        open();
+        page.restoreSelectionNow(new TreeSet<>(List.of(1)));
+        page.setTextSizeSp(BigBangSettings.DEFAULT_TEXT_SIZE_SP + 1f);
+        assertNotNull(pendingSelectionRestoreListener());
+
+        page.close();
+
+        assertNull(pendingSelectionRestoreListener());
+    }
+
+    private Object pendingSelectionRestoreListener() throws Exception {
+        Field field = BoomChipPage.class.getDeclaredField("mPendingSelectionRestoreListener");
+        field.setAccessible(true);
+        return field.get(page);
+    }
+
     @Test public void verticalMotionDoesNotSelectWordsOrStartGlobalDrag() {
         open();
         page.restoreSelectionNow(new TreeSet<>(List.of(2)));
@@ -165,6 +279,53 @@ public class SwipeSelectViewTest {
         touch(MotionEvent.ACTION_MOVE, 1);
         touch(MotionEvent.ACTION_UP, 1);
         assertTrue(page.mBoomActionHandler.mSelectedId.isEmpty());
+    }
+
+    @Test public void slidingSelectionKeepsRowsStillUntilGestureEnds() {
+        open();
+        page.prepareForReinit();
+        int wordCount = 80;
+        int[] segments = new int[wordCount * 2 + 1];
+        StringBuilder text = new StringBuilder(wordCount);
+        for (int i = 0; i < wordCount; i++) {
+            segments[i * 2] = segments[i * 2 + 1] = i;
+            text.append('甲');
+        }
+        segments[segments.length - 1] = -1;
+        assertTrue(page.initWords(segments, text.toString(), -1, -1, -1));
+        root.measure(View.MeasureSpec.makeMeasureSpec(480, View.MeasureSpec.EXACTLY),
+                View.MeasureSpec.makeMeasureSpec(800, View.MeasureSpec.EXACTLY));
+        root.layout(0, 0, 480, 800);
+        assertTrue(words.getChildCount() >= 3);
+
+        LinearLayout firstRow = (LinearLayout) words.getChildAt(0);
+        View firstChip = firstRow.getChildAt(0);
+        LinearLayout secondRow = (LinearLayout) words.getChildAt(1);
+        View lastSecondRowChip = secondRow.getChildAt(secondRow.getChildCount() - 1);
+        float startX = firstRow.getLeft() + firstChip.getLeft() + firstChip.getWidth() / 2f;
+        float startY = firstRow.getTop() + firstChip.getTop() + firstChip.getHeight() / 2f;
+        float endX = secondRow.getLeft() + lastSecondRowChip.getLeft()
+                + lastSecondRowChip.getWidth() / 2f;
+        float endY = secondRow.getTop() + lastSecondRowChip.getTop()
+                + lastSecondRowChip.getHeight() / 2f;
+        LinearLayout rowBelowSelection = (LinearLayout) words.getChildAt(2);
+
+        event(MotionEvent.ACTION_DOWN, startX, startY);
+        int paddingBeforeSelection = words.getPaddingBottom();
+        assertTrue(words.isSelectionGestureActive());
+        event(MotionEvent.ACTION_MOVE, endX, endY);
+        assertTrue(words.isSelectionGestureActive());
+        assertEquals(0f, rowBelowSelection.getTranslationY(), 0f);
+        assertEquals(paddingBeforeSelection, words.getPaddingBottom());
+
+        event(MotionEvent.ACTION_UP, endX, endY);
+        assertFalse(words.isSelectionGestureActive());
+        assertEquals(paddingBeforeSelection
+                + context.getResources().getDimensionPixelSize(R.dimen.chip_row_move_down_offset),
+                words.getPaddingBottom());
+        ShadowLooper.shadowMainLooper().idleFor(Duration.ofMillis(500));
+        assertEquals(context.getResources().getDimensionPixelSize(R.dimen.chip_row_move_down_offset),
+                rowBelowSelection.getTranslationY(), 0.1f);
     }
 
     @Test public void horizontalIntentIsNotStolenByTheVerticalScrollView() {

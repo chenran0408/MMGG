@@ -23,6 +23,10 @@
             <action android:name="android.intent.action.SEND" />
             <data android:mimeType="text/plain" />
         </intent>
+        <intent>
+            <action android:name="android.intent.action.SEND" />
+            <data android:mimeType="application/zip" />
+        </intent>
     </queries>
 
     <application
@@ -35,25 +39,11 @@
         android:supportsRtl="true"
         android:theme="@style/Theme.DragShare">
 
-        <meta-data
-            android:name="xposedmodule"
-            android:value="true" />
-        <meta-data
-            android:name="xposeddescription"
-            android:value="@string/xposed_description" />
-        <meta-data
-            android:name="xposedminversion"
-            android:value="82" />
-        <meta-data
-            android:name="xposedscope"
-            android:resource="@array/xposed_scope" />
-
         <activity
             android:name=".MainActivity"
             android:exported="true">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
-                <category android:name="de.robv.android.xposed.category.MODULE_SETTINGS" />
             </intent-filter>
             <intent-filter>
                 <action android:name="android.intent.action.VIEW" />
@@ -118,14 +108,6 @@
         </activity>
 
         <activity
-            android:name=".SearchOverlayActivity"
-            android:excludeFromRecents="true"
-            android:exported="false"
-            android:launchMode="singleTop"
-            android:taskAffinity="com.leaf.hyperdragshare.codex.overlay"
-            android:theme="@style/Theme.DragShare.BigBangOverlay" />
-
-        <activity
             android:name=".ScreenOcrActivity"
             android:excludeFromRecents="true"
             android:exported="false"
@@ -140,6 +122,13 @@
             android:launchMode="singleTop"
             android:taskAffinity=""
             android:theme="@style/Theme.DragShare.BigBangOverlay" />
+
+        <activity
+            android:name=".TouchProbeActivity"
+            android:excludeFromRecents="true"
+            android:exported="false"
+            android:launchMode="singleTop"
+            android:taskAffinity="" />
 
         <activity
             android:name=".ImageOcrActivity"

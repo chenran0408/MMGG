@@ -5,6 +5,7 @@ import android.content.Context
 import android.content.Intent
 import android.content.pm.ApplicationInfo
 import android.content.pm.PackageManager
+import android.content.res.Configuration
 import android.content.res.Resources
 import android.database.ContentObserver
 import android.graphics.Bitmap
@@ -13,24 +14,29 @@ import android.graphics.drawable.Drawable
 import android.os.Handler
 import android.os.Looper
 import androidx.compose.foundation.Image
-import androidx.compose.foundation.layout.BoxWithConstraints
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.ime
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.safeDrawingPadding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -39,14 +45,24 @@ import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.listSaver
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshots.SnapshotStateList
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.graphics.luminance
+import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
@@ -59,6 +75,7 @@ import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import top.yukonga.miuix.kmp.basic.BasicComponent
+import top.yukonga.miuix.kmp.basic.ButtonDefaults
 import top.yukonga.miuix.kmp.basic.Card
 import top.yukonga.miuix.kmp.basic.Checkbox
 import top.yukonga.miuix.kmp.basic.CircularProgressIndicator
@@ -94,9 +111,10 @@ import top.yukonga.miuix.kmp.basic.rememberTooltipState
 import top.yukonga.miuix.kmp.theme.MiuixTheme
 import java.text.Collator
 import java.util.Locale
+import org.json.JSONObject
 import kotlin.math.roundToInt
 
-private data class GestureTargetRow(
+internal data class GestureTargetRow(
     val target: AppTarget,
     val label: String,
     val summary: String,
@@ -112,6 +130,15 @@ private data class GestureTargetPageData(
 private enum class TargetPickerTab { Apps, Shortcuts }
 private enum class AppCategory { All, User, System, Dual }
 
+private val targetSelectionSaver = listSaver<SnapshotStateList<AppTarget>, String>(
+    save = { targets -> targets.map { it.toJson().toString() } },
+    restore = { values ->
+        mutableStateListOf<AppTarget>().apply {
+            addAll(values.mapNotNull { AppTarget.fromJson(JSONObject(it)) })
+        }
+    },
+)
+
 @Composable
 fun GestureTargetsContent(
     context: Context,
@@ -123,7 +150,7 @@ fun GestureTargetsContent(
     val targets = remember(group) { mutableStateListOf<AppTarget>() }
     var pageData by remember(group) { mutableStateOf<GestureTargetPageData?>(null) }
     var store by remember(group) { mutableStateOf<ConfigStore?>(null) }
-    var showPicker by remember(group) { mutableStateOf(false) }
+    var showPicker by rememberSaveable(group) { mutableStateOf(false) }
     var showResetDialog by remember(group) { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
     val validGroup = remember(group) { group in setOf("bottom", "honeycomb") }
@@ -230,7 +257,7 @@ fun GestureTargetsContent(
                     if (targets.isEmpty()) {
                         item(key = "target-empty") {
                             Text(
-                                text = "还没有添加目标。点击右上角“添加”，可选择应用或快捷方式。",
+                                text = "还没有手势目标",
                                 modifier = Modifier.padding(horizontal = 28.dp, vertical = 24.dp),
                                 color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
                             )
@@ -253,7 +280,7 @@ fun GestureTargetsContent(
                                                     onClick = {
                                                         val moved = targets.removeAt(index)
                                                         targets.add(index - 1, moved)
-                                                        saveTargets(store, group, targets, pageData) { pageData = it }
+                                                        saveTargets(appContext, store, group, targets, pageData) { pageData = it }
                                                     },
                                                 )
                                                 TargetIconAction(
@@ -263,7 +290,7 @@ fun GestureTargetsContent(
                                                     onClick = {
                                                         val moved = targets.removeAt(index)
                                                         targets.add(index + 1, moved)
-                                                        saveTargets(store, group, targets, pageData) { pageData = it }
+                                                        saveTargets(appContext, store, group, targets, pageData) { pageData = it }
                                                     },
                                                 )
                                             }
@@ -273,7 +300,7 @@ fun GestureTargetsContent(
                                                 enabled = group != "bottom" || targets.size > ConfigContract.MIN_FAN_MAX_TARGETS,
                                                 onClick = {
                                                     targets.remove(target)
-                                                    saveTargets(store, group, targets, pageData) { pageData = it }
+                                                    saveTargets(appContext, store, group, targets, pageData) { pageData = it }
                                                 },
                                             )
                                         }
@@ -305,7 +332,7 @@ fun GestureTargetsContent(
                         targets.clear()
                         val selected = selectedRows.map { it.target }.take(pageData!!.maximum)
                         targets.addAll(selected)
-                        saveTargets(store, group, targets, pageData) { pageData = it }
+                        saveTargets(appContext, store, group, targets, pageData) { pageData = it }
                         pageData = pageData?.let {
                             it.copy(rows = mergeRows(it.rows + selectedRows, targets))
                         }
@@ -368,12 +395,13 @@ private fun TargetPickerDialog(
     onDismiss: () -> Unit,
     onApply: (List<GestureTargetRow>) -> Unit,
 ) {
-    var tab by remember { mutableStateOf(TargetPickerTab.Apps) }
-    var category by remember { mutableStateOf(AppCategory.User) }
-    var query by remember { mutableStateOf("") }
-    var loading by remember { mutableStateOf(true) }
-    var pickerRows by remember { mutableStateOf<List<GestureTargetRow>>(emptyList()) }
-    val selection = remember(savedTargets) { mutableStateListOf<AppTarget>().also { it.addAll(savedTargets) } }
+    var tab by rememberSaveable { mutableStateOf(TargetPickerTab.Apps) }
+    var category by rememberSaveable { mutableStateOf(AppCategory.User) }
+    var query by rememberSaveable { mutableStateOf("") }
+    var loadState by remember { mutableStateOf(TargetPickerLoadState()) }
+    val selection = rememberSaveable(saver = targetSelectionSaver) {
+        mutableStateListOf<AppTarget>().apply { addAll(savedTargets) }
+    }
     val catalogChanges = remember(context, store) { Channel<Unit>(Channel.CONFLATED) }
 
     DisposableEffect(context, catalogChanges) {
@@ -394,16 +422,23 @@ private fun TargetPickerDialog(
     }
     LaunchedEffect(context, store, catalogChanges) {
         suspend fun reloadCatalog() {
-            loading = true
-            val loadedRows = withContext(Dispatchers.IO) { loadPickerRows(context, store) }
-            pickerRows = loadedRows
-            loading = false
+            loadState = loadState.beginRefresh()
+            try {
+                val loadedRows = withContext(Dispatchers.IO) { loadPickerRows(context, store) }
+                loadState = loadState.loaded(loadedRows)
+            } catch (cancelled: kotlinx.coroutines.CancellationException) {
+                throw cancelled
+            } catch (error: Exception) {
+                DragShareLog.w("Gesture/Targets", "Target catalog refresh failed", error)
+                loadState = loadState.failed()
+            }
         }
         reloadCatalog()
         for (unusedEvent in catalogChanges) reloadCatalog()
     }
+    val pickerRows = loadState.rows
 
-    val filteredRows = remember(pickerRows, tab, category, query) {
+    val filteredRows = remember(pickerRows, tab, category, query, savedTargets) {
         val needle = query.trim().lowercase(Locale.ROOT)
         val entries = pickerRows.filter { row ->
             val matchesType = if (tab == TargetPickerTab.Shortcuts) row.target.isShortcut
@@ -418,117 +453,168 @@ private fun TargetPickerDialog(
                     || row.label.lowercase(Locale.ROOT).contains(needle)
                     || row.summary.lowercase(Locale.ROOT).contains(needle))
         }
-        entries.sortedWith(compareBy<GestureTargetRow>({ !selection.contains(it.target) }, { it.label.lowercase(Locale.ROOT) }))
+        entries.sortedWith(compareBy<GestureTargetRow>({ it.target !in savedTargets }, { it.label.lowercase(Locale.ROOT) }))
     }
 
-    OverlayDialog(
-        show = true,
-        title = "添加目标",
-        summary = "已选 ${selection.size} / $maximum",
+    Dialog(
         onDismissRequest = onDismiss,
-        outsideMargin = androidx.compose.ui.unit.DpSize(16.dp, 24.dp),
-        insideMargin = androidx.compose.ui.unit.DpSize(20.dp, 16.dp),
+        properties = DialogProperties(
+            usePlatformDefaultWidth = false,
+            decorFitsSystemWindows = false,
+        ),
     ) {
-        BoxWithConstraints(Modifier.fillMaxWidth().widthIn(max = 520.dp)) {
-            val listHeight = (maxHeight - 320.dp).coerceIn(0.dp, 420.dp)
-            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                TabRow(
-                    tabs = listOf("应用", "快捷方式"),
-                    selectedTabIndex = if (tab == TargetPickerTab.Apps) 0 else 1,
-                    onTabSelected = {
-                        if (it == 0) tab = TargetPickerTab.Apps else {
-                            tab = TargetPickerTab.Shortcuts
-                            store.requestShortcutCatalog()
-                        }
-                    },
-                )
-                if (tab == TargetPickerTab.Apps) {
-                    val categories = listOf(AppCategory.All, AppCategory.User, AppCategory.System, AppCategory.Dual)
-                    TabRow(
-                        tabs = listOf("全部", "个人", "系统", "双开"),
-                        selectedTabIndex = categories.indexOf(category),
-                        onTabSelected = {
-                            category = categories[it]
-                            if (category == AppCategory.Dual) store.requestActivityCatalog()
-                        },
-                        height = 40.dp,
-                    )
-                } else {
-                    Row(
-                        Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.End,
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        Text(
-                            text = "刷新目录",
-                            color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
-                        )
-                        TargetIconAction(
-                            description = "刷新快捷方式目录",
-                            imageVector = MiuixIcons.Refresh,
-                            onClick = { store.requestShortcutCatalog() },
-                        )
+        SyncSystemBars(dark = MiuixTheme.colorScheme.background.luminance() < .5f)
+        Box(
+            Modifier.fillMaxSize().background(MiuixTheme.colorScheme.background).safeDrawingPadding(),
+            contentAlignment = Alignment.TopCenter,
+        ) {
+            val focus = LocalFocusManager.current
+            val keyboardVisible = WindowInsets.ime.getBottom(LocalDensity.current) > 0
+            val listState = rememberLazyListState()
+            LaunchedEffect(query, tab, category) { listState.scrollToItem(0) }
+            val actions: @Composable () -> Unit = {
+                Row(
+                    Modifier.fillMaxWidth().padding(horizontal = 12.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    TargetIconAction("取消", MiuixIcons.Back, onDismiss)
+                    Column(Modifier.weight(1f).padding(horizontal = 4.dp)) {
+                        Text("选择目标", fontSize = 18.sp, fontWeight = FontWeight.SemiBold,
+                            color = MiuixTheme.colorScheme.onBackground)
+                        Text("已选 ${selection.size} / $maximum", fontSize = 12.sp,
+                            color = MiuixTheme.colorScheme.onSurfaceVariantSummary)
                     }
+                    TextButton(
+                        text = "保存选择",
+                        enabled = selection.isNotEmpty(),
+                        colors = ButtonDefaults.textButtonColorsPrimary(),
+                        insideMargin = PaddingValues(horizontal = 10.dp, vertical = 6.dp),
+                        minHeight = 48.dp,
+                        onClick = {
+                            onApply(selection.map { target ->
+                                pickerRows.firstOrNull { it.target == target } ?: fallbackRow(target)
+                            })
+                        },
+                    )
                 }
+            }
+            val search: @Composable () -> Unit = {
                 TextField(
                     value = query,
                     onValueChange = { query = it },
-                    modifier = Modifier.fillMaxWidth(),
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp),
                     label = if (tab == TargetPickerTab.Apps) "搜索应用" else "搜索快捷方式",
                     useLabelAsPlaceholder = true,
                     singleLine = true,
-                    keyboardOptions = KeyboardOptions.Default,
+                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
+                    keyboardActions = KeyboardActions(onSearch = { focus.clearFocus() }),
                     leadingIcon = {
                         Icon(MiuixIcons.Basic.Search, contentDescription = null,
                             tint = MiuixTheme.colorScheme.onSurfaceVariantSummary,
-                            modifier = Modifier.size(20.dp))
+                            modifier = Modifier.padding(start = 12.dp, end = 8.dp).size(20.dp))
                     },
                     trailingIcon = if (query.isNotEmpty()) {
                         { TargetIconAction("清除搜索", MiuixIcons.Close, onClick = { query = "" }) }
                     } else null,
                 )
-                when {
-                    loading -> Box(
-                        Modifier.fillMaxWidth().height(listHeight),
-                        contentAlignment = Alignment.Center,
-                    ) { CircularProgressIndicator() }
-                    filteredRows.isEmpty() -> Box(
-                        Modifier.fillMaxWidth().height(listHeight).padding(16.dp),
-                        contentAlignment = Alignment.Center,
-                    ) {
-                        Text(
-                            text = if (tab == TargetPickerTab.Shortcuts) {
-                                "目录中没有可用快捷方式。请在桌面刷新目录后，再点“刷新目录”。"
-                            } else "没有匹配的应用",
-                            color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
+            }
+            val filters: @Composable () -> Unit = {
+                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    TabRow(
+                        tabs = listOf("应用", "快捷方式"),
+                        selectedTabIndex = if (tab == TargetPickerTab.Apps) 0 else 1,
+                        onTabSelected = {
+                            if (it == 0) tab = TargetPickerTab.Apps else {
+                                tab = TargetPickerTab.Shortcuts
+                                store.requestShortcutCatalog()
+                            }
+                        },
+                    )
+                    if (tab == TargetPickerTab.Apps) {
+                        val categories = AppCategory.entries
+                        TabRow(
+                            tabs = listOf("全部", "个人", "系统", "双开"),
+                            selectedTabIndex = categories.indexOf(category),
+                            onTabSelected = {
+                                category = categories[it]
+                                if (category == AppCategory.Dual) store.requestActivityCatalog()
+                            },
+                            height = 48.dp,
                         )
+                    } else {
+                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+                            TextButton(text = "刷新快捷方式", onClick = { store.requestShortcutCatalog() })
+                        }
                     }
-                    else -> LazyColumn(
-                        modifier = Modifier.fillMaxWidth().heightIn(max = listHeight),
-                    ) {
-                        items(filteredRows, key = { targetKey(it.target) }) { row ->
-                            val checked = selection.contains(row.target)
-                            val canSelect = checked || selection.size < maximum
+                }
+            }
+            val results: @Composable (Modifier, Boolean) -> Unit = { modifier, inlineFilters ->
+                LazyColumn(
+                    state = listState,
+                    modifier = modifier,
+                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp),
+                    verticalArrangement = Arrangement.spacedBy(4.dp),
+                ) {
+                    if (inlineFilters && (!keyboardVisible || query.isBlank())) {
+                        item("target-picker-filters") { filters() }
+                    }
+                    when {
+                        loadState.refreshing -> item("target-picker-loading") {
+                            Row(Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
+                                CircularProgressIndicator(Modifier.size(20.dp))
+                                Text("正在读取目标", Modifier.padding(start = 8.dp),
+                                    color = MiuixTheme.colorScheme.onSurfaceVariantSummary)
+                            }
+                        }
+                        loadState.error != null -> item("target-picker-error") {
+                            Row(
+                                Modifier.fillMaxWidth().padding(start = 12.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                Text(
+                                    text = if (pickerRows.isEmpty()) "无法读取目标"
+                                        else "刷新失败，显示上次读取的目标",
+                                    modifier = Modifier.weight(1f),
+                                    color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
+                                )
+                                TextButton(text = "重试", onClick = { catalogChanges.trySend(Unit) })
+                            }
+                        }
+                        filteredRows.isEmpty() -> item("target-picker-empty") {
+                            Text(
+                                text = when {
+                                    query.isNotBlank() && tab == TargetPickerTab.Shortcuts -> "没有匹配的快捷方式"
+                                    query.isNotBlank() -> "没有匹配的应用"
+                                    tab == TargetPickerTab.Shortcuts -> "没有可用的快捷方式"
+                                    else -> "此分类没有应用"
+                                },
+                                modifier = Modifier.padding(12.dp),
+                                color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
+                            )
+                        }
+                    }
+                    items(filteredRows, key = { targetKey(it.target) }) { row ->
+                        val checked = selection.contains(row.target)
+                        val canSelect = checked || selection.size < maximum
+                        val toggle = {
+                            if (checked) selection.remove(row.target)
+                            else if (selection.size < maximum) selection.add(row.target)
+                            Unit
+                        }
+                        Card {
                             BasicComponent(
                                 modifier = Modifier.fillMaxWidth(),
                                 enabled = canSelect,
                                 startAction = { TargetIcon(row, Modifier.padding(end = 8.dp)) },
                                 endActions = {
                                     Checkbox(
-                                        state = if (checked) androidx.compose.ui.state.ToggleableState.On
-                                            else androidx.compose.ui.state.ToggleableState.Off,
+                                        state = androidx.compose.ui.state.ToggleableState(checked),
                                         enabled = canSelect,
-                                        onClick = {
-                                            if (checked) selection.remove(row.target)
-                                            else if (selection.size < maximum) selection.add(row.target)
-                                        },
+                                        onClick = toggle,
                                     )
                                 },
-                                insideMargin = PaddingValues(horizontal = 8.dp, vertical = 6.dp),
-                                onClick = {
-                                    if (checked) selection.remove(row.target)
-                                    else if (selection.size < maximum) selection.add(row.target)
-                                },
+                                insideMargin = PaddingValues(horizontal = 12.dp, vertical = 8.dp),
+                                onClick = toggle,
                             ) {
                                 Text(row.label, color = MiuixTheme.colorScheme.onSurface,
                                     maxLines = 1, overflow = TextOverflow.Ellipsis)
@@ -539,14 +625,21 @@ private fun TargetPickerDialog(
                         }
                     }
                 }
-                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
-                    TextButton(text = "取消", onClick = onDismiss)
-                    Spacer(Modifier.width(8.dp))
-                    TextButton(text = "添加", enabled = selection.isNotEmpty(), onClick = {
-                        onApply(selection.map { target ->
-                            pickerRows.firstOrNull { it.target == target } ?: fallbackRow(target)
-                        })
-                    })
+            }
+            if (LocalConfiguration.current.orientation == Configuration.ORIENTATION_LANDSCAPE) {
+                Row(Modifier.widthIn(max = 900.dp).fillMaxSize()) {
+                    Column(Modifier.weight(1f).verticalScroll(rememberScrollState())) {
+                        search()
+                        actions()
+                        Box(Modifier.padding(horizontal = 12.dp, vertical = 8.dp)) { filters() }
+                    }
+                    results(Modifier.weight(1f).fillMaxSize(), false)
+                }
+            } else {
+                Column(Modifier.widthIn(max = 600.dp).fillMaxSize()) {
+                    actions()
+                    search()
+                    results(Modifier.fillMaxWidth().weight(1f), true)
                 }
             }
         }
@@ -574,7 +667,7 @@ private fun TargetIconAction(
         ) {
             Icon(
                 imageVector = imageVector,
-                contentDescription = description,
+                contentDescription = null,
                 tint = if (enabled) MiuixTheme.colorScheme.onSurface
                     else MiuixTheme.colorScheme.onSurfaceVariantSummary,
                 modifier = Modifier.size(22.dp),
@@ -587,6 +680,11 @@ private suspend fun loadPickerRows(context: Context, store: ConfigStore): List<G
     val pm = context.packageManager
     val rows = LinkedHashMap<String, GestureTargetRow>()
     val iconSizePx = (44f * context.resources.displayMetrics.density).roundToInt().coerceAtLeast(1)
+    val moreApps = AppTarget.moreApps()
+    rows[targetKey(moreApps)] = GestureTargetRow(
+        moreApps, "更多应用", "打开可搜索的完整应用目录",
+        drawableToBitmap(context.getDrawable(android.R.drawable.ic_menu_more)!!, iconSizePx),
+    )
     @Suppress("DEPRECATION")
     val launcherActivities = pm.queryIntentActivities(
         Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER), 0,
@@ -681,6 +779,12 @@ private fun loadSavedTargetRows(
     appendShortcuts(context, store, shortcuts, iconSizePx)
     return targets.map { target ->
         shortcuts[targetKey(target)]?.let { return@map it }
+        if (target.isMoreApps) {
+            return@map GestureTargetRow(
+                target, "更多应用", "打开可搜索的完整应用目录",
+                drawableToBitmap(context.getDrawable(android.R.drawable.ic_menu_more)!!, iconSizePx),
+            )
+        }
         val component = target.componentName()
         val packageName = target.packageName()
         val label: String
@@ -748,6 +852,7 @@ private fun maximumFor(store: ConfigStore, group: String): Int {
 }
 
 private fun saveTargets(
+    context: Context,
     store: ConfigStore?,
     group: String,
     targets: List<AppTarget>,
@@ -760,6 +865,7 @@ private fun saveTargets(
         else -> configStore.setTargets(targets)
     }
     onDataChanged(pageData?.copy(rows = mergeRows(pageData.rows, targets)))
+    showGestureConfigSaved(context)
 }
 
 private fun mergeRows(rows: List<GestureTargetRow>, targets: List<AppTarget>): List<GestureTargetRow> {
@@ -769,8 +875,8 @@ private fun mergeRows(rows: List<GestureTargetRow>, targets: List<AppTarget>): L
 
 private fun fallbackRow(target: AppTarget) = GestureTargetRow(
     target,
-    target.shortcutLabel.ifBlank { target.packageName() },
-    targetSummary(target),
+    if (target.isMoreApps) "更多应用" else target.shortcutLabel.ifBlank { target.packageName() },
+    if (target.isMoreApps) "打开可搜索的完整应用目录" else targetSummary(target),
     null,
 )
 

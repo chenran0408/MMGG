@@ -81,6 +81,11 @@ final class ModernOverlayWindow {
                 updateCrossWindowBlurEnabled(Boolean.TRUE.equals(enabled));
             }
         });
+        overlayView.setNativeGlassStateListener(enabled -> {
+            if (!disposed) {
+                updateWindowBackgroundBlur(enabled);
+            }
+        });
         refreshNativeBackdropBlurEnabled();
         registerBlurEnabledListener();
     }
@@ -89,6 +94,7 @@ final class ModernOverlayWindow {
         if (!disposed && !dialog.isShowing()) {
             prepareDecorForEnter();
             dialog.show();
+            updateOverlayBlurAvailability();
         }
     }
 
@@ -101,6 +107,7 @@ final class ModernOverlayWindow {
         overlayView.setContentVisibleForWindowAnimation(true);
         if (!dialog.isShowing()) {
             dialog.show();
+            updateOverlayBlurAvailability();
         }
         View decorView = decorView();
         if (decorView == null) {
@@ -156,6 +163,22 @@ final class ModernOverlayWindow {
         }
     }
 
+    /** Finishes an in-flight enter animation before the preview becomes a drag surface. */
+    void finishEnterAnimationImmediately() {
+        if (disposed) {
+            return;
+        }
+        animationGeneration++;
+        View decorView = decorView();
+        if (decorView != null) {
+            decorView.animate().cancel();
+            decorView.setAlpha(1f);
+            decorView.setScaleX(1f);
+            decorView.setScaleY(1f);
+        }
+        overlayView.setContentVisibleForWindowAnimation(true);
+    }
+
     void dispose() {
         if (disposed) {
             return;
@@ -179,6 +202,7 @@ final class ModernOverlayWindow {
         } catch (RuntimeException error) {
             DragShareLog.w("DragShare/ModernWindow", "Unable to dismiss modern overlay window", error);
         }
+        overlayView.setNativeGlassStateListener(null);
         overlayView.disposeOverlay();
     }
 
@@ -222,7 +246,20 @@ final class ModernOverlayWindow {
         nativeBackdropBlurEnabled = shouldUseNativeBackdropBlur(
                 blurRadiusPx,
                 crossWindowBlurEnabled);
-        overlayView.updateNativeBackdropBlurAvailability(nativeBackdropBlurEnabled);
+        boolean nativeGlassEnabled = overlayView.updateNativeBackdropBlurAvailability(
+                nativeBackdropBlurEnabled,
+                blurRadiusPx);
+        updateWindowBackgroundBlur(nativeGlassEnabled);
+    }
+
+    private void updateWindowBackgroundBlur(boolean nativeGlassEnabled) {
+        if (disposed) {
+            return;
+        }
+        Window window = dialog.getWindow();
+        if (window != null) {
+            window.setBackgroundBlurRadius(nativeGlassEnabled ? 0 : blurRadiusPx);
+        }
     }
 
     private void prepareDecorForEnter() {

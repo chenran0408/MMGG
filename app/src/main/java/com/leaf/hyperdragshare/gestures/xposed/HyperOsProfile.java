@@ -2,7 +2,7 @@ package com.leaf.hyperdragshare.gestures.xposed;
 
 import android.os.Build;
 
-import de.robv.android.xposed.XposedHelpers;
+import com.leaf.hyperdragshare.compat.xposed.XposedHelpers;
 
 /** Compatibility switches recovered from the OS4 build150 APK. */
 final class HyperOsProfile {

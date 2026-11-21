@@ -8,6 +8,7 @@ import android.database.Cursor;
 import android.database.sqlite.SQLiteDatabase;
 import android.database.sqlite.SQLiteOpenHelper;
 import android.database.sqlite.SQLiteException;
+import android.graphics.BitmapFactory;
 
 import java.io.File;
 import java.io.FileNotFoundException;
@@ -29,6 +30,7 @@ public final class StashStore implements AutoCloseable {
     private static final String DATABASE_NAME = "stash.db";
     private static final int DATABASE_VERSION = 2;
     private static final String TABLE = "stash_entries";
+    private static final String DELETIONS = "stash_pending_deletions";
     private static final long MAX_IMAGE_BYTES = 32L * 1024L * 1024L;
     private static final Pattern UUID_PATTERN = Pattern.compile(
             "[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}");
@@ -43,8 +45,11 @@ public final class StashStore implements AutoCloseable {
     }
 
     public Entry addText(String text) throws IOException {
+        return addText(text, UUID.randomUUID().toString());
+    }
+
+    private Entry addText(String text, String id) throws IOException {
         Objects.requireNonNull(text, "text");
-        String id = UUID.randomUUID().toString();
         long createdAt = System.currentTimeMillis();
         ContentValues values = new ContentValues();
         values.put("id", id);
@@ -59,18 +64,36 @@ public final class StashStore implements AutoCloseable {
         return new Entry(id, KIND_TEXT, text, null, null, createdAt, id, 0);
     }
 
-    /** Copies the image bytes without closing the caller-owned input stream. */
-    public Entry addImage(InputStream source, String mime) throws IOException {
-        return addImage(source, mime, null, 0, System.currentTimeMillis());
+    int importText(String text, String importId) throws IOException {
+        try {
+            SQLiteDatabase db = database.getWritableDatabase();
+            db.beginTransaction();
+            try {
+                if (getEntry(importId) != null) return 0;
+                addText(text, importId);
+                db.setTransactionSuccessful();
+                return 1;
+            } finally {
+                db.endTransaction();
+            }
+        } catch (SQLiteException error) {
+            throw databaseFailure("import shared text", error);
+        }
     }
 
-    private Entry addImage(InputStream source, String mime, String batchId, int batchOrder,
+    /** Copies the image bytes without closing the caller-owned input stream. */
+    public Entry addImage(InputStream source, String mime) throws IOException {
+        String id = UUID.randomUUID().toString();
+        return addImage(source, mime, id, id, 0, System.currentTimeMillis());
+    }
+
+    private Entry addImage(InputStream source, String mime, String id, String batchId, int batchOrder,
                            long createdAt) throws IOException {
         Objects.requireNonNull(source, "source");
         String storedMime = normalizeImageMime(mime);
-        String id = UUID.randomUUID().toString();
-        String storedBatchId = batchId == null ? id : batchId;
-        File imageFile = imageFile(id);
+        // A retry can reuse the entry ID while a rolled-back import is removing its copies.
+        String fileName = UUID.randomUUID().toString();
+        File imageFile = imageFile(fileName);
         ensureStashDirectory();
 
         try (FileOutputStream output = new FileOutputStream(imageFile)) {
@@ -90,14 +113,15 @@ public final class StashStore implements AutoCloseable {
             throw error;
         }
 
+        storedMime = imageMimeFromFile(storedMime, imageFile);
         ContentValues values = new ContentValues();
         values.put("id", id);
         values.put("kind", KIND_IMAGE);
         values.putNull("text");
-        values.put("image_file_name", id);
+        values.put("image_file_name", fileName);
         values.put("mime", storedMime);
         values.put("created_at", createdAt);
-        values.put("batch_id", storedBatchId);
+        values.put("batch_id", batchId);
         values.put("batch_order", batchOrder);
         try {
             insert(values);
@@ -105,11 +129,12 @@ public final class StashStore implements AutoCloseable {
             removeGeneratedFile(imageFile, error);
             throw error;
         }
-        return new Entry(id, KIND_IMAGE, null, id, storedMime, createdAt, storedBatchId, batchOrder);
+        return new Entry(id, KIND_IMAGE, null, fileName, storedMime, createdAt, batchId, batchOrder);
     }
 
     public List<Entry> listEntries() throws IOException {
         List<Entry> entries = new ArrayList<>();
+        cleanupPendingDeletions();
         try (Cursor cursor = database.getReadableDatabase().query(
                 TABLE,
                 COLUMNS,
@@ -129,14 +154,20 @@ public final class StashStore implements AutoCloseable {
 
     /** One share batch: a failed image rolls back its rows and removes newly copied files. */
     public int addImages(ContentResolver resolver, List<Uri> uris) throws IOException {
+        return addImages(resolver, uris, UUID.randomUUID().toString());
+    }
+
+    int addImages(ContentResolver resolver, List<Uri> uris, String importId) throws IOException {
         if (uris.isEmpty()) throw new IOException("分享内容没有图片文件");
         List<Entry> added = new ArrayList<>();
-        String batchId = UUID.randomUUID().toString();
         long createdAt = System.currentTimeMillis();
         try {
             SQLiteDatabase db = database.getWritableDatabase();
             db.beginTransaction();
             try {
+                // The first entry's immutable ID identifies the share even after regrouping.
+                if (getEntry(importId) != null) return 0;
+                String batchId = UUID.randomUUID().toString();
                 for (Uri uri : uris) {
                     String mime = resolver.getType(uri);
                     if (mime != null && !mime.toLowerCase(Locale.ROOT).startsWith("image/")) {
@@ -144,7 +175,8 @@ public final class StashStore implements AutoCloseable {
                     }
                     try (InputStream source = resolver.openInputStream(uri)) {
                         if (source == null) throw new IOException("无法读取分享的图片");
-                        added.add(addImage(source, mime, batchId, added.size(), createdAt));
+                        String id = added.isEmpty() ? importId : UUID.randomUUID().toString();
+                        added.add(addImage(source, mime, id, batchId, added.size(), createdAt));
                     }
                 }
                 db.setTransactionSuccessful();
@@ -153,11 +185,11 @@ public final class StashStore implements AutoCloseable {
             }
             return added.size();
         } catch (IOException error) {
-            for (Entry entry : added) removeGeneratedFile(imageFile(entry.id), error);
+            for (Entry entry : added) removeGeneratedFile(imageFile(entry.imageFileName), error);
             throw error;
         } catch (SQLiteException | SecurityException error) {
             IOException failure = new IOException("无法保存本次图片：" + error.getMessage(), error);
-            for (Entry entry : added) removeGeneratedFile(imageFile(entry.id), failure);
+            for (Entry entry : added) removeGeneratedFile(imageFile(entry.imageFileName), failure);
             throw failure;
         }
     }
@@ -249,46 +281,49 @@ public final class StashStore implements AutoCloseable {
         try {
             SQLiteDatabase db = database.getWritableDatabase();
             db.beginTransaction();
+            boolean deleted;
             try {
-                Entry entry;
-                try (Cursor cursor = db.query(
-                        TABLE,
-                        COLUMNS,
-                        "id = ?",
-                        new String[]{id},
-                        null,
-                        null,
-                        null,
-                        "1")) {
-                    entry = cursor.moveToFirst() ? readEntry(cursor) : null;
-                }
-                if (entry == null) {
-                    db.setTransactionSuccessful();
-                    return false;
-                }
-
-                int deleted = db.delete(TABLE, "id = ?", new String[]{id});
-                if (deleted == 0) {
-                    db.setTransactionSuccessful();
-                    return false;
-                }
-
+                Entry entry = getEntry(id);
+                if (entry == null) return false;
                 if (KIND_IMAGE.equals(entry.kind)) {
                     File image = imageFile(entry.imageFileName);
-                    try {
-                        java.nio.file.Files.deleteIfExists(image.toPath());
-                    } catch (IOException error) {
-                        throw new IOException("Stash image file could not be deleted", error);
+                    if (image.isDirectory()) {
+                        throw new IOException("Stash image file could not be deleted",
+                                new IOException("Stash image path is a directory"));
                     }
+                    ContentValues tombstone = new ContentValues();
+                    tombstone.put("file_name", entry.imageFileName);
+                    db.insertOrThrow(DELETIONS, null, tombstone);
                 }
-
-                db.setTransactionSuccessful();
-                return true;
+                deleted = db.delete(TABLE, "id = ?", new String[]{id}) == 1;
+                if (deleted) db.setTransactionSuccessful();
             } finally {
                 db.endTransaction();
             }
+            if (deleted) cleanupPendingDeletions();
+            return deleted;
         } catch (SQLiteException error) {
             throw databaseFailure("delete stash entry", error);
+        }
+    }
+
+    private void cleanupPendingDeletions() {
+        try {
+            SQLiteDatabase db = database.getWritableDatabase();
+            try (Cursor pending = db.query(DELETIONS, new String[]{"file_name"},
+                    null, null, null, null, null)) {
+                while (pending.moveToNext()) {
+                    String file = pending.getString(0);
+                    try {
+                        java.nio.file.Files.deleteIfExists(imageFile(file).toPath());
+                        db.delete(DELETIONS, "file_name = ?", new String[]{file});
+                    } catch (IOException error) {
+                        DragShareLog.w("DragShare/Stash", "Pending image deletion will be retried", error);
+                    }
+                }
+            }
+        } catch (SQLiteException error) {
+            DragShareLog.w("DragShare/Stash", "Cannot process pending image deletions", error);
         }
     }
 
@@ -328,6 +363,28 @@ public final class StashStore implements AutoCloseable {
             throw new IllegalArgumentException("Image MIME type must start with image/");
         }
         return normalized;
+    }
+
+    private static String imageMimeFromFile(String mime, File file) {
+        if (mime != null && !"image/*".equalsIgnoreCase(mime)) return mime;
+        BitmapFactory.Options options = new BitmapFactory.Options();
+        options.inJustDecodeBounds = true;
+        BitmapFactory.decodeFile(file.getPath(), options);
+        return options.outMimeType != null ? options.outMimeType : "image/*";
+    }
+
+    Entry resolveDragImage(Entry entry, File source) throws IOException {
+        String mime = imageMimeFromFile(entry.mime, source);
+        if (Objects.equals(mime, entry.mime)) return entry;
+        ContentValues corrected = new ContentValues();
+        corrected.put("mime", mime);
+        try {
+            database.getWritableDatabase().update(TABLE, corrected, "id = ?", new String[]{entry.id});
+        } catch (SQLiteException error) {
+            throw databaseFailure("update stash image format", error);
+        }
+        return new Entry(entry.id, entry.kind, entry.text, entry.imageFileName, mime,
+                entry.createdAt, entry.batchId, entry.batchOrder);
     }
 
     private static void requireUuid(String id) {
@@ -404,6 +461,12 @@ public final class StashStore implements AutoCloseable {
                     + "created_at INTEGER NOT NULL, "
                     + "batch_id TEXT NOT NULL, "
                     + "batch_order INTEGER NOT NULL DEFAULT 0)");
+        }
+
+        @Override
+        public void onOpen(SQLiteDatabase db) {
+            super.onOpen(db);
+            db.execSQL("CREATE TABLE IF NOT EXISTS " + DELETIONS + " (file_name TEXT PRIMARY KEY NOT NULL)");
         }
 
         @Override

@@ -6,8 +6,8 @@ import android.util.SparseArray;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 
-import de.robv.android.xposed.XC_MethodHook;
-import de.robv.android.xposed.XposedBridge;
+import com.leaf.hyperdragshare.compat.xposed.XC_MethodHook;
+import com.leaf.hyperdragshare.compat.xposed.XposedBridge;
 
 /** Protect only our live hosts' Root children from Android's phantom count trimming. */
 final class RootProcessFrameworkHooks {

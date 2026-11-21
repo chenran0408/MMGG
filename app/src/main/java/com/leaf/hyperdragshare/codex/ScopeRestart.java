@@ -13,19 +13,22 @@ final class ScopeRestart {
     private static final String TAG = "DragShare/ScopeRestart";
     private ScopeRestart() {}
 
-    static void reloadAppScopes(Context context) throws IOException {
+    static boolean reloadAppScopes(Context context, HookFeatureFlags flags)
+            throws IOException {
         long started = SystemClock.elapsedRealtime();
-        boolean readerRequired = ThumbTriggerSettings.read(context).enabled;
-        int oldPid = ModuleActivation.injectedProcessId(context);
-        ModuleActivation.clearPortalReport(context);
-        RootProcessKeepAlive.Result keepAlive = ModuleActivation.ensurePortalRootKeepAlive(context);
-        boolean notificationReady = ModuleActivation.ensureCopyDirectCardReady(context);
-        runRoot("am force-stop --user current com.miui.contentextension && "
-                + "am force-stop --user current com.xiaomi.aicr && "
-                + ModuleActivation.portalStartCommand() + " && "
-                + "killall com.android.systemui && "
-                + "{ sidebar_pid=$(pidof com.miui.securitycenter:ui); "
-                + "if [ -n \"$sidebar_pid\" ]; then kill $sidebar_pid; fi; }", "应用作用域重载");
+        boolean portal = flags.portal();
+        boolean copyDirect = IntegrationSettings.isCopyDirectEnabled(context);
+        boolean readerRequired = portal && ThumbTriggerSettings.read(context).enabled;
+        int oldPid = portal ? ModuleActivation.injectedProcessId(context) : 0;
+        if (portal) ModuleActivation.clearPortalReport(context);
+        RootProcessKeepAlive.Result keepAlive = portal
+                ? ModuleActivation.ensurePortalRootKeepAlive(context) : null;
+        boolean notificationReady = !copyDirect || ModuleActivation.ensureCopyDirectCardReady(context);
+        java.util.List<String> commands = appScopeCommands(portal, copyDirect);
+        if (commands.isEmpty()) return false;
+        runRoot(String.join(" && ", commands), "重载传送门与 AI 引擎");
+        if (!notificationReady) throw new IOException("系统复制直达卡片未就绪，请查看诊断日志");
+        if (!portal) return true;
         DragShareLog.i(TAG, "reload commands elapsed_ms=" + (SystemClock.elapsedRealtime() - started));
         long deadline = SystemClock.uptimeMillis() + 10000L;
         try {
@@ -40,12 +43,9 @@ final class ScopeRestart {
                             throw new IOException("Root 一键清理保护未就绪（传送门服务已恢复）："
                                     + keepAlive.detail);
                         }
-                        if (!notificationReady) {
-                            throw new IOException("传送门已恢复，但系统复制直达卡片未就绪，请查看诊断日志");
-                        }
                         DragShareLog.i(TAG, "new portal foreground service/input/reader confirmed pid=" + pid
                                 + " elapsed_ms=" + (SystemClock.elapsedRealtime() - started));
-                        return;
+                        return true;
                     }
                     String failure = ModuleActivation.rootInputError(context);
                     if (!failure.isEmpty()) throw new IOException("Root 输入未恢复：" + failure);
@@ -61,12 +61,31 @@ final class ScopeRestart {
             throw new IOException("作用域重载等待被中断", error);
         }
         String keepAliveError = keepAlive.ready ? "" : "；Root 一键清理保护未就绪：" + keepAlive.detail;
-        throw new IOException("传送门前台服务、Root 输入或取词连接尚未就绪，请查看首页状态；系统框架更新需软重启生效"
+        throw new IOException("传送门尚未就绪，请查看运行诊断"
                 + keepAliveError);
     }
 
+    static java.util.List<String> appScopeCommands(boolean portal, boolean copyDirect) {
+        java.util.List<String> commands = new java.util.ArrayList<>();
+        if (portal) {
+            commands.add("am force-stop --user current com.miui.contentextension");
+            commands.add(ModuleActivation.portalStartCommand());
+        }
+        if (portal || copyDirect) commands.add("am force-stop --user current com.xiaomi.aicr");
+        return commands;
+    }
+
+    static String systemUiRestartCommand() {
+        return "killall com.android.systemui && { sidebar_pid=$(pidof com.miui.securitycenter:ui); "
+                + "if [ -n \"$sidebar_pid\" ]; then kill $sidebar_pid; fi; }";
+    }
+
+    static void restartSystemUi() throws IOException {
+        runRoot(systemUiRestartCommand(), "重启系统界面");
+    }
+
     static void restartAndroidRuntime() throws IOException {
-        runRoot("setprop ctl.restart zygote", "软重启");
+        runRoot("setprop ctl.restart zygote", "软重启 Android");
     }
 
     static void restartDevice() throws IOException {

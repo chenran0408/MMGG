@@ -17,6 +17,48 @@ import java.util.Arrays;
 @Config(manifest = Config.NONE)
 public final class AccessibilityNodeClassifierTest {
     @Test
+    public void strongBackgroundImageDoesNotOverrideContainedNativeOrWebText() {
+        for (boolean web : new boolean[]{false, true}) {
+            AccessibilityNodeSnapshot background = snapshot(new Rect(0, 342, 1440, 2922))
+                    .packageName("reader").className("android.widget.ImageView")
+                    .insideWebView(web).build();
+            AccessibilityNodeSnapshot message = snapshot(new Rect(223, 609, 1231, 2922))
+                    .packageName("reader").className("android.widget.TextView")
+                    .text("message").insideWebView(web).build();
+
+            AccessibilityCandidateSelector.Selection selected = AccessibilityCandidateSelector.select(
+                    new AccessibilityNodeClassifier(3f, 1440, 3200)
+                            .classify(Arrays.asList(background, message)), 1000, 855, true);
+
+            assertNotNull(selected);
+            assertEquals(AccessibilityCandidate.Kind.TEXT, selected.candidate.kind);
+            assertEquals(message.bounds, selected.candidate.bounds);
+        }
+    }
+
+    @Test
+    public void imagePreferenceStillAppliesToSameBoundsAndNestedMedia() {
+        for (boolean web : new boolean[]{false, true}) {
+            for (Rect imageBounds : Arrays.asList(new Rect(20, 20, 220, 220),
+                    new Rect(40, 40, 200, 200))) {
+                AccessibilityNodeSnapshot image = snapshot(imageBounds)
+                        .packageName("reader").className("android.widget.ImageView")
+                        .insideWebView(web).build();
+                AccessibilityNodeSnapshot label = snapshot(new Rect(20, 20, 220, 220))
+                        .packageName("reader").className("android.widget.TextView")
+                        .text("media label").insideWebView(web).build();
+                AccessibilityCandidateSelector.Selection selected = AccessibilityCandidateSelector.select(
+                        new AccessibilityNodeClassifier(1f, 1080, 2400)
+                                .classify(Arrays.asList(image, label)), 100, 100, true);
+
+                assertNotNull(selected);
+                assertEquals(AccessibilityCandidate.Kind.IMAGE_REGION, selected.candidate.kind);
+                assertEquals(imageBounds, selected.candidate.bounds);
+            }
+        }
+    }
+
+    @Test
     public void textAndImageFollowDocumentedPriority() {
         AccessibilityNodeSnapshot text = snapshot(new Rect(0, 0, 200, 100))
                 .className("android.widget.TextView")
@@ -49,6 +91,22 @@ public final class AccessibilityNodeClassifierTest {
 
         assertNotNull(selection);
         assertEquals(AccessibilityCandidate.Kind.IMAGE_REGION, selection.candidate.kind);
+    }
+
+    @Test
+    public void buttonAndMessageTextRemainClassifiableOutsidePressControlAvoidance() {
+        AccessibilityNodeSnapshot button = snapshot(new Rect(0, 0, 120, 60))
+                .className("android.widget.Button").text("转发").clickable(true).build();
+        AccessibilityNodeSnapshot message = snapshot(new Rect(0, 80, 400, 160))
+                .className("android.widget.TextView").text("这条评论可以转发，也可以回复。")
+                .longClickable(true).build();
+        AccessibilityNodeClassifier.Buckets buckets = new AccessibilityNodeClassifier(1f, 1080, 2400)
+                .classify(Arrays.asList(button, message));
+
+        assertEquals(2, buckets.nativeText.size());
+        assertEquals("转发", AccessibilityCandidateSelector.select(buckets, 30, 30).candidate.text);
+        assertEquals("这条评论可以转发，也可以回复。",
+                AccessibilityCandidateSelector.select(buckets, 30, 100).candidate.text);
     }
 
     @Test

@@ -4,7 +4,11 @@
 
 [下载正式版 APK](https://github.com/chenran0408/MMGG/releases/latest) · 仅 **arm64-v8a**，使用 **R8 压缩**。
 
-第一代正式版为 **MMGG 1.7.218**。项目名称来源、设计目标与功能概览见 [MMGG.md](MMGG.md)，版本与安装包以 [GitHub Releases](https://github.com/chenran0408/MMGG/releases/latest) 为准。
+**从 1.7.218 升级**：旧版的「检查更新」可能找不到新地址。请在上方正式版页面下载新版 APK，直接覆盖安装，保留设置和中转站内容。请勿先卸载。
+
+当前正式版为 **MMGG 2.0.0**。使用 1.7.218 或 Beta73 的用户可以直接覆盖安装。项目名称来源与功能概览见 [MMGG.md](MMGG.md)。[下载 MMGG 2.0.0](https://github.com/chenran0408/MMGG/releases/tag/v2.0.0)。
+
+后续版本先经过 Beta 验收，再发布正式版。Beta 与正式版使用相同包名；实际签名一致且版本满足升级条件时可保留配置覆盖安装，不能直接降级；发布门槛见[版本线与发布门槛](docs/RELEASE_CHANNELS.md)。
 
 ## 用户使用
 
@@ -16,14 +20,14 @@
 
 启动或重载时会用 Root 将本模块和传送门加入小米的后台锁定名单，减少一键清理中断；系统“强行停止”仍然有效。
 
-- **分词**：单指静止按住文字，两排图标可直接选词、拆词、合并、复制、搜索、查词或加入中转站；按住选中的内容可拖出。识别到链接、邮箱或电话时，可用直达图标取用。使用系统 ICU 分词，支持多语言混排及撤销。根据按住时长、位移判断，不检测真实触摸面积。
-- **中转站**：临时收集图文，点灰色侧条展开；拖动移动，松手自动贴边。按住内容直接拖给其他应用，多选文字可一起拖出。微信接收后可能直接发送，请先在文件传输助手试用。
+- **拖拽与分词**：单指按住文字或图片，看到预览后直接拖动，未拖就松手会取消。双指按到设定时长即打开分词，图片先识字。选中的词可复制、搜索、查词、拖出或加入中转站。
+- **中转站**：临时收集图文，从已有中转站入口或支持的原生侧栏打开；收起后移除窗口。按住内容直接拖给其他应用，多选文字可一起拖出。微信接收后可能直接发送，请先在文件传输助手试用。
 - **识字与拖拽**：按住图片后拖向屏幕四边，从菜单选择识字、扫码或其他目标。识字使用系统 AICR V2，二维码和条形码使用系统 AICR 条码插件，不附带分词词典、OCR 模型或扫码引擎。微信优先接收传送门文字/图片结果，取不到文字时再局部识字；系统服务不可用会说明原因。
 - **复制直达**：在设置中开启后，以系统通知提示识别到的链接、邮箱或电话；点击取用，“分词”操作进入原页浮窗。提醒约6秒自动消失，网页可指定浏览器，不会自动打开或发送内容。通知与悬浮提醒需要开启；启动或重载时由 Root 配置本模块所需权限。在本模块自己的搜索或词典窗口中复制，不再重复弹出复制直达，保留网页原有选词行为。
 - **系统连接误判**：Root 用户可选择跳过 MiTrustService 的本地风险检查，用于解除跨设备连接时出现的系统篡改警告；具体影响与适用边界见 [MMGG 项目介绍](MMGG.md#root-环境中的系统连接误判处理)。
-- **手势与侧栏**：底角扇形、二段蜂巢和小窗动作，左右底角可分别关闭；原生 Dock 增加固定功能入口，快捷应用仍保留。边缘侧滑交给 HyperOS 原生侧栏，不再由本模块抢占。游戏避让和应用黑名单可在设置中管理。
+- **手势与侧栏**：底角扇形、二段蜂巢和小窗动作，左右底角可分别关闭；原生 Dock 增加固定功能入口，快捷应用仍保留。游戏避让和应用黑名单可在设置中管理。
 
-推荐作用域：传送门、澎湃 AI 引擎、系统框架、系统界面、系统桌面、安全服务。安全服务 Hook 仅在 `com.miui.securitycenter:ui` 工作；不要加入 `com.miui.contentcatcher`。
+推荐作用域：传送门、澎湃 AI 引擎、微信、酷安、系统框架、系统界面、系统桌面、安全服务。微信和酷安作用域用于图片提取探针；安全服务 Hook 仅在 `com.miui.securitycenter:ui` 工作；不要加入 `com.miui.contentcatcher`。
 
 设置分为**传送门与大爆炸、手势增强、小窗增强、复制直达**。小窗尺寸在“小窗增强”，蜂巢和应用目标在“手势增强”；主题、权限、重载、日志和关于放在“通用设置”。升级保留原配置，不再使用旧 OCR 引擎选择。
 
@@ -63,13 +67,16 @@ AicrBarcodeClient.Request scan = AicrBarcodeClient.scan(context, bitmap, (codes,
 
 ```powershell
 .\gradlew.bat testDebugUnitTest lintDebug assembleRelease
+.\gradlew.bat assembleBeta
 ```
 
-Release 启用 R8；自行构建需配置自己的签名。构建 APK 位于 `app/build/outputs/apk/release/`；设备验收与发布状态以[当前状态记录](docs/CURRENT_STATUS.md)及 GitHub Releases 为准。
+Beta 与 Release 均启用 R8；自行构建应配置自己的签名。Beta APK 位于
+`app/build/outputs/apk/beta/`，正式 APK 位于 `app/build/outputs/apk/release/`。
+设备验收与发布状态以[当前状态记录](docs/CURRENT_STATUS.md)及 GitHub Releases 为准。
 
 ## 许可与致谢
 
-保留 HyperDragShare 原作者及贡献者的著作权与项目历史；合并手势来自用户的 [FanFreeform](https://github.com/chenran0408/FanFreeform)，界面使用 [Miuix](https://github.com/compose-miuix-ui/miuix)。本分支沿用 [GPL-3.0-only](LICENSE)。完整分类、许可证和参考范围见[致谢与参考来源](docs/ACKNOWLEDGEMENTS.md)。本项目不分发参考 APK，也不复制反编译实现。
+保留 HyperDragShare 原作者及贡献者的著作权与项目历史；合并手势来自用户的 [FanFreeform](https://github.com/chenran0408/FanFreeform)，界面使用 [Miuix](https://github.com/compose-miuix-ui/miuix)。本分支沿用 [GPL-3.0-only](LICENSE)。使用说明见[用户指南](docs/USER_GUIDE.md)，来源和许可边界见[致谢与参考来源](docs/ACKNOWLEDGEMENTS.md)。第三方组件和参考项目的许可证、归属说明以对应源码文件为准；本项目不分发参考 APK，也不复制反编译实现。
 
 ## English
 

@@ -1,0 +1,31 @@
+{
+  "recordedAt": "2026-11-05T05:10+08:00",
+  "commit": "74abeec",
+  "docsCommitNote": "recorded before the docs commit that added this file; update commit on next verification run",
+  "version": {
+    "versionName": "1.7.219-beta.39",
+    "versionCode": 281
+  },
+  "buildTasks": ["testDebugUnitTest", "lintDebug", "assembleDebug"],
+  "unitTests": {
+    "total": 894,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0
+  },
+  "lint": {
+    "errors": 0,
+    "warnings": 190,
+    "hints": 2
+  },
+  "debugApk": {
+    "path": "app/build/outputs/apk/debug/app-debug.apk",
+    "sha256": "18FC8D2D21EC527C64AC3876C5283543B7DC68DA068D4E81EFE0BAF43D909754",
+    "bytes": 75212719
+  },
+  "deviceChecks": "PENDING",
+  "notes": [
+    "Local JVM/Robolectric verification only; not a cloud CI result.",
+    "Update this file as part of every verification run that should be citable."
+  ]
+}
