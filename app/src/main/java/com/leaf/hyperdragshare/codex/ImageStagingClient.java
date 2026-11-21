@@ -9,6 +9,7 @@ import android.os.ParcelFileDescriptor;
 import java.io.IOException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
 import java.util.concurrent.atomic.AtomicReference;
 
 final class ImageStagingClient {
@@ -53,26 +54,27 @@ final class ImageStagingClient {
     }
 
     static void stage(Context context, Bitmap bitmap, Callback callback) {
-        EXECUTOR.execute(() -> {
+        submit(context, bitmap, null, callback);
+    }
+
+    /** A prepared URI completes immediately; queued work belongs to the drag session. */
+    static Future<?> stage(Context context, CapturedContent content, Callback callback) {
+        if (content.mediaUri != null) {
+            callback.onStaged(content.mediaUri);
+            return null;
+        }
+        return submit(context, content.bitmap, content.encodedImage, callback);
+    }
+
+    private static Future<?> submit(Context context, Bitmap bitmap, byte[] original, Callback callback) {
+        return EXECUTOR.submit(() -> {
             try {
-                callback.onStaged(stagePng(context, bitmap));
+                Uri uri = original != null ? stageEncoded(context, original) : stagePng(context, bitmap);
+                callback.onStaged(uri);
             } catch (Throwable error) {
                 callback.onFailure(error);
             }
         });
-    }
-
-    static void stage(Context context, CapturedContent content, Callback callback) {
-        if (content.mediaUri != null) {
-            callback.onStaged(content.mediaUri);
-        } else if (content.encodedImage != null) {
-            EXECUTOR.execute(() -> {
-                try { callback.onStaged(stageEncoded(context, content.encodedImage)); }
-                catch (Throwable error) { callback.onFailure(error); }
-            });
-        } else {
-            stage(context, content.bitmap, callback);
-        }
     }
 
     /** Original compressed bytes only cross Binder through a descriptor, never a byte[] extra. */

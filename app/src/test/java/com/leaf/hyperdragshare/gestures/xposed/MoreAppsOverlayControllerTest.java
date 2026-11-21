@@ -21,6 +21,9 @@ import android.widget.Button;
 import android.widget.EditText;
 import android.widget.TextView;
 
+import com.leaf.hyperdragshare.gestures.config.ConfigContract;
+import com.leaf.hyperdragshare.gestures.config.ConfigProvider;
+
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.robolectric.RobolectricTestRunner;
@@ -36,6 +39,9 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Collections;
 import java.util.Set;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Consumer;
 import java.util.concurrent.atomic.AtomicReference;
@@ -331,10 +337,193 @@ public class MoreAppsOverlayControllerTest {
 
     @Test
     @Config(shadows = {PackageRefreshApps.class, PackageRefreshActivity.class})
+    public void reopensAfterDirectoryFailureAndCachesSuccessfulEmptyResult() throws Exception {
+        var controller = new MoreAppsOverlayController(RuntimeEnvironment.getApplication(),
+                new Handler(Looper.getMainLooper()), () -> { });
+        var loader = (java.util.concurrent.ExecutorService) field(controller, "loader");
+        PackageRefreshApps.queries.clear();
+        try {
+            PackageRefreshApps.failApps = true;
+            controller.show(target -> { }, true);
+            finishCatalogLoad(loader);
+            assertEquals("应用列表读取失败，重新打开可重试", ((TextView) field(controller, "empty")).getText());
+            assertEquals(1, PackageRefreshApps.queries.size());
+
+            controller.removeNow();
+            PackageRefreshApps.failApps = false;
+            controller.show(target -> { }, true);
+            finishCatalogLoad(loader);
+            assertEquals(List.of("Keep", "Old", "Removed"), appLabels((List<?>) field(controller, "cachedEntries")));
+            assertEquals(2, PackageRefreshApps.queries.size());
+
+            PackageRefreshApps.failApps = true;
+            var receiver = (BroadcastReceiver) field(controller, "packageChanges");
+            receiver.onReceive(RuntimeEnvironment.getApplication(), new Intent(Intent.ACTION_PACKAGE_REPLACED,
+                    Uri.fromParts("package", "example.updated", null)));
+            ShadowLooper.shadowMainLooper().idle();
+            finishCatalogLoad(loader);
+            assertEquals(List.of("Keep", "Old", "Removed"), appLabels((List<?>) field(controller, "cachedEntries")));
+
+            controller.removeNow();
+            PackageRefreshApps.failApps = false;
+            PackageRefreshApps.emptyApps = true;
+            controller.show(target -> { }, true);
+            finishCatalogLoad(loader);
+            assertEquals("没有匹配结果", ((TextView) field(controller, "empty")).getText());
+            int queriesAfterRecovery = PackageRefreshApps.queries.size();
+            controller.removeNow();
+            controller.show(target -> { }, true);
+            finishCatalogLoad(loader);
+            assertEquals(queriesAfterRecovery, PackageRefreshApps.queries.size());
+        } finally {
+            PackageRefreshApps.failApps = false;
+            PackageRefreshApps.emptyApps = false;
+            controller.removeNow();
+            loader.shutdownNow();
+        }
+    }
+
+    @Test
+    @Config(shadows = {PackageRefreshApps.class, PackageRefreshActivity.class})
+    public void oneFailedShortcutSourceDoesNotHideTheOtherOrDiscardItsNewRows() throws Exception {
+        var context = RuntimeEnvironment.getApplication();
+        var controller = new MoreAppsOverlayController(context, new Handler(Looper.getMainLooper()), () -> { });
+        var loader = (java.util.concurrent.ExecutorService) field(controller, "loader");
+        var provider = new ConfigProvider();
+        var info = new android.content.pm.ProviderInfo();
+        info.authority = ConfigContract.AUTHORITY;
+        provider.attachInfo(context, info);
+        org.robolectric.shadows.ShadowContentResolver.registerProviderInternal(info.authority, provider);
+        var prefs = context.getSharedPreferences(ConfigContract.PREFS, android.content.Context.MODE_PRIVATE);
+        try {
+            prefs.edit().putString(ConfigContract.KEY_SHORTCUT_CATALOG,
+                    "[{\"kind\":\"launcher\",\"package\":\"example.desktop\",\"id\":\"desk\","
+                            + "\"label\":\"Desktop\",\"intent\":\"intent:#Intent;package=example.desktop;end\"}]").commit();
+            PackageRefreshApps.failShortcuts = true;
+            controller.show(target -> { }, true);
+            finishCatalogLoad(loader);
+            ((Button[]) field(controller, "tabButtons"))[1].performClick();
+            var adapter = (android.widget.BaseAdapter) field(controller, "adapter");
+            assertEquals(1, adapter.getCount());
+            assertEquals("Desktop", ((RuntimeTarget) field(adapter.getItem(0), "target")).label);
+
+            controller.removeNow();
+            PackageRefreshApps.failShortcuts = false;
+            PackageRefreshApps.systemShortcut = true;
+            prefs.edit().putString(ConfigContract.KEY_SHORTCUT_CATALOG, "unreadable").commit();
+            controller.show(target -> { }, true);
+            finishCatalogLoad(loader);
+            ((Button[]) field(controller, "tabButtons"))[1].performClick();
+            adapter = (android.widget.BaseAdapter) field(controller, "adapter");
+            assertEquals(2, adapter.getCount());
+            assertEquals(Set.of("Desktop", "System"), Set.of(
+                    ((RuntimeTarget) field(adapter.getItem(0), "target")).label,
+                    ((RuntimeTarget) field(adapter.getItem(1), "target")).label));
+        } finally {
+            PackageRefreshApps.failShortcuts = false;
+            PackageRefreshApps.systemShortcut = false;
+            controller.removeNow();
+            loader.shutdownNow();
+        }
+    }
+
+    @Test @Config(shadows = {PackageRefreshApps.class, PackageRefreshActivity.class})
+    public void componentEnabledBroadcastRemovesAndRestoresOnlyThatAppsEntry() throws Exception {
+        var context = RuntimeEnvironment.getApplication();
+        var controller = new MoreAppsOverlayController(context, new Handler(Looper.getMainLooper()), () -> { });
+        var loader = (ExecutorService) field(controller, "loader");
+        try {
+            controller.show(target -> { }, true);
+            finishCatalogLoad(loader);
+            var before = (List<?>) field(controller, "cachedEntries");
+            Object kept = null;
+            for (Object entry : before) {
+                if (((RuntimeTarget) field(entry, "target")).packageName.equals("example.keep")) kept = entry;
+            }
+            assertNotNull(kept);
+            Intent changed = new Intent(Intent.ACTION_PACKAGE_CHANGED, Uri.parse("package:example.updated"))
+                    .putExtra(Intent.EXTRA_CHANGED_COMPONENT_NAME_LIST, new String[]{"example.updated.Main"});
+            for (boolean enabled : new boolean[]{false, true}) {
+                PackageRefreshApps.componentEnabled = enabled;
+                PackageRefreshApps.queries.clear();
+                context.sendBroadcast(changed);
+                ShadowLooper.shadowMainLooper().idle();
+                finishCatalogLoad(loader);
+                var entries = (List<?>) field(controller, "cachedEntries");
+                assertEquals(List.of("example.updated"), PackageRefreshApps.queries);
+                assertEquals(enabled, appLabels(entries).contains("Updated"));
+                assertTrue(entries.contains(kept));
+            }
+        } finally {
+            PackageRefreshApps.componentEnabled = true;
+            controller.removeNow();
+            loader.shutdownNow();
+        }
+    }
+
+    private static void finishCatalogLoad(java.util.concurrent.ExecutorService loader) throws Exception {
+        loader.submit(() -> { }).get(5, java.util.concurrent.TimeUnit.SECONDS);
+        ShadowLooper.shadowMainLooper().idle();
+    }
+
+    @Test
+    @Config(shadows = {PackageRefreshApps.class, PackageRefreshActivity.class})
+    public void visibleAppIconAndLaunchDoNotWaitForShortcutService() throws Exception {
+        var controller = new MoreAppsOverlayController(RuntimeEnvironment.getApplication(),
+                new Handler(Looper.getMainLooper()), () -> { });
+        var loader = (ExecutorService) field(controller, "loader");
+        var iconLoader = (ExecutorService) field(controller, "iconLoader");
+        var entered = new CountDownLatch(1);
+        var release = new CountDownLatch(1);
+        PackageRefreshApps.systemShortcut = true;
+        PackageRefreshApps.beforeShortcutsRead = () -> {
+            entered.countDown();
+            try {
+                release.await();
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                throw new AssertionError(e);
+            }
+        };
+        try {
+            var launched = new AtomicReference<RuntimeTarget>();
+            controller.show(launched::set, true);
+            assertTrue(entered.await(5, TimeUnit.SECONDS));
+            ShadowLooper.shadowMainLooper().idle();
+            var grid = (ViewGroup) field(controller, "grid");
+            var adapter = (android.widget.BaseAdapter) field(controller, "adapter");
+            assertEquals(3, adapter.getCount());
+            var row = (ViewGroup) adapter.getView(0, null, grid);
+            ShadowLooper.shadowMainLooper().idle();
+            finishCatalogLoad(iconLoader);
+            adapter.getView(0, row, grid);
+            assertNotNull(((android.widget.ImageView) row.getChildAt(0)).getDrawable());
+            row.performClick();
+            assertEquals("example.keep", launched.get().packageName);
+
+            release.countDown();
+            finishCatalogLoad(loader);
+            controller.show(launched::set, true);
+            ((Button[]) field(controller, "tabButtons"))[1].performClick();
+            adapter = (android.widget.BaseAdapter) field(controller, "adapter");
+            assertEquals("System", ((RuntimeTarget) field(adapter.getItem(0), "target")).label);
+        } finally {
+            release.countDown();
+            PackageRefreshApps.systemShortcut = false;
+            PackageRefreshApps.beforeShortcutsRead = () -> { };
+            controller.removeNow();
+            iconLoader.shutdownNow();
+            loader.shutdownNow();
+        }
+    }
+
+    @Test
+    @Config(shadows = {PackageRefreshApps.class, PackageRefreshActivity.class})
     public void prewarmReadsOnlyNamesAndPanelReusesOnDemandIcons() throws Exception {
         var controller = new MoreAppsOverlayController(RuntimeEnvironment.getApplication(),
                 new Handler(Looper.getMainLooper()), () -> { });
         var loader = (java.util.concurrent.ExecutorService) field(controller, "loader");
+        var iconLoader = (ExecutorService) field(controller, "iconLoader");
         PackageRefreshApps.queries.clear();
         PackageRefreshApps.largeCatalog = true;
         PackageRefreshActivity.iconsRead.clear();
@@ -355,7 +544,7 @@ public class MoreAppsOverlayControllerTest {
             adapter.getView(0, null, grid);
             for (int i = 0; i < 3; i++) {
                 ShadowLooper.shadowMainLooper().idle();
-                loader.submit(() -> {}).get(5, java.util.concurrent.TimeUnit.SECONDS);
+                iconLoader.submit(() -> {}).get(5, TimeUnit.SECONDS);
             }
             ShadowLooper.shadowMainLooper().idle();
             assertTrue(PackageRefreshActivity.iconsRead.contains(pkg));
@@ -371,11 +560,12 @@ public class MoreAppsOverlayControllerTest {
             adapter = (android.widget.BaseAdapter) field(controller, "adapter");
             adapter.getView(0, null, (ViewGroup) field(controller, "grid"));
             ShadowLooper.shadowMainLooper().idle();
-            loader.submit(() -> {}).get(5, java.util.concurrent.TimeUnit.SECONDS);
+            iconLoader.submit(() -> {}).get(5, TimeUnit.SECONDS);
             assertEquals(1, Collections.frequency(PackageRefreshActivity.iconsRead, pkg));
         } finally {
             PackageRefreshApps.largeCatalog = false;
             controller.removeNow();
+            iconLoader.shutdownNow();
             loader.shutdownNow();
         }
     }
@@ -384,9 +574,17 @@ public class MoreAppsOverlayControllerTest {
     public static class PackageRefreshApps {
         static final List<String> queries = new ArrayList<>();
         static boolean largeCatalog;
+        static boolean componentEnabled = true;
+        static boolean failApps;
+        static boolean emptyApps;
+        static boolean failShortcuts;
+        static boolean systemShortcut;
+        static Runnable beforeShortcutsRead = () -> { };
 
         @Implementation protected List<LauncherActivityInfo> getActivityList(String pkg, UserHandle user) {
             queries.add(pkg);
+            if (failApps) throw new IllegalStateException("Directory temporarily unavailable");
+            if (emptyApps) return List.of();
             if (pkg == null) {
                 if (largeCatalog) {
                     List<LauncherActivityInfo> apps = new ArrayList<>();
@@ -397,13 +595,17 @@ public class MoreAppsOverlayControllerTest {
                         activity("example.removed", "Removed"));
             }
             return switch (pkg) {
-                case "example.updated" -> List.of(activity(pkg, "Updated"));
+                case "example.updated" -> componentEnabled ? List.of(activity(pkg, "Updated")) : List.of();
                 case "example.added" -> List.of(activity(pkg, "Added"));
                 default -> List.of();
             };
         }
 
         @Implementation protected List<ShortcutInfo> getShortcuts(LauncherApps.ShortcutQuery query, UserHandle user) {
+            beforeShortcutsRead.run();
+            if (failShortcuts) throw new SecurityException("Shortcut host unavailable");
+            if (systemShortcut) return List.of(new ShortcutInfo.Builder(RuntimeEnvironment.getApplication(), "sys")
+                    .setShortLabel("System").setIntent(new Intent(Intent.ACTION_VIEW)).build());
             return List.of();
         }
 

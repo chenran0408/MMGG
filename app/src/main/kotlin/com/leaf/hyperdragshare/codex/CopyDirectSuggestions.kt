@@ -4,6 +4,7 @@ import android.content.ActivityNotFoundException
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
+import android.util.Patterns
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -37,6 +38,9 @@ import top.yukonga.miuix.kmp.theme.MiuixTheme
 import java.util.concurrent.atomic.AtomicBoolean
 
 private const val TAG = "DragShare/CopyDirectSuggestions"
+private val numericDate = Regex("""\d{4}([.\- ])\d{1,2}\1\d{1,2}""")
+private val separatePhoneNumbers = Regex("""\+?\d{7,}\s+\+?\d{7,}""")
+private val separateWebAddress = Regex("""[,;，；、](?:https?://|www\.)""", RegexOption.IGNORE_CASE)
 
 private data class CopyDirectUiState(
     val loading: Boolean = true,
@@ -59,20 +63,20 @@ internal fun CopyDirectSuggestions(
     DisposableEffect(context, text, requestActive) {
         requestActive.set(true)
         val value = text.trim()
-        val normalizedUrl = CopyDirectText.findHttpUrl(value)?.takeIf { validHttpUrl(it) != null }
-        val normalizedEmail = CopyDirectText.findEmail(value)
-        val directValue = normalizedUrl ?: normalizedEmail ?: value
-        val direct = when {
-            validHttpUrl(directValue) != null ->
-                AicrNerClient.Entity(directValue, AicrNerClient.Entity.TYPE_URL, 0, directValue.length)
-            validEmail(directValue) != null ->
-                AicrNerClient.Entity(directValue, AicrNerClient.Entity.TYPE_MAIL, 0, directValue.length)
-            else -> null
+        val direct = directTextDestination(value, wholeTextOnly = true)?.let { destination ->
+            val uri = requireNotNull(destination.intent.data)
+            val type = when (destination.kind) {
+                DirectTextKind.Url -> AicrNerClient.Entity.TYPE_URL
+                DirectTextKind.Email -> AicrNerClient.Entity.TYPE_MAIL
+                DirectTextKind.Phone -> AicrNerClient.Entity.TYPE_TEL
+            }
+            val target = if (destination.kind == DirectTextKind.Url) uri.toString() else uri.schemeSpecificPart
+            AicrNerClient.Entity(target, type, 0, value.length)
         }
         val request = if (direct != null) {
             uiState = CopyDirectUiState(loading = false, entities = listOf(direct))
             null
-        } else AicrNerClient.extract(context, directValue) { entities, error ->
+        } else AicrNerClient.extract(context, value) { entities, error ->
             if (requestActive.get()) {
                 uiState = when {
                     error != null -> CopyDirectUiState(
@@ -193,7 +197,7 @@ internal fun directEntityDestination(entity: AicrNerClient.Entity): DirectEntity
             DirectEntityDestination(
                 kind = DirectTextKind.Email,
                 intent = Intent(Intent.ACTION_SENDTO, Uri.parse("mailto:$email")),
-                label = "发邮件",
+                label = "写邮件",
                 icon = MiuixIcons.Email,
             )
         }
@@ -202,7 +206,7 @@ internal fun directEntityDestination(entity: AicrNerClient.Entity): DirectEntity
             DirectEntityDestination(
                 kind = DirectTextKind.Url,
                 intent = Intent(Intent.ACTION_VIEW, uri),
-                label = "查看链接",
+                label = "打开链接",
                 icon = MiuixIcons.Link,
             )
         }
@@ -210,35 +214,43 @@ internal fun directEntityDestination(entity: AicrNerClient.Entity): DirectEntity
     }
 }
 
-internal fun directTextDestination(value: String): DirectEntityDestination? {
+internal fun directTextDestination(value: String, wholeTextOnly: Boolean = false): DirectEntityDestination? {
     val text = value.trim()
     if (text.isEmpty()) return null
-    CopyDirectText.findHttpUrl(text)?.let { url ->
+    if (wholeTextOnly && ('\n' in text || '\r' in text)) return null
+    val urlValue = if (wholeTextOnly) wholeWebAddress(text) else CopyDirectText.findHttpUrl(text)
+    urlValue?.let { url ->
         validHttpUrl(url)?.let {
             return DirectEntityDestination(
                 kind = DirectTextKind.Url,
                 intent = Intent(Intent.ACTION_VIEW, it),
-                label = "查看链接",
+                label = "打开链接",
                 icon = MiuixIcons.Link,
             )
         }
     }
-    CopyDirectText.findEmail(text)?.let { email ->
+    val emailValue = if (!wholeTextOnly) CopyDirectText.findEmail(text)
+        else if (text.startsWith("mailto:", ignoreCase = true)) text.substringAfter(':') else text
+    emailValue?.let { email ->
         validEmail(email)?.let {
             return DirectEntityDestination(
                 kind = DirectTextKind.Email,
                 intent = Intent(Intent.ACTION_SENDTO, Uri.parse("mailto:$it")),
-                label = "发邮件",
+                label = "写邮件",
                 icon = MiuixIcons.Email,
             )
         }
     }
-    val phoneValue = if (text.startsWith("tel:", ignoreCase = true)) {
+    val explicitPhone = text.startsWith("tel:", ignoreCase = true)
+    val phoneValue = if (explicitPhone) {
         text.substringAfter(':')
     } else {
         text
     }
     normalizedPhone(phoneValue)?.let { phone ->
+        if (wholeTextOnly && !explicitPhone && (numericDate.matches(text) || separatePhoneNumbers.matches(text))) {
+            return null
+        }
         return DirectEntityDestination(
             kind = DirectTextKind.Phone,
             intent = Intent(Intent.ACTION_DIAL, Uri.fromParts("tel", phone, null)),
@@ -247,6 +259,14 @@ internal fun directTextDestination(value: String): DirectEntityDestination? {
         )
     }
     return null
+}
+
+private fun wholeWebAddress(text: String): String? {
+    if (text.any(Char::isWhitespace) || !Patterns.WEB_URL.matcher(text).matches() ||
+        separateWebAddress.containsMatchIn(text)) return null
+    if (text.startsWith("http://", true) || text.startsWith("https://", true)) return text
+    if ("://" in text || '@' in text.substringBefore('/').substringBefore('?').substringBefore('#')) return null
+    return "https://$text"
 }
 
 private fun normalizedPhone(value: String): String? {

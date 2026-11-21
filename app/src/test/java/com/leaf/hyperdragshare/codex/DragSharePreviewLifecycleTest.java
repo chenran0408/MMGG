@@ -1,9 +1,14 @@
 package com.leaf.hyperdragshare.codex;
 
-import static org.junit.Assert.assertNull;
+import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertNotNull;
+import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertTrue;
 
+import android.graphics.Bitmap;
+import android.net.Uri;
+import android.view.MotionEvent;
 import android.view.View;
 import android.view.ViewTreeObserver;
 
@@ -17,11 +22,122 @@ import org.robolectric.shadows.ShadowLooper;
 
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
 
 @RunWith(RobolectricTestRunner.class)
 @Config(manifest = Config.NONE)
 @LooperMode(LooperMode.Mode.PAUSED)
 public final class DragSharePreviewLifecycleTest {
+    @Test public void heldPreviewOpensFirstTouchedEdgeWithoutAnotherMoveOrDraw() throws Exception {
+        for (int edge : new int[]{DragShareSettings.SIMPLE_MENU_POSITION_LEFT,
+                DragShareSettings.SIMPLE_MENU_POSITION_RIGHT, DragShareSettings.SIMPLE_MENU_POSITION_TOP}) {
+            DragShareController controller = controller();
+            try {
+                takeOverAtEdge(controller, DragShareSettings.SIMPLE_MENU_POSITION_DRAG_EDGE, edge);
+                finishBackgroundQuery(controller);
+                ShadowLooper.shadowMainLooper().idle();
+                assertEquals(edge, get(controller, "simpleMenuPosition"));
+                assertTrue("First edge must open without re-entry: " + edge, (boolean) get(controller, "menuShown"));
+                assertTrue(((View) get(controller, "menuView")).isAttachedToWindow());
+            } finally {
+                controller.destroy();
+                ShadowLooper.shadowMainLooper().idle();
+            }
+        }
+    }
+
+    @Test public void heldPreviewAtLeftDoesNotOpenFixedRightMenu() throws Exception {
+        DragShareController controller = controller();
+        try {
+            takeOverAtEdge(controller, DragShareSettings.SIMPLE_MENU_POSITION_RIGHT,
+                    DragShareSettings.SIMPLE_MENU_POSITION_LEFT);
+            finishBackgroundQuery(controller);
+            ShadowLooper.shadowMainLooper().idle();
+            assertTrue((boolean) get(controller, "targetsLoaded"));
+            assertEquals(DragShareSettings.SIMPLE_MENU_POSITION_RIGHT, get(controller, "simpleMenuPosition"));
+            assertFalse((boolean) get(controller, "menuShown"));
+        } finally {
+            controller.destroy();
+            ShadowLooper.shadowMainLooper().idle();
+        }
+    }
+
+    @Test public void twoRootMovesInSameMillisecondStillOpenMenuAtNewPosition() throws Exception {
+        DragShareController controller = controller();
+        try {
+            takeOverAtEdge(controller, DragShareSettings.SIMPLE_MENU_POSITION_LEFT,
+                    DragShareSettings.SIMPLE_MENU_POSITION_RIGHT);
+            finishBackgroundQuery(controller);
+            ShadowLooper.shadowMainLooper().idle();
+            assertTrue((boolean) get(controller, "targetsLoaded"));
+            assertFalse((boolean) get(controller, "menuShown"));
+
+            float middleX = (int) get(controller, "screenWidth") / 2f;
+            float middleY = (int) get(controller, "screenHeight") / 2f;
+            long eventTime = 500L;
+            controller.acceptPointerEvent(MotionEvent.ACTION_MOVE, middleX, middleY, eventTime, "root");
+            ShadowLooper.shadowMainLooper().idle();
+            assertFalse((boolean) get(controller, "menuShown"));
+            controller.acceptPointerEvent(MotionEvent.ACTION_MOVE, 1f, middleY, eventTime, "root");
+            ShadowLooper.shadowMainLooper().idle();
+
+            assertTrue("The last sample crossed the edge", (boolean) get(controller, "menuShown"));
+            assertTrue(((View) get(controller, "menuView")).isAttachedToWindow());
+        } finally {
+            controller.destroy();
+            ShadowLooper.shadowMainLooper().idle();
+        }
+    }
+
+    @Test public void cancelBeforeFirstEdgeQueryReplyDoesNotResurrectMenu() throws Exception {
+        DragShareController controller = controller();
+        try {
+            takeOverAtEdge(controller, DragShareSettings.SIMPLE_MENU_POSITION_DRAG_EDGE,
+                    DragShareSettings.SIMPLE_MENU_POSITION_LEFT);
+            finishBackgroundQuery(controller);
+            controller.cancelActiveSession();
+            ShadowLooper.shadowMainLooper().idle();
+            assertFalse(controller.isActive());
+            assertFalse((boolean) get(controller, "menuShown"));
+            assertNull(get(controller, "menuView"));
+        } finally {
+            controller.destroy();
+            ShadowLooper.shadowMainLooper().idle();
+        }
+    }
+
+    private static void takeOverAtEdge(DragShareController controller, int configuredEdge, int touchedEdge)
+            throws Exception {
+        long down = 100L;
+        controller.acceptPointerEvent(MotionEvent.ACTION_DOWN, 150f, 200f, down, "root");
+        ShadowLooper.shadowMainLooper().idle();
+        DragShareSettings settings = DragShareSettings.defaults().toBuilder()
+                .setSimpleMenuPosition(configuredEdge).build();
+        Bitmap bitmap = Bitmap.createBitmap(4, 4, Bitmap.Config.ARGB_8888);
+        CapturedContent image = CapturedContent.stagedMediaImage(bitmap, "test.app", null,
+                Uri.parse("content://com.leaf.hyperdragshare.codex.share/image/first-edge"), "image/png");
+        controller.showPendingImagePreview(image, 150f, 200f, settings, down, true);
+        ShadowLooper.shadowMainLooper().idle();
+        View heldPreview = (View) get(controller, "previewView");
+        assertTrue(heldPreview.isAttachedToWindow());
+        int width = (int) get(controller, "screenWidth");
+        int height = (int) get(controller, "screenHeight");
+        float x = touchedEdge == DragShareSettings.SIMPLE_MENU_POSITION_LEFT ? 1f
+                : touchedEdge == DragShareSettings.SIMPLE_MENU_POSITION_RIGHT ? width - 1f : width / 2f;
+        float y = touchedEdge == DragShareSettings.SIMPLE_MENU_POSITION_TOP ? 1f : height / 2f;
+        controller.takeoverHoldingImagePreview(x, y, down);
+        assertTrue(controller.isActive());
+        assertSame(heldPreview, get(controller, "previewView"));
+    }
+
+    private static void finishBackgroundQuery(DragShareController controller) throws Exception {
+        // Main is paused. The held window has no new draw, and no second pointer event is sent.
+        Future<?> query = (Future<?>) task(controller);
+        assertNotNull("An attached preview must start querying targets without another draw", query);
+        query.get(5, TimeUnit.SECONDS);
+    }
+
     @Test public void missingTerminalInputCancelsStaleSessionAndReleasesItsOwner() throws Exception {
         DragShareController controller = controller();
         Object session = session("stale", 100L);

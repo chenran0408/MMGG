@@ -103,7 +103,6 @@ fun DragShareSettingsApp(context: Context, openGestures: Boolean = false) {
     }
     MiuixTheme(controller = themeController) {
         var runtimeAction by rememberSaveable { mutableStateOf<RuntimeAction?>(null) }
-        var pendingRestartModules by rememberSaveable { mutableStateOf(emptyList<String>()) }
         var searchQuery by rememberSaveable { mutableStateOf("") }
         val searchListState = rememberLazyListState()
         val searchScope = rememberCoroutineScope()
@@ -121,17 +120,14 @@ fun DragShareSettingsApp(context: Context, openGestures: Boolean = false) {
             com.leaf.hyperdragshare.gestures.config.ConfigContract.KEY_ENABLED,
             com.leaf.hyperdragshare.gestures.config.ConfigContract.DEFAULT_ENABLED,
         )
-        val (featureEntries, featureFlags) = hookFeatureSettingEntries(
-            context, legacyGestureEnabled, pendingRestartModules,
-            onSwitchSaved = { module ->
-                pendingRestartModules = if (module.name in pendingRestartModules)
-                    pendingRestartModules - module.name else pendingRestartModules + module.name
-            },
+        val (featureEntries, featureFlags, portalRestartPending) = hookFeatureSettingEntries(
+            context, legacyGestureEnabled,
             onApply = { runtimeAction = RuntimeAction.Android },
         )
-        val activationMonitor = rememberActivationMonitor(context, featureFlags?.portal)
+        val activationMonitor = rememberActivationMonitor(context, featureFlags?.portal, portalRestartPending)
         val directory = (featureEntries + portalSettingEntries(context, settings,
             overlayGranted = activationMonitor.overlayGranted,
+            portalEnabled = featureFlags?.portal, portalRestartPending = portalRestartPending,
             onRuntimeAction = { runtimeAction = it },
             onOpenVisibility = { backStack.add(SettingsRoute.Visibility) },
             onOpenOrder = { backStack.add(SettingsRoute.Order) },
@@ -244,7 +240,7 @@ fun DragShareSettingsApp(context: Context, openGestures: Boolean = false) {
                     )
                 }
                 entry(SettingsRoute.GestureTutorial) {
-                    GestureTutorialPage(onBack = {
+                    GestureTutorialPage(settings = currentSettings.value, onBack = {
                         if (backStack.size > 1) backStack.removeAt(backStack.lastIndex)
                     })
                 }
@@ -254,6 +250,7 @@ fun DragShareSettingsApp(context: Context, openGestures: Boolean = false) {
                         monitor = currentActivationMonitor.value,
                         onBack = { if (backStack.size > 1) backStack.removeAt(backStack.lastIndex) },
                         onReloadApps = { runtimeAction = RuntimeAction.ReloadApps },
+                        onApplyPortalChange = { runtimeAction = RuntimeAction.Android },
                         onOpenProblemDiagnostics = { backStack.add(SettingsRoute.ProblemDiagnostics) },
                     )
                 }
@@ -294,6 +291,8 @@ private fun portalSettingEntries(
     context: Context,
     settings: DragShareSettings,
     overlayGranted: Boolean,
+    portalEnabled: Boolean?,
+    portalRestartPending: Boolean,
     onRuntimeAction: (RuntimeAction) -> Unit,
     onOpenVisibility: () -> Unit,
     onOpenOrder: () -> Unit,
@@ -329,6 +328,8 @@ private fun portalSettingEntries(
     var backTapMode by remember(context) {
         mutableIntStateOf(IntegrationSettings.getBackTapMode(context))
     }
+    var savingBackTap by remember { mutableStateOf(false) }
+    val currentBackTapFeedback by rememberUpdatedState(backTapSavedMessage(portalEnabled, portalRestartPending))
     var trustServiceRiskDisabled by remember(context) {
         mutableStateOf(IntegrationSettings.isTrustServiceRiskDetectionDisabled(context))
     }
@@ -546,6 +547,8 @@ private fun portalSettingEntries(
             items = listOf("关闭", "双击", "三击", "双击和三击"),
             selectedIndex = backTapMode,
             onSelectedIndexChange = { selected ->
+                if (savingBackTap) return@OverlayDropdownPreference
+                savingBackTap = true
                 val previousMode = backTapMode
                 val requestedMode = BackTapMode.normalize(selected)
                 IntegrationSettings.setBackTapMode(context, requestedMode)
@@ -565,13 +568,14 @@ private fun portalSettingEntries(
                     } else {
                         Toast.makeText(
                             context,
-                            "下次背部轻敲生效",
+                            if (requestedMode == BackTapMode.OFF) "已关闭背部轻敲识字" else currentBackTapFeedback,
                             Toast.LENGTH_SHORT,
                         ).show()
                     }
+                    savingBackTap = false
                 }
             },
-            enabled = enabled,
+            enabled = enabled && !savingBackTap,
         )
     }
 

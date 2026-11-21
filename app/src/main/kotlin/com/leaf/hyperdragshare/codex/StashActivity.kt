@@ -12,10 +12,12 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import java.io.IOException
+import java.util.UUID
 
 /** Transparent share receiver; all content is used through the floating tray. */
 class StashActivity : ComponentActivity() {
     private var pendingImport: Intent? = null
+    private lateinit var importId: String
     private var shareImported = false
     private var receiveOnly = false
     private var message: String? = null
@@ -26,6 +28,7 @@ class StashActivity : ComponentActivity() {
         window.setBackgroundDrawableResource(android.R.color.transparent)
         window.setDimAmount(0f)
         receiveOnly = isSupportedShare(intent)
+        importId = savedInstanceState?.getString("share_id") ?: UUID.randomUUID().toString()
         shareImported = savedInstanceState?.getBoolean("share_imported") == true
         pendingImport = intent.takeIf { !shareImported && receiveOnly }
     }
@@ -33,6 +36,7 @@ class StashActivity : ComponentActivity() {
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         setIntent(intent)
+        importId = UUID.randomUUID().toString()
         shareImported = false
         receiveOnly = isSupportedShare(intent)
         pendingImport = intent.takeIf(::isSupportedShare)
@@ -41,7 +45,9 @@ class StashActivity : ComponentActivity() {
     override fun onResume() {
         super.onResume()
         lifecycleScope.launch {
+            val resumedImport = importId
             importPendingShare()
+            if (resumedImport != importId) return@launch
             if (!receiveOnly) StashOverlayPanel.show(this@StashActivity)
             else if (!shareImported) Toast.makeText(this@StashActivity,
                 message ?: "保存失败，请重新分享后重试", Toast.LENGTH_LONG).show()
@@ -50,36 +56,38 @@ class StashActivity : ComponentActivity() {
     }
 
     override fun onSaveInstanceState(outState: Bundle) {
+        outState.putString("share_id", importId)
         outState.putBoolean("share_imported", shareImported)
         super.onSaveInstanceState(outState)
     }
 
     private suspend fun importPendingShare() = importLock.withLock {
         val incoming = pendingImport ?: return@withLock
+        val incomingId = importId
         message = null
         try {
-            val savedCount = withContext(Dispatchers.IO) {
-                StashStore(this@StashActivity).use { store ->
+            val app = applicationContext
+            withContext(Dispatchers.IO) {
+                val savedCount = StashStore(app).use { store ->
                     when {
                         incoming.type == "text/plain" -> {
                             val text = incoming.getCharSequenceExtra(Intent.EXTRA_TEXT)?.toString()
                                 ?: throw IOException("分享内容没有文字")
                             if (text.isBlank()) throw IOException("分享的文字为空")
-                            store.addText(text)
-                            1
+                            store.importText(text, incomingId)
                         }
                         incoming.type?.startsWith("image/") == true -> {
-                            store.addImages(contentResolver, incoming.imageUris())
+                            store.addImages(contentResolver, incoming.imageUris(), incomingId)
                         }
                         else -> throw IOException("不支持这种分享内容")
                     }
                 }
+                if (savedCount > 0) StashOverlayPanel.contentAdded(app, savedCount)
             }
             if (pendingImport === incoming) {
                 pendingImport = null
                 shareImported = true
             }
-            StashOverlayPanel.contentAdded(this, savedCount)
         } catch (error: IOException) {
             DragShareLog.w("DragShare/Stash", "unable to import shared content", error)
             message = "保存失败：${error.message ?: "无法读取分享内容"}"

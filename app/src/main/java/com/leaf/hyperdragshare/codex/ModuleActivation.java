@@ -5,9 +5,13 @@ import android.content.SharedPreferences;
 import android.os.Binder;
 import android.os.Bundle;
 import android.os.IBinder;
+import android.os.Parcel;
 import android.os.RemoteException;
 
 import java.io.IOException;
+import java.io.InputStream;
+import java.lang.ref.WeakReference;
+import java.nio.charset.StandardCharsets;
 import java.util.concurrent.TimeUnit;
 
 /** Current-build injection handshake and root availability checks for the settings UI. */
@@ -23,6 +27,7 @@ final class ModuleActivation {
     static final String EXTRA_ROOT_INPUT_READY = "root_input_ready";
     static final String EXTRA_ROOT_INPUT_ERROR = "root_input_error";
     static final String EXTRA_LIFETIME_TOKEN = "portal_lifetime_token";
+    static final String EXTRA_MODULE_UID = "module_uid";
     static final String EXTRA_ROOT_CONNECTION_ATTEMPT = "root_connection_attempt";
     static final String EXTRA_ROOT_CONNECTION_PROC = "root_connection_proc";
     static final String EXTRA_ROOT_CONNECTION_OUTCOME = "root_connection_outcome";
@@ -45,7 +50,9 @@ final class ModuleActivation {
                     + "com.miui.contentextension.setting.whitelist.BlacklistSettingActivity";
     private static boolean portalRootProbeInFlight;
     // Each injected Portal process owns its token; the module never persists this capability.
-    private static final Binder LIFETIME_TOKEN = new Binder();
+    private static final String ROOT_CHECK_INTERFACE = BuildConfig.APPLICATION_ID + ".PortalRootCheck";
+    private static final String ROOT_PROBE_STARTED = "portal_root_probe_started";
+    private static PortalRootToken lifetimeToken;
     private static IBinder livePortal;
     private static int livePortalPid;
     private static IBinder.DeathRecipient portalDeath;
@@ -61,6 +68,7 @@ final class ModuleActivation {
     enum ReportedStatus {
         READY,
         UNAVAILABLE,
+        CHECKING,
         UNKNOWN,
     }
 
@@ -117,6 +125,10 @@ final class ModuleActivation {
 
     /** Runs in the injected portal process so the root manager evaluates the portal UID. */
     static void probePortalRootAccessAsync(Context portalContext) {
+        probePortalRootAccessAsync(portalContext, false);
+    }
+
+    private static void probePortalRootAccessAsync(Context portalContext, boolean requested) {
         if (portalContext == null) {
             return;
         }
@@ -130,9 +142,12 @@ final class ModuleActivation {
             portalRootProbeInFlight = true;
         }
         final String attemptId = RootConnectionDiagnostics.newAttempt();
+        if (requested) {
+            reportRootConnectionEvent(reportContext, attemptId, ROOT_PROBE_STARTED, -1L);
+        }
         new Thread(() -> {
             try {
-                reportRootConnectionEvent(reportContext, attemptId, "portal_root_probe_started", -1L);
+                if (!requested) reportRootConnectionEvent(reportContext, attemptId, ROOT_PROBE_STARTED, -1L);
                 reportPortalRootAccess(reportContext, attemptId, checkRootAccess());
             } finally {
                 synchronized (ModuleActivation.class) {
@@ -167,17 +182,86 @@ final class ModuleActivation {
         if (portalContext == null) {
             return false;
         }
-        extras.putBinder(EXTRA_LIFETIME_TOKEN, LIFETIME_TOKEN);
+        PortalRootToken token = portalLifetimeToken(portalContext);
+        extras.putBinder(EXTRA_LIFETIME_TOKEN, token);
         try {
-            portalContext.getContentResolver().call(
+            Bundle response = portalContext.getContentResolver().call(
                     ImageStagingClient.BASE_URI,
                     METHOD_REPORT_INJECTED,
                     null,
                     extras);
+            token.acceptReportResponse(response);
             return true;
         } catch (RuntimeException | LinkageError error) {
             DragShareLog.w("DragShare/Activation", "cannot report portal injection", error);
             return false;
+        }
+    }
+
+    private static synchronized PortalRootToken portalLifetimeToken(Context context) {
+        if (lifetimeToken == null) {
+            lifetimeToken = new PortalRootToken(context);
+        } else if (lifetimeToken.host.get() == null) {
+            lifetimeToken.rememberHost(context);
+        }
+        return lifetimeToken;
+    }
+
+    static final class PortalRootToken extends Binder {
+        private volatile WeakReference<Context> host;
+        private volatile int moduleUid = -1;
+
+        PortalRootToken(Context host) {
+            super(ROOT_CHECK_INTERFACE);
+            rememberHost(host);
+        }
+
+        private void rememberHost(Context context) {
+            Context app = context.getApplicationContext();
+            host = new WeakReference<>(app != null ? app : context);
+        }
+
+        void acceptReportResponse(Bundle response) {
+            if (response != null) moduleUid = response.getInt(EXTRA_MODULE_UID, -1);
+        }
+
+        @Override
+        protected boolean onTransact(int code, Parcel data, Parcel reply, int flags) throws RemoteException {
+            if (code != FIRST_CALL_TRANSACTION) return super.onTransact(code, data, reply, flags);
+            data.enforceInterface(ROOT_CHECK_INTERFACE);
+            if (Binder.getCallingUid() != moduleUid) throw new SecurityException("MMGG UID required");
+            long identity = Binder.clearCallingIdentity();
+            try {
+                probePortalRootAccessAsync(host.get(), true);
+            } finally {
+                Binder.restoreCallingIdentity(identity);
+            }
+            if (reply != null) reply.writeNoException();
+            return true;
+        }
+    }
+
+    /** Called on the settings IO dispatcher. The host acknowledges scheduling, never waits for su here. */
+    static boolean requestPortalRootRecheck(Context moduleContext) {
+        final IBinder target;
+        synchronized (ModuleActivation.class) {
+            if (!isCurrentBuildInjected(moduleContext)) return false;
+            target = livePortal;
+        }
+        Parcel data = Parcel.obtain();
+        Parcel reply = Parcel.obtain();
+        try {
+            if (!ROOT_CHECK_INTERFACE.equals(target.getInterfaceDescriptor())) return false;
+            data.writeInterfaceToken(ROOT_CHECK_INTERFACE);
+            if (!target.transact(IBinder.FIRST_CALL_TRANSACTION, data, reply, 0)) return false;
+            reply.readException();
+            return true;
+        } catch (RemoteException | SecurityException error) {
+            DragShareLog.w("DragShare/Activation", "Cannot request Portal root check", error);
+            return false;
+        } finally {
+            reply.recycle();
+            data.recycle();
         }
     }
 
@@ -195,6 +279,10 @@ final class ModuleActivation {
             clearPortalReport(moduleContext);
             return;
         }
+        boolean rootCheckStarted = ROOT_PROBE_STARTED.equals(extras.getString(EXTRA_ROOT_CONNECTION_OUTCOME));
+        if (livePortal != null && (livePortal != token || livePortalPid != pid)
+                && (rootCheckStarted || extras.containsKey(EXTRA_PORTAL_ROOT_OUTCOME))
+                && !extras.containsKey(EXTRA_PORTAL_SERVICE_READY)) return;
         if (livePortal != token || livePortalPid != pid) {
             clearPortalReport(moduleContext);
             Context app = moduleContext.getApplicationContext();
@@ -217,7 +305,16 @@ final class ModuleActivation {
         if (extras.containsKey(EXTRA_PORTAL_SERVICE_READY)) {
             editor.putBoolean(EXTRA_PORTAL_SERVICE_READY, extras.getBoolean(EXTRA_PORTAL_SERVICE_READY));
         }
+        if (rootCheckStarted) {
+            editor.putLong(KEY_PORTAL_ROOT_VERSION, reportedVersion)
+                    .putString(EXTRA_PORTAL_ROOT_OUTCOME, ReportedStatus.CHECKING.name())
+                    .remove(KEY_PORTAL_ROOT_GRANTED);
+        }
         if (extras.containsKey(EXTRA_PORTAL_ROOT_OUTCOME)) {
+            String attempt = extras.getString(EXTRA_ROOT_CONNECTION_ATTEMPT);
+            if (RootConnectionDiagnostics.validAttempt(attempt)) {
+                editor.putString(EXTRA_ROOT_CONNECTION_ATTEMPT, attempt);
+            }
             editor.putLong(KEY_PORTAL_ROOT_VERSION, reportedVersion)
                     .putString(EXTRA_PORTAL_ROOT_OUTCOME,
                             extras.getString(EXTRA_PORTAL_ROOT_OUTCOME, RootAccessOutcome.UNKNOWN.name()));
@@ -301,6 +398,7 @@ final class ModuleActivation {
             return ReportedStatus.UNKNOWN;
         }
         String outcome = preferences.getString(EXTRA_PORTAL_ROOT_OUTCOME, null);
+        if (ReportedStatus.CHECKING.name().equals(outcome)) return ReportedStatus.CHECKING;
         if (RootAccessOutcome.UNKNOWN.name().equals(outcome)) return ReportedStatus.UNKNOWN;
         if (RootAccessOutcome.GRANTED.name().equals(outcome)) return ReportedStatus.READY;
         if (RootAccessOutcome.DENIED.name().equals(outcome)) return ReportedStatus.UNAVAILABLE;
@@ -316,8 +414,7 @@ final class ModuleActivation {
 
     static RootAccessOutcome checkRootAccess() {
         try {
-            return checkRootAccess(new ProcessBuilder("su", "-c", "id -u")
-                    .redirectErrorStream(true).start());
+            return checkRootAccess(new ProcessBuilder("su", "-c", "id -u").start());
         } catch (IOException error) {
             DragShareLog.w("DragShare/Activation", "Root availability check could not start", null);
             return RootAccessOutcome.UNKNOWN;
@@ -332,11 +429,19 @@ final class ModuleActivation {
                 DragShareLog.w("DragShare/Activation", "Root availability check timed out", null);
                 return RootAccessOutcome.UNKNOWN;
             }
-            if (process.exitValue() == 0) return RootAccessOutcome.GRANTED;
+            if (process.exitValue() == 0) {
+                try (InputStream output = process.getInputStream()) {
+                    String uid = new String(output.readAllBytes(), StandardCharsets.US_ASCII).trim();
+                    return "0".equals(uid) ? RootAccessOutcome.GRANTED : RootAccessOutcome.UNKNOWN;
+                }
+            }
             // A failed shell command also covers startup/namespace/SELinux failures;
             // it is not an explicit authorization response from the Root manager.
             DragShareLog.w("DragShare/Activation", "Root availability check failed exit="
                     + process.exitValue() + "; authorization unknown", null);
+            return RootAccessOutcome.UNKNOWN;
+        } catch (IOException error) {
+            DragShareLog.w("DragShare/Activation", "Cannot read Root check result", error);
             return RootAccessOutcome.UNKNOWN;
         } catch (InterruptedException error) {
             Thread.currentThread().interrupt();
@@ -455,6 +560,7 @@ final class ModuleActivation {
                 .remove(KEY_ROOT_INPUT_VERSION).remove(EXTRA_ROOT_INPUT_READY).remove(EXTRA_ROOT_INPUT_ERROR)
                 .remove(KEY_PRESS_READER_VERSION).remove(EXTRA_PRESS_READER_READY).remove(EXTRA_PRESS_READER_ERROR)
                 .remove(KEY_PORTAL_ROOT_GRANTED).remove(EXTRA_PORTAL_ROOT_OUTCOME)
+                .remove(EXTRA_ROOT_CONNECTION_ATTEMPT)
                 .remove(EXTRA_PORTAL_SERVICE_READY)
                 .remove(KEY_PROCESS_ID).apply();
     }

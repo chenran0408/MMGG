@@ -9,6 +9,8 @@ import static org.junit.Assert.assertTrue;
 import android.content.ContentProvider;
 import android.content.ContentValues;
 import android.content.Context;
+import android.content.ContextWrapper;
+import android.content.pm.PackageManager;
 import android.content.pm.ProviderInfo;
 import android.database.Cursor;
 import android.graphics.Bitmap;
@@ -33,6 +35,7 @@ import org.robolectric.shadows.ShadowLooper;
 import org.robolectric.shadows.ShadowSystemClock;
 
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
@@ -57,8 +60,78 @@ public final class TwoFingerPressTest {
         checkEmptyRootThenPortal(true, true, false);
     }
 
+    @Test public void captureChecksCandidateAgainstOneOffMainLauncherAndKeyboardSnapshot() throws Exception {
+        Context app = RuntimeEnvironment.getApplication();
+        AtomicBoolean tracking = new AtomicBoolean();
+        AtomicBoolean queriedOnMain = new AtomicBoolean();
+        AtomicInteger queries = new AtomicInteger();
+        Context context = new ContextWrapper(app) {
+            @Override public PackageManager getPackageManager() {
+                if (tracking.get()) {
+                    queries.incrementAndGet();
+                    if (Looper.myLooper() == Looper.getMainLooper()) queriedOnMain.set(true);
+                }
+                return super.getPackageManager();
+            }
+        };
+        BigBangProvider provider = new BigBangProvider(app);
+        ShadowContentResolver.registerProviderInternal(ImageStagingClient.AUTHORITY, provider);
+        DragShareController controller = new DragShareController(context, OverlayWindowPolicy.portal());
+        PressCaptureSource source = new PressCaptureSource(context, null, controller,
+                DragShareSettings.defaults().toBuilder().setPauseAutomaticInGames(false).build());
+        String imeKey = Settings.Secure.DEFAULT_INPUT_METHOD;
+        String previousIme = Settings.Secure.getString(app.getContentResolver(), imeKey);
+        try {
+            ExecutorService worker = (ExecutorService) field(source, "worker").get(source);
+            worker.submit(() -> {}).get(5, TimeUnit.SECONDS);
+            ShadowLooper.shadowMainLooper().idle();
+            provider.candidateToCheck = "test.ime";
+            field(source, "nodeSession").set(source, new SharedRootNodeCapture.Connection(
+                    app, new Binder(), Binder.getCallingUid(), provider.lease));
+            for (String ime : java.util.List.of("test.ime", "other.ime")) {
+                Settings.Secure.putString(app.getContentResolver(), imeKey, ime + "/.Keyboard");
+                long down = SystemClock.uptimeMillis();
+                controller.acceptPointerEvent(MotionEvent.ACTION_DOWN, 20f, 30f, down, "root");
+                source.onPointerEvent(MotionEvent.ACTION_DOWN, 20f, 30f, down);
+                ShadowLooper.shadowMainLooper().idle();
+                tracking.set(true);
+                ShadowSystemClock.advanceBy(java.time.Duration.ofMillis(120));
+                ShadowLooper.shadowMainLooper().idle();
+                worker.submit(() -> {}).get(5, TimeUnit.SECONDS);
+                tracking.set(false);
+                assertEquals(Boolean.valueOf(!provider.candidateToCheck.equals(ime)), provider.candidateAccepted);
+                assertTrue(java.util.Arrays.asList(provider.excludedPackages).contains(ime));
+                long up = SystemClock.uptimeMillis();
+                controller.acceptPointerEvent(MotionEvent.ACTION_UP, 20f, 30f, up, "root");
+                source.onPointerEvent(MotionEvent.ACTION_UP, 20f, 30f, up);
+                ShadowLooper.shadowMainLooper().idle();
+            }
+            assertEquals(2, queries.get());
+            assertFalse(queriedOnMain.get());
+        } finally {
+            tracking.set(false);
+            Settings.Secure.putString(app.getContentResolver(), imeKey, previousIme);
+            source.stop();
+            controller.destroy();
+            ShadowLooper.shadowMainLooper().idle();
+        }
+    }
+
+    @Test public void miuiFallbackShowsSingleFingerTextAndReleasesAfterRootRecovers() throws Exception {
+        checkEmptyRootThenPortal(false, true, false);
+    }
+
+    @Test public void cancellingFallbackWhileHoldingDropsTheVisiblePreview() throws Exception {
+        checkEmptyRootThenPortal(false, true, false, MotionEvent.ACTION_CANCEL);
+    }
+
     private void checkEmptyRootThenPortal(boolean twoFinger, boolean binderCallback,
                                         boolean rootInputReady) throws Exception {
+        checkEmptyRootThenPortal(twoFinger, binderCallback, rootInputReady, MotionEvent.ACTION_UP);
+    }
+
+    private void checkEmptyRootThenPortal(boolean twoFinger, boolean binderCallback,
+                                         boolean rootInputReady, int terminalAction) throws Exception {
         Context context = RuntimeEnvironment.getApplication();
         clearPortalSettings(context);
         BigBangProvider provider = new BigBangProvider(context);
@@ -85,21 +158,11 @@ public final class TwoFingerPressTest {
             hookController.set(null, controller);
             hookPress.set(null, source);
             hookInput.set(null, input);
-            controller.acceptPointerEvent(MotionEvent.ACTION_DOWN, 20f, 30f, downTime, "root");
+            if (rootInputReady) controller.acceptPointerEvent(MotionEvent.ACTION_DOWN, 20f, 30f, downTime, "root");
             ShadowLooper.shadowMainLooper().idle();
             ui.post(() -> {
                 if (rootInputReady) source.onPointerEvent(MotionEvent.ACTION_DOWN, 20f, 30f, downTime);
-                else {
-                    try {
-                        java.lang.reflect.Method dispatch = PortalHooks.class.getDeclaredMethod(
-                                "dispatchMotion", MotionEvent.class);
-                        dispatch.setAccessible(true);
-                        dispatch.invoke(null, MotionEvent.obtain(downTime, downTime,
-                                MotionEvent.ACTION_DOWN, 20f, 30f, 0));
-                    } catch (ReflectiveOperationException error) {
-                        throw new AssertionError(error);
-                    }
-                }
+                else fallbackEvent(downTime, downTime, MotionEvent.ACTION_DOWN);
             });
             ShadowLooper.shadowMainLooper().idle();
             ShadowSystemClock.advanceBy(java.time.Duration.ofMillis(120));
@@ -110,8 +173,12 @@ public final class TwoFingerPressTest {
             PressTriggerDetector detector = (PressTriggerDetector) field(source, "detector").get(source);
             assertTrue("Empty node capture must not cancel the physical hold", detector.isActive());
             ui.post(() -> {
-                if (twoFinger) assertTrue(source.onContactEvent(MotionEvent.ACTION_POINTER_DOWN,
-                        20f, 30f, 40f, 50f, 2, SystemClock.uptimeMillis()));
+                if (twoFinger && rootInputReady) {
+                    assertTrue(source.onContactEvent(MotionEvent.ACTION_POINTER_DOWN,
+                            20f, 30f, 40f, 50f, 2, SystemClock.uptimeMillis()));
+                } else if (twoFinger) {
+                    fallbackEvent(downTime, SystemClock.uptimeMillis(), MotionEvent.ACTION_POINTER_DOWN);
+                }
                 if (!binderCallback) assertTrue(source.acceptPortalContent(CapturedContent.text(
                         "portal message", "com.tencent.mm", null)));
             });
@@ -133,6 +200,17 @@ public final class TwoFingerPressTest {
             assertEquals(!twoFinger, controller.hasPendingImagePreview());
             assertEquals(twoFinger ? 1 : 0, provider.bigBangOpenCount);
             if (twoFinger) assertFalse(provider.bigBangRequest.getBoolean("drag_preview"));
+            if (!rootInputReady) {
+                field(input, "ready").setBoolean(input, true);
+                ui.post(() -> {
+                    long time = SystemClock.uptimeMillis();
+                    if (twoFinger) fallbackEvent(downTime, time, MotionEvent.ACTION_POINTER_UP);
+                    fallbackEvent(downTime, time, terminalAction);
+                });
+                ShadowLooper.shadowMainLooper().idle();
+                assertFalse(controller.hasPendingImagePreview());
+                assertFalse(controller.isAwaitingRootRelease());
+            }
             if (binderCallback) {
                 ui.post(source::cancelGesture);
                 ShadowLooper.shadowMainLooper().idle();
@@ -151,6 +229,33 @@ public final class TwoFingerPressTest {
             controller.destroy();
             ShadowLooper.shadowMainLooper().idle();
             clearPortalSettings(context);
+        }
+    }
+
+    private static void fallbackEvent(long downTime, long time, int action) {
+        MotionEvent event;
+        if (action == MotionEvent.ACTION_POINTER_DOWN || action == MotionEvent.ACTION_POINTER_UP) {
+            MotionEvent.PointerProperties[] props = {new MotionEvent.PointerProperties(), new MotionEvent.PointerProperties()};
+            MotionEvent.PointerCoords[] coords = {new MotionEvent.PointerCoords(), new MotionEvent.PointerCoords()};
+            for (int i = 0; i < props.length; i++) {
+                props[i].id = i;
+                props[i].toolType = MotionEvent.TOOL_TYPE_FINGER;
+                coords[i].x = 20f + 20f * i;
+                coords[i].y = 30f + 20f * i;
+            }
+            event = MotionEvent.obtain(downTime, time, action | (1 << MotionEvent.ACTION_POINTER_INDEX_SHIFT),
+                    2, props, coords, 0, 0, 1f, 1f, 0, 0, android.view.InputDevice.SOURCE_TOUCHSCREEN, 0);
+        } else {
+            event = MotionEvent.obtain(downTime, time, action, 20f, 30f, 0);
+        }
+        try {
+            java.lang.reflect.Method dispatch = PortalHooks.class.getDeclaredMethod("dispatchMotion", MotionEvent.class);
+            dispatch.setAccessible(true);
+            dispatch.invoke(null, event);
+        } catch (ReflectiveOperationException error) {
+            throw new AssertionError(error);
+        } finally {
+            event.recycle();
         }
     }
 
@@ -1011,6 +1116,9 @@ public final class TwoFingerPressTest {
 
     private static final class BigBangProvider extends ContentProvider {
         volatile Bundle captureResponse;
+        String candidateToCheck;
+        volatile Boolean candidateAccepted;
+        volatile String[] excludedPackages;
         volatile Bundle pressRegionResponse;
         volatile CountDownLatch captureStarted;
         volatile CountDownLatch allowCaptureReturn;
@@ -1019,6 +1127,10 @@ public final class TwoFingerPressTest {
             @Override public Bundle capture(float x, float y, String[] blocked, boolean text,
                                             boolean images, boolean press, boolean early,
                                             IRootNodeCandidate callback) throws RemoteException {
+                if (candidateToCheck != null) {
+                    excludedPackages = blocked;
+                    candidateAccepted = callback.onCandidate(candidateToCheck);
+                }
                 CountDownLatch started = captureStarted;
                 if (started != null) started.countDown();
                 CountDownLatch release = allowCaptureReturn;

@@ -24,6 +24,7 @@ import org.junit.runner.RunWith;
 import org.robolectric.RobolectricTestRunner;
 import org.robolectric.RuntimeEnvironment;
 import org.robolectric.annotation.Config;
+import org.robolectric.annotation.GraphicsMode;
 import org.robolectric.shadow.api.Shadow;
 import org.robolectric.shadows.ShadowMimeTypeMap;
 import org.robolectric.shadows.ShadowContentResolver;
@@ -43,6 +44,8 @@ import java.util.Map;
 public final class StashDragImageCacheTest {
     private static final String PREFS = "stash_drag_images";
     private static final byte[] SOURCE_BYTES = {7, 19, 38, 71, 115};
+    private static final byte[] GIF_BYTES = java.util.Base64.getDecoder().decode(
+            "R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7");
 
     private Context base;
     private Context context;
@@ -58,6 +61,7 @@ public final class StashDragImageCacheTest {
         preferences.edit().clear().commit();
         ShadowMimeTypeMap mimeMap = Shadow.extract(MimeTypeMap.getSingleton());
         mimeMap.addExtensionMimeTypeMapping("png", "image/png");
+        mimeMap.addExtensionMimeTypeMapping("gif", "image/gif");
 
         provider = new FakeDownloadsProvider();
         String authority = MediaStore.Downloads.EXTERNAL_CONTENT_URI.getAuthority();
@@ -93,6 +97,34 @@ public final class StashDragImageCacheTest {
         assertArrayEquals(SOURCE_BYTES, read(provider.row(1).file));
         assertEquals(1L, preferences.getLong(entry.id, -1L));
         assertTrue(preferences.getLong(entry.id + ".time", 0L) > 0L);
+    }
+
+    @Test @GraphicsMode(GraphicsMode.Mode.NATIVE)
+    public void sharedImagesWithMissingOrWildcardTypesCanBeDraggedAsExactGifs() throws Exception {
+        for (String declared : new String[]{null, "image/*"}) {
+            StashStore.Entry saved = store.addImage(new java.io.ByteArrayInputStream(GIF_BYTES), declared);
+            assertEquals("image/gif", store.getEntry(saved.id).mime);
+            Uri uri = StashDragImageCache.uri(context, saved, store.openImage(saved.id));
+            assertEquals("image/gif", provider.inserted.getAsString(MediaStore.MediaColumns.MIME_TYPE));
+            assertArrayEquals(GIF_BYTES, read(provider.row(android.content.ContentUris.parseId(uri)).file));
+        }
+    }
+
+    @Test @GraphicsMode(GraphicsMode.Mode.NATIVE)
+    public void draggingLegacyWildcardEntryResolvesBothClipAndPublicCopyTypes() throws Exception {
+        StashStore.Entry saved = store.addImage(new java.io.ByteArrayInputStream(GIF_BYTES), "image/gif");
+        try (android.database.sqlite.SQLiteDatabase db = context.openOrCreateDatabase("stash.db", 0, null)) {
+            db.execSQL("UPDATE stash_entries SET mime = 'image/*' WHERE id = ?", new Object[]{saved.id});
+        }
+        StashStore.Entry old = store.listEntries().stream().filter(item -> item.id.equals(saved.id))
+                .findFirst().orElseThrow();
+        assertEquals("image/*", old.mime);
+        android.content.ClipData clip = StashDragHandleKt.imageClipForStash(context, store,
+                java.util.List.of(old), java.util.List.of(store.openImage(old.id)));
+        assertEquals("image/gif", clip.getDescription().getMimeType(0));
+        assertEquals("image/gif", store.getEntry(old.id).mime);
+        assertTrue(provider.inserted.getAsString(MediaStore.MediaColumns.DISPLAY_NAME).endsWith(".gif"));
+        assertArrayEquals(GIF_BYTES, read(provider.row(android.content.ContentUris.parseId(clip.getItemAt(0).getUri())).file));
     }
 
     @Test public void reusesAnExistingCachedDownloadsRowWhenItStillHasADataPath() throws Exception {
@@ -141,7 +173,8 @@ public final class StashDragImageCacheTest {
         }
     }
 
-    private static final class FakeDownloadsProvider extends ContentProvider {
+    static final class FakeDownloadsProvider extends ContentProvider {
+        final java.util.concurrent.CountDownLatch published = new java.util.concurrent.CountDownLatch(1);
         private final Map<Long, Row> rows = new HashMap<>();
         private long nextId = 1;
         int insertCount;
@@ -173,8 +206,7 @@ public final class StashDragImageCacheTest {
             long id = nextId++;
             File file = new File(getContext().getCacheDir(), "fake-download-" + id + ".image");
             rows.put(id, new Row(id, file, new ContentValues(values)));
-            return android.content.ContentUris.withAppendedId(
-                    MediaStore.Downloads.EXTERNAL_CONTENT_URI, id);
+            return android.content.ContentUris.withAppendedId(uri, id);
         }
 
         @Override public int update(Uri uri, ContentValues values, String selection,
@@ -185,6 +217,7 @@ public final class StashDragImageCacheTest {
             if (row == null) return 0;
             row.values.put(MediaStore.MediaColumns.IS_PENDING,
                     values.getAsInteger(MediaStore.MediaColumns.IS_PENDING));
+            published.countDown();
             return 1;
         }
 
@@ -221,7 +254,7 @@ public final class StashDragImageCacheTest {
             rows.clear();
         }
 
-        private static final class Row {
+        static final class Row {
             final long id;
             final File file;
             final ContentValues values;

@@ -40,6 +40,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.ui.state.ToggleableState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -176,6 +177,8 @@ object StashOverlayPanel {
         private val touchSlop = ViewConfiguration.get(context).scaledTouchSlop
         private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
         private var entries by mutableStateOf<List<StashStore.Entry>>(emptyList())
+        private val batches by derivedStateOf { stashBatches(entries) }
+        private val groupedEntryIds by derivedStateOf { stashGroupedEntryIds(batches) }
         private val listState = LazyListState()
         private var loading by mutableStateOf(false)
         private var reloadRequested = false
@@ -534,10 +537,22 @@ object StashOverlayPanel {
             selectionMode = false
         }
 
-        private fun selectedEntries() = stashBatches(entries).flatten().filter { it.id in selectedIds }
+        private fun selectedEntries() = if (selectedIds.isEmpty()) emptyList()
+            else batches.asSequence().flatten().filter { it.id in selectedIds }.toList()
+
+        private fun canUngroupSelection() = selectedIds.any(groupedEntryIds::contains)
 
         private fun openText(entry: StashStore.Entry) {
             if (BigBangOverlayLauncher.showText(app, entry.text.orEmpty(), -1, -1)) collapse()
+        }
+
+        private fun recognizePreview(image: StashStore.Entry) {
+            ImageOcrOverlay.startWithResult(app, StashImageProvider.uriForEntry(image.id)) { text ->
+                if (text != null && active === this && preview?.id == image.id &&
+                    !app.getSystemService(KeyguardManager::class.java).isKeyguardLocked &&
+                    BigBangOverlayLauncher.showText(app, text, -1, -1)
+                ) collapse()
+            }
         }
 
         fun report(label: String, error: Exception) {
@@ -635,11 +650,10 @@ object StashOverlayPanel {
 
         @Composable private fun Content() {
             val dark = DragShareSettings.readLocal(app).isDarkThemeInComposition()
-            val visibleEntries = entries.filter {
-                openedBatchId == null || it.batchId == openedBatchId
-            }.let { if (openedBatchId != null) it.sortedBy { entry -> entry.batchOrder } else it }
+            val visibleEntries = if (openedBatchId == null) entries
+                else batches.firstOrNull { it.first().batchId == openedBatchId }.orEmpty()
             val visibleBatches = if (openedBatchId != null) visibleEntries.map { listOf(it) }
-                else stashBatches(visibleEntries)
+                else batches
             val selected = selectedEntries()
             LaunchedEffect(openedBatchId) { listState.requestScrollToItem(0) }
             MiuixTheme(controller = remember(dark) {
@@ -723,23 +737,7 @@ object StashOverlayPanel {
                                     }
                                     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly) {
                                         OverlayIconAction(MiuixIcons.Scan, MiuixTheme.colorScheme.onSurfaceVariantActions,
-                                            onClick = {
-                                                val uri = StashImageProvider.uriForEntry(image.id)
-                                                if (ImageOcrOverlay.startWithResult(app, uri) { text ->
-                                                    if (active === this@Shelf &&
-                                                        !app.getSystemService(KeyguardManager::class.java).isKeyguardLocked) {
-                                                        if (text == null) {
-                                                            if (entries.any { it.id == image.id }) {
-                                                                preview = image
-                                                                expand()
-                                                            }
-                                                        } else {
-                                                            BigBangOverlayLauncher.showText(app, text, -1, -1)
-                                                            collapse()
-                                                        }
-                                                    }
-                                                }) { collapse() }
-                                            }, contentDescription = "识别图片文字")
+                                            onClick = { recognizePreview(image) }, contentDescription = "识别图片文字")
                                     }
                                 }
                             }
@@ -773,7 +771,7 @@ object StashOverlayPanel {
                             }
                         } else if (selectionMode && !confirmDelete && preview == null) {
                             StashGroupingActions(selected, true,
-                                canUngroup = selected.any { it.id in stashGroupedEntryIds(entries) },
+                                canUngroup = canUngroupSelection(),
                                 onGroup = { regroup(selected, false) }, onUngroup = { regroup(selected, true) })
                         }
                         if (selectionMode && !confirmDelete && preview == null) {

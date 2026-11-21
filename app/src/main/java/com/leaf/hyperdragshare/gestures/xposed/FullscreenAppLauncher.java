@@ -52,6 +52,8 @@ final class FullscreenAppLauncher {
                             target.shortcutIntentUri);
                 }
                 ShortcutHostRuntime.sendSystemUiRequest(context, request);
+                Log.i("Requested fullscreen shortcut via MiuiHome " + target.packageName + "/" + target.shortcutId);
+                return true;
             } else if (target.component == null) {
                 return false;
             } else if (target.userId != 0) {
@@ -67,16 +69,16 @@ final class FullscreenAppLauncher {
                         .putExtra(ShortcutHostRuntime.EXTRA_USER_ID, target.userId)
                         .putExtra(ShortcutHostRuntime.EXTRA_OPTIONS, bundle);
                 ShortcutHostRuntime.sendSystemUiRequest(context, request);
+                Log.i("Requested fullscreen activity via MiuiHome " + target.component
+                        + " user=" + target.userId);
+                return true;
             } else {
                 Intent intent = Intent.makeMainActivity(target.component)
                         .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK
                                 | Intent.FLAG_ACTIVITY_RESET_TASK_IF_NEEDED);
                 context.startActivity(intent, bundle);
             }
-            Log.i("Launched fullscreen " + (target.isShortcut()
-                    ? target.packageName + "/" + target.shortcutId
-                    : target.component.flattenToShortString()
-                    + (target.userId == 0 ? "" : " user=" + target.userId))
+            Log.i("Launched fullscreen " + target.component.flattenToShortString()
                     + " centeredAnimation=" + centeredSystemAnimation);
             return true;
         } catch (Throwable error) {

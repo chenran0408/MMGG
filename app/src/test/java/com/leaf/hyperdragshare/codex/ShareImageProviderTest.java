@@ -34,7 +34,7 @@ import java.io.File;
 import java.io.FileOutputStream;
 
 @RunWith(RobolectricTestRunner.class)
-@Config(manifest = Config.NONE, sdk = 35)
+@Config(manifest = Config.NONE, sdk = 35, application = android.app.Application.class)
 @GraphicsMode(GraphicsMode.Mode.NATIVE)
 public final class ShareImageProviderTest {
     @Before public void providePlatformMimeMapping() {
@@ -91,6 +91,17 @@ public final class ShareImageProviderTest {
         assertFalse(ShareImageProvider.isTrustedPortalCaller(
                 otherUserPortalUid, moduleUid, new String[]{"com.miui.contentextension"})
                 && ShareImageProvider.sameAndroidUser(otherUserPortalUid, moduleUid));
+    }
+
+    @Test public void portalReportReturnsModuleUidFromProviderProcess() {
+        Context context = RuntimeEnvironment.getApplication();
+        Bundle report = new Bundle();
+        report.putLong(ModuleActivation.EXTRA_VERSION_CODE, BuildConfig.VERSION_CODE);
+        report.putInt(ModuleActivation.EXTRA_PROCESS_ID, 71);
+        report.putBinder(ModuleActivation.EXTRA_LIFETIME_TOKEN, new android.os.Binder());
+        Bundle response = newProvider(context).call(ModuleActivation.METHOD_REPORT_INJECTED, null, report);
+        assertEquals(Process.myUid(), response.getInt(ModuleActivation.EXTRA_MODULE_UID, -1));
+        assertEquals(71, ModuleActivation.injectedProcessId(context));
     }
 
     @Test public void sourceClassificationRejectsMalformedPackageName() {
@@ -219,8 +230,13 @@ public final class ShareImageProviderTest {
 
         Bundle legacyRequest = new Bundle();
         legacyRequest.putByteArray(ImageStagingClient.EXTRA_BYTES, png);
+        File old = File.createTempFile("expired", ".tmp", new File(context.getCacheDir(), "shared-images"));
+        assertTrue(old.setLastModified(System.currentTimeMillis() - java.util.concurrent.TimeUnit.DAYS.toMillis(2)));
         Bundle result = provider.call(ImageStagingClient.METHOD_STAGE, null, legacyRequest);
 
+        assertTrue("staging never scans unrelated cache entries", old.isFile());
+        SharedImageCleanupJob.cleanup(context);
+        assertFalse("scheduled sweep still removes the expired file", old.exists());
         assertNotNull(result);
         Uri staged = Uri.parse(result.getString(ImageStagingClient.RESULT_URI));
         try (ParcelFileDescriptor.AutoCloseInputStream input = new ParcelFileDescriptor.AutoCloseInputStream(

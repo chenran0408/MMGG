@@ -81,6 +81,7 @@ final class PressCaptureSource implements RootTouchSource.ContactListener, Press
     private long inputReceivedElapsedRealtime = -1L;
     private CapturedContent cached;
     private CapturedContent portalAwaitingControlCheck;
+    private CapturedContent portalPreviewDuringLookup;
     private final Map<String, PortalContentCaptureSource.OriginalImageRequest> originalRequests = new LinkedHashMap<>();
     private float downX;
     private float downY;
@@ -154,7 +155,7 @@ final class PressCaptureSource implements RootTouchSource.ContactListener, Press
     }
 
     @Override public void startTouchBlocker(long request) {
-        if (pointerDown) {
+        if (pointerDown && controller.inputCanBlockHostTouch()) {
             controller.notePressDiagnostics(downTime, null, null, "press_background_block_requested");
             blocker.startAsync(() -> !stopped && request == generation && pointerDown);
         }
@@ -291,6 +292,10 @@ final class PressCaptureSource implements RootTouchSource.ContactListener, Press
     private void handlePointer(int action, float x, float y, long time) {
         if (stopped) return;
         if (twoFingerContactSequence) return;
+        if (action == MotionEvent.ACTION_CANCEL) {
+            cancelGesture();
+            return;
+        }
         if (action == MotionEvent.ACTION_MOVE && !detector.isActive()) return;
         latestX = x;
         latestY = y;
@@ -516,6 +521,11 @@ final class PressCaptureSource implements RootTouchSource.ContactListener, Press
         }
         // Keep the Root control check authoritative while it is still in flight.
         if (!twoFingerModeForGesture && lookupRunning && !captureCandidateReady) {
+            if (portalAwaitingControlCheck != null
+                    && portalAwaitingControlCheck.keepsSourceFileOver(content, downX, downY)) {
+                recycle(content);
+                return true;
+            }
             recycle(portalAwaitingControlCheck);
             portalAwaitingControlCheck = content;
             return true;
@@ -523,6 +533,12 @@ final class PressCaptureSource implements RootTouchSource.ContactListener, Press
         recycle(portalAwaitingControlCheck);
         portalAwaitingControlCheck = null;
         OperationTrace.event(operationId(), "portal_capture", "accepted");
+        if (!twoFingerModeForGesture && content.isImage() && ((directDragArmed && controller.isActive())
+                || (cached != null && cached.keepsSourceFileOver(content, downX, downY))
+                || controller.holdsSourceFileOver(content, downTime, downX, downY))) {
+            recycle(content);
+            return true;
+        }
         PressOcrFlow.Candidate pending = pressOcr.candidate();
         if (pending != null && pending.textWindowAccepted) {
             // OCR has already opened this press's segmentation window; do not replace it
@@ -533,13 +549,21 @@ final class PressCaptureSource implements RootTouchSource.ContactListener, Press
         boolean imageTakeover = !twoFingerModeForGesture && content.isImage() && ownsCurrentPress
                 && detector.isFired()
                 && (pending != null || controller.isActive());
-        generation++;
+        // Show the thumbnail immediately after the control check while the same node's
+        // media is still being read. The result may upgrade the held preview until drag starts.
+        boolean keepImageLookup = lookupRunning && !twoFingerModeForGesture && content.isImage()
+                && !content.hasSourceFile() && content.sourcePackage != null
+                && content.sourcePackage.equals(captureCandidateSource);
+        portalPreviewDuringLookup = keepImageLookup ? content : null;
+        if (!keepImageLookup) {
+            generation++;
+            lookupRunning = false;
+        }
         pressOcr.acceptPortalTakeover();
         recycle(cached);
         cached = content;
         captureCandidateReady = true;
         captureCandidateSource = content.sourcePackage;
-        lookupRunning = false;
         displayQueued = false;
         portalImageTakeoverPending = imageTakeover;
         if (singleFingerSuppressed()) {
@@ -709,8 +733,6 @@ final class PressCaptureSource implements RootTouchSource.ContactListener, Press
         float x = downX, y = downY;
         boolean earlyCapture = !detector.isFired();
         logTiming("capture_start", requestDownTime, "early=" + earlyCapture);
-        Set<String> excluded = new LinkedHashSet<>(settings.accessibilityBlacklistedPackages);
-        excluded.addAll(AccessibilityBlacklist.builtInPackages(context));
         AtomicBoolean excludedByPolicy = new AtomicBoolean();
         worker.execute(() -> {
             long lookupStarted = SystemClock.elapsedRealtime();
@@ -721,10 +743,12 @@ final class PressCaptureSource implements RootTouchSource.ContactListener, Press
                             "late_ignored");
                     return;
                 }
+                Set<String> excluded = new LinkedHashSet<>(settings.accessibilityBlacklistedPackages);
+                excluded.addAll(AccessibilityBlacklist.builtInPackages(context));
                 SharedRootNodeCapture.Connection.PressResult result = session.capturePress(x, y, excluded,
                         settings.isSharingEnabled(false), settings.isSharingEnabled(true), earlyCapture,
                         source ->
-                                acceptAutomaticSource(request, source, excludedByPolicy),
+                                acceptAutomaticSource(request, source, excluded, excludedByPolicy),
                         source -> onCaptureCandidateReady(request, source));
                 CapturedContent content = result.content;
                 OperationTrace.event(OperationTrace.id("press", requestDownTime), "capture",
@@ -752,11 +776,20 @@ final class PressCaptureSource implements RootTouchSource.ContactListener, Press
                         return;
                     }
                     lookupRunning = false;
+                    if (portalPreviewDuringLookup != null) {
+                        CapturedContent preview = portalPreviewDuringLookup;
+                        portalPreviewDuringLookup = null;
+                        if (content != null && content.keepsSourceFileOver(preview, downX, downY)) {
+                            replacePortalImage(content, requestDownTime);
+                        } else recycle(content);
+                        return;
+                    }
                     if (portalAwaitingControlCheck != null) {
                         CapturedContent portal = portalAwaitingControlCheck;
                         portalAwaitingControlCheck = null;
                         if (!excludedByPolicy.get()
                                 && !"excluded_hold_control".equals(result.rejectionReason)
+                                && (content == null || !content.keepsSourceFileOver(portal, downX, downY))
                                 && acceptPortalContent(portal)) {
                             recycle(content);
                             return;
@@ -797,7 +830,10 @@ final class PressCaptureSource implements RootTouchSource.ContactListener, Press
                     if (stopped || request != generation || requestDownTime != downTime) return;
                     if (error instanceof SharedRootNodeCapture.ConnectionFailedException || error instanceof SecurityException) {
                         readerFailed(session, "取词连接已中断，正在重连。" + error.getMessage(), false);
-                    } else if (request == generation) {
+                    } else if (portalPreviewDuringLookup != null) {
+                        portalPreviewDuringLookup = null;
+                        lookupRunning = false;
+                    } else {
                         if (detector.isFired()) showFailure("本次按压未完成：" + error.getMessage());
                         cancelGesture();
                     }
@@ -855,9 +891,10 @@ final class PressCaptureSource implements RootTouchSource.ContactListener, Press
         return false;
     }
 
-    private boolean acceptAutomaticSource(long request, String source, AtomicBoolean excludedByPolicy) {
+    private boolean acceptAutomaticSource(long request, String source, Set<String> excluded,
+                                          AtomicBoolean excludedByPolicy) {
         if (request != generation || !allowed()) return false;
-        if (AccessibilityBlacklist.isBlocked(context, settings, source)
+        if (excluded.contains(source)
                 || GameCapturePolicy.shouldPause(context, settings, source)) {
             excludedByPolicy.set(true);
             return false;
@@ -1030,6 +1067,7 @@ final class PressCaptureSource implements RootTouchSource.ContactListener, Press
         cached = null;
         recycle(portalAwaitingControlCheck);
         portalAwaitingControlCheck = null;
+        portalPreviewDuringLookup = null;
         blocker.stopAsync();
     }
 

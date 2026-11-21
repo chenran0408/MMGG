@@ -80,16 +80,15 @@ public class SwipeSelectView extends LinearLayout {
         }
         switch (ev.getActionMasked()) {
             case MotionEvent.ACTION_DOWN:
+                BoomChip touchedChip = findChip(x, y, false);
+                if (touchedChip == null) return false;
                 mGesture = Gesture.PENDING;
                 mDownX = x;
                 mDownY = y;
                 mSelectionBeforeGesture = new TreeSet<>(mBoomPage.mBoomActionHandler.mSelectedId);
-                BoomChip touchedChip = findChip(x, y, false);
-                initSelection(touchedChip == null ? -1 : touchedChip.index);
-                if (touchedChip != null) {
-                    mBoomPage.freezeSelectionRows();
-                    mIsSelected = !touchedChip.word.isSelected();
-                }
+                initSelection(touchedChip.index);
+                mBoomPage.freezeSelectionRows();
+                mIsSelected = !touchedChip.word.isSelected();
                 mAutoScrollVelocity = 0;
                 break;
             case MotionEvent.ACTION_MOVE:

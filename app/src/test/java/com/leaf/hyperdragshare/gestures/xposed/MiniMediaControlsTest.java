@@ -149,6 +149,24 @@ public final class MiniMediaControlsTest {
         activity.finish();
     }
 
+    @Test public void unisolatedPackageGainDisablesOnlyTheMuteButton() {
+        var app = RuntimeEnvironment.getApplication();
+        var attached = new AtomicReference<ViewGroup>();
+        var resized = new AtomicInteger(-1);
+        var menu = new MiniFreeformQuickMenuController(app, resized::set, (target, root) -> {
+            attached.set((ViewGroup) root);
+            return () -> { };
+        }, app.getResources());
+        assertTrue(menu.show(target(7), () -> { throw new AssertionError("Shared gain must not be read"); },
+                null, false));
+        var buttons = menuButtons(attached.get());
+        var mute = buttons.getChildAt(0);
+        assertFalse(mute.isEnabled());
+        assertEquals("无法单独静音此应用", mute.getContentDescription());
+        buttons.getChildAt(1).performClick();
+        assertEquals(7, resized.get());
+    }
+
     @Test public void anotherTaskUpdateDoesNotRedirectTheOpenMenusMuteAction() {
         var controls = new MiniMediaControls(RuntimeEnvironment.getApplication(), null, null, null);
         var config = enabledConfig();
@@ -179,6 +197,7 @@ public final class MiniMediaControlsTest {
         MiniTask(int id, String pkg) {
             this.id = id;
             task.topActivity = new ComponentName(pkg, pkg + ".Main");
+            org.robolectric.util.ReflectionHelpers.setField(task, "isVisible", true);
         }
 
         public int getTaskId() { return id; }

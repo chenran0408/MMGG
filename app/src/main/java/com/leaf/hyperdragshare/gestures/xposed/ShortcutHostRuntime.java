@@ -199,7 +199,7 @@ final class ShortcutHostRuntime {
         if (refreshAgain) requestCatalogRefresh(context, CATALOG_DEBOUNCE_MS);
     }
 
-    private static void startLauncherShortcut(Context context, Intent request) {
+    static void startLauncherShortcut(Context context, Intent request) {
         String expectedPackage = request.getStringExtra(EXTRA_PACKAGE);
         String intentUri = request.getStringExtra(EXTRA_INTENT_URI);
         Bundle options = request.getBundleExtra(EXTRA_OPTIONS);
@@ -216,6 +216,7 @@ final class ShortcutHostRuntime {
             Log.i("MiuiHome started desktop shortcut package=" + expectedPackage);
         } catch (Throwable error) {
             Log.e("Cannot start desktop shortcut in MiuiHome", error);
+            android.widget.Toast.makeText(context, "快捷方式不可用", android.widget.Toast.LENGTH_SHORT).show();
         }
     }
 
@@ -233,6 +234,7 @@ final class ShortcutHostRuntime {
             Log.i("MiuiHome started shortcut " + packageName + "/" + shortcutId);
         } catch (Throwable error) {
             Log.e("Cannot start shortcut in MiuiHome", error);
+            android.widget.Toast.makeText(context, "快捷方式不可用", android.widget.Toast.LENGTH_SHORT).show();
         }
     }
 
@@ -252,6 +254,7 @@ final class ShortcutHostRuntime {
                     + " user=" + userId);
         } catch (Throwable error) {
             Log.e("Cannot start cross-user activity in MiuiHome", error);
+            android.widget.Toast.makeText(context, "应用不可用", android.widget.Toast.LENGTH_SHORT).show();
         }
     }
 

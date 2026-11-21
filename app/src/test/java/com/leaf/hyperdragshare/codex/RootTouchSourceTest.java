@@ -27,6 +27,8 @@ import org.junit.runner.RunWith;
 import org.robolectric.RobolectricTestRunner;
 import org.robolectric.RuntimeEnvironment;
 import org.robolectric.annotation.Config;
+import org.robolectric.annotation.Implementation;
+import org.robolectric.annotation.Implements;
 import org.robolectric.shadow.api.Shadow;
 import org.robolectric.shadows.ShadowDisplay;
 import org.robolectric.util.ReflectionHelpers;
@@ -34,6 +36,31 @@ import org.robolectric.util.ReflectionHelpers;
 @RunWith(RobolectricTestRunner.class)
 @Config(manifest = Config.NONE)
 public final class RootTouchSourceTest {
+    @Test
+    @Config(instrumentedPackages = "com.leaf.hyperdragshare.codex", shadows = CountingInputStart.class)
+    public void applyingRuntimeOnlyReopensAnInputThatPreviouslyFailed() {
+        RootGateway gateway = new RootGateway(RuntimeEnvironment.getApplication(),
+                (action, x, y, time, major, minor, width) -> { }, (ready, reason) -> { });
+        CountingInputStart input = Shadow.extract(gateway.input());
+        gateway.retryFailedInput();
+        assertEquals(0, input.starts);
+        gateway.startInput();
+        gateway.retryFailedInput();
+        assertEquals(1, input.starts);
+        ReflectionHelpers.setField(gateway.input(), "failureReason", "reader exited");
+        gateway.retryFailedInput();
+        assertEquals(2, input.starts);
+        gateway.stopInput();
+        gateway.retryFailedInput();
+        assertEquals(2, input.starts);
+    }
+
+    @Implements(value = RootTouchSource.class, isInAndroidSdk = false)
+    public static class CountingInputStart {
+        int starts;
+        @Implementation protected void start() { starts++; }
+    }
+
     private static String input(String bus, String name, int event) {
         return "I: Bus=" + bus + "\nN: Name=\"" + name + "\"\nH: Handlers=event" + event
                 + "\nB: PROP=2\nB: ABS=263800000000000\n\n";
@@ -118,6 +145,30 @@ public final class RootTouchSourceTest {
         source.dispatchFrame(run, singlePointerFrame(MotionEvent.ACTION_UP, 300));
 
         assertEquals(List.of(MotionEvent.ACTION_DOWN, MotionEvent.ACTION_UP), actions);
+    }
+
+    @Test public void firstDownAfterMissingFallbackUpHasOneOwnerEvenIfRootDeliversItFirst() {
+        List<Integer> rootActions = new ArrayList<>();
+        RootTouchSource source = new RootTouchSource(RuntimeEnvironment.getApplication(),
+                (action, x, y, time, major, minor, width) -> rootActions.add(action),
+                (ready, reason) -> { });
+        PortalInputHandoff handoff = new PortalInputHandoff();
+        source.setFallbackOwnsInput(handoff::fallbackActive);
+        RootTouchSource.Run run = initFrameDispatch(source);
+        assertTrue(handoff.acceptFallback(MotionEvent.ACTION_DOWN, 100, false));
+
+        source.dispatchFrame(run, singlePointerFrame(MotionEvent.ACTION_DOWN, 200));
+        assertTrue(handoff.missedFallbackEnd(200));
+        assertTrue(handoff.acceptFallback(MotionEvent.ACTION_DOWN, 200, true));
+        assertTrue(handoff.acceptFallback(MotionEvent.ACTION_UP, 200, true));
+        handoff.finishFallback();
+        source.dispatchFrame(run, singlePointerFrame(MotionEvent.ACTION_UP, 240));
+        assertTrue(rootActions.isEmpty());
+
+        source.dispatchFrame(run, singlePointerFrame(MotionEvent.ACTION_DOWN, 300));
+        assertFalse(handoff.acceptFallback(MotionEvent.ACTION_DOWN, 300, true));
+        source.dispatchFrame(run, singlePointerFrame(MotionEvent.ACTION_UP, 360));
+        assertEquals(List.of(MotionEvent.ACTION_DOWN, MotionEvent.ACTION_UP), rootActions);
     }
 
     @Test public void aDisplayChangeRefreshesCoordinatesForFollowingFrames() {

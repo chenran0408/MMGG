@@ -14,6 +14,7 @@ import android.view.View
 import android.view.ViewGroup
 import android.widget.Toast
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableFloatStateOf
@@ -83,6 +84,7 @@ internal class BigBangPanelSession(private val context: Context, private val act
     private var beforeText: String? = null
     private var afterText: String? = null
     private var directActionText by mutableStateOf("")
+    val directAction by derivedStateOf { directTextDestination(directActionText, wholeTextOnly = true) }
     private var directText by mutableStateOf<String?>(null)
 
     private fun updateSelectionSummary() {
@@ -101,8 +103,9 @@ internal class BigBangPanelSession(private val context: Context, private val act
         )
         hasTextSelection = selected
         selectedCharacterCount = page.selectedCharacterCount()
-        directActionText = if (page.hasSelection()) page.selectedTextOrOriginal().orEmpty() else ""
-        selectedDragText = if (page.hasSelection()) page.selectedTextOrOriginal().orEmpty() else ""
+        val actionText = if (selected) page.selectedTextOrOriginal().orEmpty() else original.orEmpty()
+        if (!gestureActive) directActionText = actionText
+        selectedDragText = if (selected) actionText else ""
     }
 
     private fun scheduleSelectionSummary() {
@@ -178,7 +181,8 @@ internal class BigBangPanelSession(private val context: Context, private val act
                     onCopy = { copyText(selectedTextOrOriginal()) },
                     onSearch = { openSearch(selectedTextOrOriginal(), BoomActionHandler.SEARCH_WEB) },
                     onStash = { stashText(selectedTextOrOriginal()) },
-                    directAction = directTextDestination(directActionText),
+                    directAction = directAction,
+                    onOpenDirect = { destination -> actions.openExternal(destination.intent) },
                     copying = copying,
                     stashing = stashing,
                     canSplit = hasTextSelection && boomChipPage?.let {

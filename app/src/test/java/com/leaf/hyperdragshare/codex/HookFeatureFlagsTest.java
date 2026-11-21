@@ -45,4 +45,30 @@ public final class HookFeatureFlagsTest {
         return RuntimeEnvironment.getApplication().getSharedPreferences(
                 HookFeatureFlags.PREFS, Context.MODE_PRIVATE);
     }
+
+    @Test public void savedSwitchSurvivesReopeningAndRevertingOnlyClearsThatSwitch() {
+        SharedPreferences prefs = preferences();
+        String runtime = "6:1210";
+        assertTrue(HookFeatureChanges.save(prefs, HookFeatureFlags.PORTAL, true, false, runtime));
+        assertTrue(HookFeatureChanges.save(prefs, HookFeatureFlags.FREEFORM, true, false, runtime));
+        SharedPreferences reopened = preferences();
+        assertFalse(HookFeatureFlags.read(reopened).portal());
+        assertTrue(HookFeatureChanges.pending(reopened, HookFeatureFlags.PORTAL, false, runtime));
+        assertTrue(HookFeatureChanges.save(reopened, HookFeatureFlags.PORTAL, false, true, runtime));
+        assertFalse(HookFeatureChanges.pending(reopened, HookFeatureFlags.PORTAL, true, runtime));
+        assertTrue(HookFeatureChanges.pending(reopened, HookFeatureFlags.FREEFORM, false, runtime));
+    }
+
+    @Test public void softAndFullRestartEstablishNewBaselineIncludingLegacyGestureValue() {
+        SharedPreferences prefs = preferences();
+        String key = HookFeatureFlags.GESTURES;
+        boolean legacy = HookFeatureFlags.read(prefs).gestures(false);
+        assertFalse(legacy);
+        assertTrue(HookFeatureChanges.save(prefs, key, legacy, true, "6:1210"));
+        assertTrue(HookFeatureChanges.pending(prefs, key, true, "6:1210"));
+        assertFalse(HookFeatureChanges.pending(prefs, key, true, "6:8020"));
+        assertFalse(HookFeatureChanges.pending(prefs, key, true, "7:1210"));
+        assertTrue(HookFeatureChanges.save(prefs, key, true, false, "6:8020"));
+        assertTrue(HookFeatureChanges.pending(prefs, key, false, "6:8020"));
+    }
 }

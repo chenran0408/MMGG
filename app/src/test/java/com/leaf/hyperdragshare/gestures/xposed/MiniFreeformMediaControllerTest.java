@@ -131,6 +131,62 @@ public final class MiniFreeformMediaControllerTest {
         assertEquals(0.25f, volume.current, 0f);
     }
 
+    @Test public void aSecondInstallSinceOpeningTheMenuPreventsAnyVolumeWrite() {
+        var lease = new MiniFreeformMediaController.MuteLease();
+        var player = new Object();
+        var volume = new MiniFreeformMediaController.Volume() {
+            @Override public Object player(String pkg) { return player; }
+            @Override public float read(String pkg) { return .65f; }
+            @Override public boolean canAcquireMute(String pkg) { return false; }
+            @Override public boolean write(String pkg, Object p, float gain) {
+                throw new AssertionError("Package gain is shared");
+            }
+        };
+        lease.acquire("both", volume);
+        assertFalse(lease.active());
+    }
+
+    @Test public void menuUnmuteSurvivesPlaybackAndWindowUpdatesUntilTheMiniTaskEnds() {
+        var sessions = new FakeSessions();
+        sessions.items.add(new FakeSession("player.app", ACTION_PLAY));
+        var volume = new FakeVolume();
+        volume.player = new Object();
+        volume.current = .65f;
+        var host = new FakeHost();
+        var mini = new MiniMediaControls(RuntimeEnvironment.getApplication(), null, null, null);
+        var config = GestureConfig.defaults();
+        config.miniMediaControlsEnabled = true;
+        config.miniMediaAutoMute = true;
+        var task = new MiniMediaControlsTest.MiniTask(7, "player.app");
+        Runnable attachMediaSession = () -> {
+            org.robolectric.util.ReflectionHelpers.setField(mini, "miniMediaController", controller(sessions, host, volume));
+            mini.refreshMiniMediaConfig(config);
+        };
+        mini.updateMiniMedia(task, config);
+        attachMediaSession.run();
+        assertEquals(0f, volume.current, 0f);
+        assertTrue(mini.toggleMute(7, "player.app", volume));
+        assertEquals(.65f, volume.current, 0f);
+        sessions.fireChanged();
+        assertEquals("playback callbacks preserve the user's unmute", .65f, volume.current, 0f);
+        mini.updateMiniMedia(task, config);
+        assertEquals("moving the same mini window preserves its volume", .65f, volume.current, 0f);
+
+        mini.updateMiniMedia(new MiniMediaControlsTest.MiniTask(9, "player.app"), config);
+        attachMediaSession.run();
+        assertEquals("a second mini task gets the configured default", 0f, volume.current, 0f);
+        mini.updateMiniMedia(task, config);
+        attachMediaSession.run();
+        assertEquals("switching back to a still-open task remembers its choice", .65f, volume.current, 0f);
+
+        mini.clearMiniMediaForTask(7);
+        mini.updateMiniMedia(task, config);
+        attachMediaSession.run();
+        assertEquals("returning to mini mode reapplies the configured default", 0f, volume.current, 0f);
+        mini.clearMiniMediaForTask(7);
+        assertEquals(.65f, volume.current, 0f);
+    }
+
     @Test public void unavailablePlayerOrFailedWriteKeepsTheOriginalUntilRestoreSucceeds() {
         FakeVolume volume = new FakeVolume();
         Object player = new Object();

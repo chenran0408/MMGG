@@ -26,9 +26,14 @@ public final class PortalInputHandoffTest {
     @Test public void aNewPhysicalDownCanEndAnInterruptedFallbackStream() {
         PortalInputHandoff handoff = new PortalInputHandoff();
         assertTrue(handoff.acceptFallback(MotionEvent.ACTION_DOWN, 100, false));
-        assertFalse(handoff.missedFallbackEnd(90, true));
-        assertFalse(handoff.missedFallbackEnd(100, true));
-        assertFalse(handoff.missedFallbackEnd(200, false));
-        assertTrue(handoff.missedFallbackEnd(200, true));
+        assertFalse(handoff.missedFallbackEnd(90));
+        assertFalse(handoff.missedFallbackEnd(100));
+        assertTrue(handoff.missedFallbackEnd(200));
+        assertTrue(handoff.acceptFallback(MotionEvent.ACTION_DOWN, 200, true));
+        assertFalse(handoff.acceptFallback(MotionEvent.ACTION_DOWN, 200, true));
+        assertFalse(handoff.acceptFallback(MotionEvent.ACTION_UP, 100, true));
+        assertTrue(handoff.acceptFallback(MotionEvent.ACTION_UP, 200, true));
+        handoff.finishFallback();
+        assertFalse(handoff.acceptFallback(MotionEvent.ACTION_DOWN, 300, true));
     }
 }

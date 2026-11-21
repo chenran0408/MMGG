@@ -28,7 +28,7 @@ internal fun ActivationStatusCard(
     onOpenDiagnostics: () -> Unit,
 ) {
     val snapshot = monitor.snapshot
-    val presentation = activationPresentation(snapshot, monitor.checking, true, true)
+    val presentation = activationPresentation(snapshot, monitor.checking, monitor.portalInstalled, monitor.aicrInstalled)
     Card(
         modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp),
     ) {
@@ -47,17 +47,14 @@ internal fun ActivationDiagnosticsPage(
     monitor: ActivationMonitorState,
     onBack: () -> Unit,
     onReloadApps: () -> Unit,
+    onApplyPortalChange: () -> Unit,
     onOpenProblemDiagnostics: () -> Unit,
 ) {
     val snapshot = monitor.snapshot
-    val portalInstalled = packageInstalled(context, PORTAL_PACKAGE)
-    val aicrInstalled = packageInstalled(context, AICR_PACKAGE)
-    val presentation = activationPresentation(snapshot, monitor.checking, portalInstalled, aicrInstalled)
-    val rootNeeds = presentation.rootNeeds
+    val presentation = activationPresentation(snapshot, monitor.checking, monitor.portalInstalled, monitor.aicrInstalled)
     val missingPermissions = presentation.missingPermissions
     val missingSoftware = presentation.missingSoftware
     val portalNeedsReload = presentation.portalNeedsReload
-    val hasUnknown = presentation.hasUnknown
     val scrollBehavior = MiuixScrollBehavior()
     Scaffold(
         topBar = {
@@ -84,19 +81,15 @@ internal fun ActivationDiagnosticsPage(
                         insideMargin = PaddingValues(horizontal = 16.dp, vertical = 12.dp),
                     )
                     SettingsNavigationPreference(
-                        title = if (monitor.checking) "正在检查…" else "重新检查",
+                        title = if (monitor.refreshing) "正在检查…" else "重新检查",
                         icon = MiuixIcons.Update,
-                        enabled = !monitor.checking,
+                        enabled = !monitor.refreshing,
                         onClick = monitor.refresh,
                     )
                 }
             }
             item("diagnostics-root") {
-                if (rootNeeds.isNotEmpty()) {
-                    SimpleDiagnosticSection("需要 Root", rootNeeds.map { it to "请在 Root 管理器中为${it}授权后重新检查" }) {
-                        monitor.refresh()
-                    }
-                }
+                SimpleDiagnosticSection("Root 授权", presentation.rootRows)
             }
             item("diagnostics-permissions") {
                 if (missingPermissions.isNotEmpty()) {
@@ -113,32 +106,14 @@ internal fun ActivationDiagnosticsPage(
                 }
             }
             item("diagnostics-reload") {
-                if (portalNeedsReload && missingSoftware.none { it.first == "小米传送门" }) {
+                val pending = presentation.pendingPortalSummary
+                if (pending != null) {
+                    SimpleDiagnosticSection("传送门更改待生效", listOf(RuntimeAction.Android.title to pending)) {
+                        onApplyPortalChange()
+                    }
+                } else if (portalNeedsReload && missingSoftware.none { it.first == "小米传送门" }) {
                     SimpleDiagnosticSection("传送门待检查", listOf(RuntimeAction.ReloadApps.title to
                         "确认 LSPosed 作用域和 Root 授权后，可尝试重载")) { onReloadApps() }
-                }
-            }
-            item("diagnostics-unknown") {
-                if (hasUnknown) {
-                    Card(Modifier.padding(horizontal = 12.dp, vertical = 3.dp)) {
-                        BasicComponent(
-                            title = "有状态暂时无法确认",
-                            summary = "可重新检查或导出诊断包",
-                            insideMargin = PaddingValues(horizontal = 16.dp, vertical = 12.dp),
-                        )
-                    }
-                }
-            }
-            item("diagnostics-clear") {
-                if (snapshot != null && !monitor.checking && rootNeeds.isEmpty()
-                    && missingPermissions.isEmpty() && missingSoftware.isEmpty() && !portalNeedsReload && !hasUnknown
-                ) {
-                    Card(Modifier.padding(horizontal = 12.dp, vertical = 3.dp)) {
-                        BasicComponent(
-                            title = "没有发现需要处理的项目",
-                            insideMargin = PaddingValues(horizontal = 16.dp, vertical = 12.dp),
-                        )
-                    }
                 }
             }
             item("diagnostics-actions") {
@@ -182,16 +157,4 @@ private fun SimpleDiagnosticSection(
             }
         }
     }
-}
-
-private const val PORTAL_PACKAGE = "com.miui.contentextension"
-private const val AICR_PACKAGE = "com.xiaomi.aicr"
-
-private fun packageInstalled(context: Context, packageName: String): Boolean? = try {
-    context.packageManager.getApplicationInfo(packageName, 0)
-    true
-} catch (_: android.content.pm.PackageManager.NameNotFoundException) {
-    false
-} catch (_: RuntimeException) {
-    null
 }

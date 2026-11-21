@@ -49,7 +49,7 @@ final class FanRuntime {
 
     private static final float BOTTOM_HONEYCOMB_FAN_GAP_DP = 10f;
 
-    private enum State {
+    enum State {
 
         IDLE,
         ARMED,
@@ -1006,17 +1006,16 @@ final class FanRuntime {
             outsideGestures.onCancel();
             return;
         }
-        if (state == State.ARMED && action == MotionEvent.ACTION_MOVE) {
-            if (cornerTapIsOutsideWindow)
+        if ((state == State.ARMED || state == State.CLAIMED) && action == MotionEvent.ACTION_MOVE) {
+            if (state == State.ARMED && cornerTapIsOutsideWindow)
                 outsideGestures.onMove(x, y);
-            float distance = GestureGeometry.distance(downX, downY, x, y);
-            GestureArbitrator.Decision decision = gestureArbitrator.update(corner, downX, downY, x, y, directionDecisionDistance);
-            if (decision == GestureArbitrator.Decision.PENDING && HyperOsProfile.CURRENT.nativeInputPriority && !triggerCapture.isCapturing()) {
-                decision = gestureArbitrator.earlyClaim(corner, downX, downY, x, y, fanEarlyClaimDistance);
-            }
-            if (decision == GestureArbitrator.Decision.PENDING)
+            boolean allowEarlyClaim = HyperOsProfile.CURRENT.nativeInputPriority && !triggerCapture.isCapturing();
+            float activationDistance = Math.min(width, height) * config.triggerPercent / 100f;
+            State next = advanceCornerMove(state, event, gestureArbitrator, corner, downX, downY,
+                    directionDecisionDistance, allowEarlyClaim, fanEarlyClaimDistance, activationDistance);
+            if (next == State.ARMED)
                 return;
-            if (decision == GestureArbitrator.Decision.CANCELLED) {
+            if (next == State.CANCELLED) {
                 state = State.CANCELLED;
                 if (startedWithTriggerCapture) {
                     int displayId = context.getDisplay() == null ? 0 : context.getDisplay().getDisplayId();
@@ -1026,18 +1025,17 @@ final class FanRuntime {
                 Log.i("Fan input cancelled outside inward-upward fan direction");
                 return;
             }
-            if (!triggerCapture.isCapturing())
-                pilfer(inputMonitor);
-            outsideGestures.onCancel();
-            state = State.CLAIMED;
-            cancelCapturedCornerTap();
-            Log.i("Fan input claimed after inward-upward direction distance=" + Math.round(distance) + " capture=" + (triggerCapture.isCapturing() ? "window" : "pilfer"));
-            activateFanIfReady(distance, x, y, width, height);
-            return;
-        }
-        if (state == State.CLAIMED && action == MotionEvent.ACTION_MOVE) {
-            float distance = GestureGeometry.distance(downX, downY, x, y);
-            activateFanIfReady(distance, x, y, width, height);
+            if (state == State.ARMED) {
+                if (!triggerCapture.isCapturing())
+                    pilfer(inputMonitor);
+                outsideGestures.onCancel();
+                cancelCapturedCornerTap();
+                float distance = GestureGeometry.distance(downX, downY, x, y);
+                Log.i("Fan input claimed after inward-upward direction distance=" + Math.round(distance) + " capture=" + (triggerCapture.isCapturing() ? "window" : "pilfer"));
+            }
+            state = next;
+            if (next == State.ACTIVE)
+                activateFan(x, y, width, height);
             return;
         }
         if (state == State.CANCELLED && action == MotionEvent.ACTION_MOVE)
@@ -1111,19 +1109,36 @@ final class FanRuntime {
         }
     }
 
-    private void activateFanIfReady(float distance, float x, float y, int width, int height) {
-        float threshold = Math.min(width, height) * config.triggerPercent / 100f;
-        if (distance >= threshold) {
-            state = State.ACTIVE;
-                float selectionRadius = selectionRadius(width, height);
-            float iconDiameter = iconDiameter(selectionRadius);
-            overlay.show(targets, corner, selectionRadius, iconDiameter, config.showSelectedAppName, config.fanShadow, config.fanAnimationsEnabled, config.bottomAnimationSpeed, config.fanRevealAmount, config.fanRotationDegrees, config.fanSelectionScalePercent, config.fanSelectionRing, config.fanLayoutMode, config.fanCustomOuterCount, config.fanCustomMiddleCount, config.fanCustomInnerCount, config.forceCircularIcons);
-            overlay.setSelectionTransformLevel(config.selectionTransformLevel);
-            if (BottomTriggerHapticPolicy.shouldVibrate(config.haptic, config.bottomTriggerHaptic))
-                vibrateTick();
-            int next = updateSelection(x, y, width, height, selectionRadius, iconDiameter, false);
-            updateBottomHoneycombSettleCandidate(x, y, width, height, next, selectionRadius, iconDiameter);
+    static State advanceCornerMove(State stage, MotionEvent event, GestureArbitrator arbiter,
+                                   GestureGeometry.Corner corner, float downX, float downY,
+                                   float decisionDistance, boolean allowEarlyClaim, float earlyDistance,
+                                   float activationDistance) {
+        int history = event.getHistorySize();
+        for (int i = 0; i <= history; i++) {
+            float x = i < history ? event.getHistoricalX(i) : event.getX();
+            float y = i < history ? event.getHistoricalY(i) : event.getY();
+            if (stage == State.ARMED) {
+                GestureArbitrator.Decision decision = arbiter.update(corner, downX, downY, x, y, decisionDistance);
+                if (decision == GestureArbitrator.Decision.PENDING && allowEarlyClaim)
+                    decision = arbiter.earlyClaim(corner, downX, downY, x, y, earlyDistance);
+                if (decision == GestureArbitrator.Decision.CANCELLED) return State.CANCELLED;
+                if (decision == GestureArbitrator.Decision.PENDING) continue;
+                stage = State.CLAIMED;
+            }
+            if (GestureGeometry.distance(downX, downY, x, y) >= activationDistance) return State.ACTIVE;
         }
+        return stage;
+    }
+
+    private void activateFan(float x, float y, int width, int height) {
+        float selectionRadius = selectionRadius(width, height);
+        float iconDiameter = iconDiameter(selectionRadius);
+        overlay.show(targets, corner, selectionRadius, iconDiameter, config.showSelectedAppName, config.fanShadow, config.fanAnimationsEnabled, config.bottomAnimationSpeed, config.fanRevealAmount, config.fanRotationDegrees, config.fanSelectionScalePercent, config.fanSelectionRing, config.fanLayoutMode, config.fanCustomOuterCount, config.fanCustomMiddleCount, config.fanCustomInnerCount, config.forceCircularIcons);
+        overlay.setSelectionTransformLevel(config.selectionTransformLevel);
+        if (BottomTriggerHapticPolicy.shouldVibrate(config.haptic, config.bottomTriggerHaptic))
+            vibrateTick();
+        int next = updateSelection(x, y, width, height, selectionRadius, iconDiameter, false);
+        updateBottomHoneycombSettleCandidate(x, y, width, height, next, selectionRadius, iconDiameter);
     }
 
     private boolean activateBottomHoneycomb(float x, float y, int width, int height) {

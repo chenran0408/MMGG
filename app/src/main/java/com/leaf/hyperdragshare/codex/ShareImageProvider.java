@@ -137,7 +137,9 @@ public final class ShareImageProvider extends ContentProvider {
         if (ModuleActivation.METHOD_REPORT_INJECTED.equals(method)) {
             enforcePortalCaller();
             ModuleActivation.recordInjected(contextOrThrow(), extras);
-            return Bundle.EMPTY;
+            Bundle response = new Bundle();
+            response.putInt(ModuleActivation.EXTRA_MODULE_UID, Process.myUid());
+            return response;
         }
         if (DragShareSettings.METHOD_GET_SETTINGS.equals(method)) {
             enforcePortalCaller();
@@ -326,7 +328,6 @@ public final class ShareImageProvider extends ContentProvider {
             throw new IllegalArgumentException("图片为空或超过32 MiB");
         }
 
-        SharedImageCleanupJob.cleanupBeforeImport(contextOrThrow());
         String token = UUID.randomUUID().toString();
         File temporary = new File(shareDirectory, token + ".tmp");
         long written;

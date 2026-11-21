@@ -65,7 +65,7 @@ private const val CHANNEL_DEBUG = "debug"
 private const val CHANNEL_BETA = "beta"
 private val RELEASE_ASSET_PATTERN = Pattern.compile("(?:MMGG|HyperDragShare)-(\\d+(?:\\.\\d+){1,3})-arm64-v8a\\.apk")
 
-private data class ReleaseInfo(
+internal data class ReleaseInfo(
     val versionName: String,
     val notes: String,
     val publishedAt: String,
@@ -331,8 +331,8 @@ internal fun AppUpdatePreference(title: String, enabled: Boolean = true) {
     }
 }
 
-private fun fetchLatestRelease(): ReleaseInfo {
-    val (page, finalPageUrl) = fetchGithubPage(RELEASE_PAGE)
+internal fun fetchLatestRelease(readPage: (String) -> Pair<String, String> = ::fetchGithubPage): ReleaseInfo {
+    val (page, finalPageUrl) = readPage(RELEASE_PAGE)
     val finalUrl = URL(finalPageUrl)
     val tag = finalUrl.path.substringAfterLast('/')
     if (finalUrl.protocol != "https" || finalUrl.host != "github.com" ||
@@ -344,7 +344,7 @@ private fun fetchLatestRelease(): ReleaseInfo {
     val fragmentSource = Regex("""<include-fragment[^>]+src=["'](https://github\.com/chenran0408/MMGG/releases/expanded_assets/v${Regex.escape(version)})["']""")
         .find(page)?.groupValues?.get(1)
         ?: throw IllegalArgumentException("正式版页面没有提供可验证的安装包列表。")
-    val (assetsHtml, assetsUrl) = fetchGithubPage(fragmentSource)
+    val (assetsHtml, assetsUrl) = readPage(fragmentSource)
     val assetsPage = URL(assetsUrl)
     if (assetsPage.protocol != "https" || assetsPage.host != "github.com" ||
         assetsPage.path != "/chenran0408/MMGG/releases/expanded_assets/v$version") {

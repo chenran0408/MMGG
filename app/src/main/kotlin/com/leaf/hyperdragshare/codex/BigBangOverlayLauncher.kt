@@ -100,22 +100,25 @@ object BigBangOverlayLauncher {
             return false
         }
         if (text.isBlank()) return false
+        if (main.looper.isCurrentThread) {
+            return open(context.applicationContext, text, x, y, before = before, after = after)
+        }
         main.post { open(context.applicationContext, text, x, y, before = before, after = after) }
         return true
     }
 
     private fun open(app: Context, text: String, x: Int, y: Int, savedState: Bundle? = null,
         before: String? = null, after: String? = null, pressConfirmedAt: Long = 0L, copyDirect: Boolean = false,
-        dragPreview: Boolean = false, host: android.app.Activity? = null, operation: String = "-") {
+        dragPreview: Boolean = false, host: android.app.Activity? = null, operation: String = "-"): Boolean {
         if (host == null && pressConfirmedAt > 0L && pressConfirmedAt == cancelledPressAt) {
             OperationTrace.event(operation, "text_window", "ignored_cancelled")
-            return
+            return false
         }
         if (app.getSystemService(android.app.KeyguardManager::class.java).isKeyguardLocked) {
             OperationTrace.event(operation, "text_window", "rejected_locked")
             Toast.makeText(app, "请解锁后打开分词窗口", Toast.LENGTH_SHORT).show()
             host?.finish()
-            return
+            return false
         }
         if (activeHost === host) activeHost = null
         active?.dismiss()
@@ -133,13 +136,13 @@ object BigBangOverlayLauncher {
             override fun collapse() = overlay.dismiss()
             override fun searchDirect(text: String) {
                 SearchOverlayWindow.show(context, overlay.window.decorView, text, BoomActionHandler.SEARCH_WEB,
-                    openExternal = { launch(CopyDirectBrowser.route(app, it)) })
+                    openExternal = ::openExternal)
             }
             override fun search(text: String, type: Int) {
                 SearchOverlayWindow.show(context, overlay.window.decorView, text, type,
                     openExternal = { launch(it) })
             }
-            override fun openExternal(intent: Intent) = launch(CopyDirectBrowser.route(app, intent))
+            override fun openExternal(intent: Intent) = launch(intent, useDirectBrowser = true)
             override fun dragText(source: View, text: String): Boolean {
                 val density = context.resources.displayMetrics.density
                 val colors = OverlayThemeColors.colors(DragShareSettings.readLocal(context).isDarkTheme(context))
@@ -177,9 +180,10 @@ object BigBangOverlayLauncher {
                 }
                 return started
             }
-            private fun launch(intent: Intent) {
+            private fun launch(intent: Intent, useDirectBrowser: Boolean = false) {
                 try {
-                    context.startActivity(intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+                    val target = if (useDirectBrowser) CopyDirectBrowser.route(app, intent) else intent
+                    context.startActivity(target.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
                     overlay.dismiss()
                 } catch (error: android.content.ActivityNotFoundException) {
                     report(app, error)
@@ -214,6 +218,7 @@ object BigBangOverlayLauncher {
             session.open(text, x, y, savedState, before, after, dragPreview)
             if (copyDirect) session.showDirectActions(text)
         }
+        return shown
     }
 
     private fun report(context: Context, error: Exception) {

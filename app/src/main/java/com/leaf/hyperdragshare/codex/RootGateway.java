@@ -19,6 +19,10 @@ final class RootGateway {
         input.start();
     }
 
+    void retryFailedInput() {
+        if (started && !input.failureReason().isEmpty()) input.start();
+    }
+
     void stopInput() {
         started = false;
         input.stop();

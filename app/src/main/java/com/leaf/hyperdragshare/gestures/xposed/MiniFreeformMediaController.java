@@ -1,7 +1,7 @@
 package com.leaf.hyperdragshare.gestures.xposed;
 
 import android.content.Context;
-import android.content.pm.PackageManager;
+import android.content.ComponentName;
 import android.graphics.Rect;
 import android.media.AudioManager;
 import android.media.AudioPlaybackConfiguration;
@@ -9,6 +9,7 @@ import android.media.session.MediaController;
 import android.media.session.MediaSessionManager;
 import android.media.session.PlaybackState;
 import android.os.Handler;
+import android.os.UserHandle;
 import android.view.View;
 import android.widget.Button;
 import android.widget.LinearLayout;
@@ -53,6 +54,7 @@ final class MiniFreeformMediaController {
         /** Returns true only when the platform call completed successfully. */
         boolean write(String packageName, Object player, float volume);
         Object player(String packageName);
+        default boolean canAcquireMute(String packageName) { return true; }
         default boolean hasPackageVolume() { return false; }
         default boolean samePlayer(Object first, Object second) { return first == second; }
         default List<Object> players(String packageName) {
@@ -64,20 +66,30 @@ final class MiniFreeformMediaController {
     static final class ControllerSessionSource implements SessionSource {
         private final MediaSessionManager manager;
         private final Handler handler;
+        private final UserHandle user;
         private final MediaSessionManager.OnActiveSessionsChangedListener listener;
         private Runnable changed;
 
-        ControllerSessionSource(MediaSessionManager manager, Handler handler) {
+        ControllerSessionSource(MediaSessionManager manager, Handler handler, UserHandle user) {
             this.manager = manager;
             this.handler = handler;
+            this.user = user;
             listener = controllers -> {
                 Runnable current = changed;
                 if (current != null) current.run();
             };
         }
 
+        @SuppressWarnings("unchecked")
         @Override public List<Session> activeSessions() {
-            List<MediaController> controllers = manager.getActiveSessions(null);
+            List<MediaController> controllers;
+            try {
+                controllers = (List<MediaController>) MediaSessionManager.class
+                        .getMethod("getActiveSessionsForUser", ComponentName.class, UserHandle.class)
+                        .invoke(manager, null, user);
+            } catch (ReflectiveOperationException error) {
+                throw new IllegalStateException("Cannot query media sessions for " + user, error);
+            }
             java.util.ArrayList<Session> result = new java.util.ArrayList<>();
             if (controllers != null) {
                 for (MediaController controller : controllers) {
@@ -91,10 +103,14 @@ final class MiniFreeformMediaController {
             if (changed == callback) return true;
             if (changed != null) unregister(changed);
             try {
-                manager.addOnActiveSessionsChangedListener(listener, null, handler);
+                java.util.concurrent.Executor main = handler::post;
+                MediaSessionManager.class.getMethod("addOnActiveSessionsChangedListener",
+                        ComponentName.class, UserHandle.class, java.util.concurrent.Executor.class,
+                        MediaSessionManager.OnActiveSessionsChangedListener.class)
+                        .invoke(manager, null, user, main, listener);
                 changed = callback;
                 return true;
-            } catch (RuntimeException error) {
+            } catch (ReflectiveOperationException | RuntimeException error) {
                 changed = null;
                 Log.e("Cannot observe active media sessions", error);
                 return false;
@@ -179,31 +195,32 @@ final class MiniFreeformMediaController {
     /** Xiaomi's SystemUI AudioManager extension used by the reference decoration. */
     static final class XiaomiPlayerVolume implements Volume {
         private final AudioManager audioManager;
+        private final Context context;
+        private final int taskUserId;
         private final int appUid;
         private final Method readMethod;
         private final Method writeMethod;
         private final Method clientUidMethod;
         private final Method playerIdMethod;
 
-        XiaomiPlayerVolume(Context context, String packageName) {
+        XiaomiPlayerVolume(Context context, String packageName, int taskUserId) {
+            this.context = context;
+            this.taskUserId = taskUserId;
             audioManager = context.getSystemService(AudioManager.class);
-            int uid = -1;
             Method read = null;
             Method write = null;
             try {
-                if (audioManager == null) throw new IllegalStateException("AudioManager unavailable");
-                uid = context.getPackageManager().getApplicationInfo(packageName, 0).uid;
-                read = audioManager.getClass().getMethod("getPlayerVolume", String.class);
-                write = audioManager.getClass().getMethod("setPlayerVolume",
+                read = AudioManager.class.getMethod("getPlayerVolume", String.class);
+                write = AudioManager.class.getMethod("setPlayerVolume",
                         AudioPlaybackConfiguration.class, float.class);
                 read.setAccessible(true);
                 write.setAccessible(true);
-            } catch (PackageManager.NameNotFoundException | NoSuchMethodException
-                     | SecurityException error) {
+            } catch (NoSuchMethodException | SecurityException error) {
                 // This optional control is absent on Android builds without Xiaomi's API.
             }
             Method ownerMethod = resolveClientUidMethod(AudioPlaybackConfiguration.class);
-            appUid = uid;
+            appUid = audioManager != null && read != null && write != null && ownerMethod != null
+                    ? MiniMediaUser.isolatedVolumeUid(context, packageName, taskUserId) : -1;
             readMethod = read;
             writeMethod = write;
             clientUidMethod = ownerMethod;
@@ -226,6 +243,13 @@ final class MiniFreeformMediaController {
 
         @Override public boolean hasPackageVolume() { return true; }
 
+        boolean available() { return appUid >= 0; }
+
+        @Override public boolean canAcquireMute(String packageName) {
+            // A second install may have appeared since this mini window was opened.
+            return available() && appUid == MiniMediaUser.isolatedVolumeUid(context, packageName, taskUserId);
+        }
+
         @Override public boolean samePlayer(Object first, Object second) {
             if (first == second) return true;
             if (first == null || second == null || playerIdMethod == null) return false;
@@ -238,7 +262,7 @@ final class MiniFreeformMediaController {
         }
 
         @Override public float read(String packageName) {
-            if (readMethod == null) return Float.NaN;
+            if (!available()) return Float.NaN;
             try {
                 Object value = readMethod.invoke(audioManager, packageName);
                 return value instanceof Number ? ((Number) value).floatValue() : Float.NaN;
@@ -249,7 +273,7 @@ final class MiniFreeformMediaController {
         }
 
         @Override public boolean write(String packageName, Object player, float volume) {
-            if (writeMethod == null || !(player instanceof AudioPlaybackConfiguration)) return false;
+            if (!available() || !(player instanceof AudioPlaybackConfiguration)) return false;
             try {
                 writeMethod.invoke(audioManager, player, volume);
                 return true;
@@ -296,7 +320,8 @@ final class MiniFreeformMediaController {
             if (active()) return;
             List<Object> candidates = volume.players(packageName);
             float current = volume.read(packageName);
-            if (candidates.isEmpty() || !Float.isFinite(current) || current <= 0f) return;
+            if (candidates.isEmpty() || !Float.isFinite(current) || current <= 0f
+                    || !volume.canAcquireMute(packageName)) return;
             List<Object> changed = new java.util.ArrayList<>();
             for (Object candidate : candidates) {
                 if (!volume.write(packageName, candidate, 0f)) {
@@ -430,12 +455,10 @@ final class MiniFreeformMediaController {
 
     boolean isMuted() { return muteLease.active(); }
 
-    /** Toggles the current mini task's player volume when Xiaomi's per-player API is available. */
-    boolean toggleMute() {
-        if (!enabled || selected == null || packageName == null) return false;
-        if (muteLease.active()) return muteLease.release(volume);
-        muteLease.acquire(packageName, volume);
-        return muteLease.active();
+    boolean unmuteForCurrentTask() {
+        if (!muteLease.release(volume)) return false;
+        autoMute = false;
+        return true;
     }
 
     private void refreshSession() {

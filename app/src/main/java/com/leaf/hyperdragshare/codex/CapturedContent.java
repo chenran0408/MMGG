@@ -153,8 +153,8 @@ final class CapturedContent {
         boolean currentReference = current.imageOrigin == ImageOrigin.REFERENCED_MEDIA;
         boolean nextReference = replacement.imageOrigin == ImageOrigin.REFERENCED_MEDIA;
         if (currentReference != nextReference) return nextReference;
-        boolean currentFile = current.encodedImage != null || current.mediaUri != null;
-        boolean nextFile = replacement.encodedImage != null || replacement.mediaUri != null;
+        boolean currentFile = current.hasSourceFile();
+        boolean nextFile = replacement.hasSourceFile();
         if (currentFile != nextFile) return nextFile;
         return (long) replacement.bitmap.getWidth() * replacement.bitmap.getHeight()
                 >= (long) current.bitmap.getWidth() * current.bitmap.getHeight();
@@ -168,6 +168,22 @@ final class CapturedContent {
 
     boolean isImage() {
         return kind == Kind.IMAGE;
+    }
+
+    boolean hasSourceFile() {
+        return encodedImage != null || mediaUri != null;
+    }
+
+    /** Both captures belong to the same press. A reported view rectangle must include its touch. */
+    boolean keepsSourceFileOver(CapturedContent preview, float x, float y) {
+        return hasSourceFile() && preview != null && preview.isImage() && !preview.hasSourceFile()
+                && sourcePackage != null && sourcePackage.equals(preview.sourcePackage)
+                && coversTouch(sourceBounds, x, y) && coversTouch(preview.sourceBounds, x, y);
+    }
+
+    private static boolean coversTouch(Rect bounds, float x, float y) {
+        return bounds == null || bounds.isEmpty()
+                || (x >= bounds.left && x < bounds.right && y >= bounds.top && y < bounds.bottom);
     }
 
     String mimeType() {

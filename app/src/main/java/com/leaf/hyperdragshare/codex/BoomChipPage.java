@@ -39,9 +39,7 @@ public class BoomChipPage {
     final View mMask;
     final CustomScrollView mScroller;
     final View mCancel;
-    final View mBoomPage;
     final BoomActionHandler mBoomActionHandler;
-    final View.OnClickListener mDismissClickListener;
 
     private final SwipeSelectView mBoomConent;
     private final View mSelectionRegion;
@@ -132,7 +130,6 @@ public class BoomChipPage {
         mContext = context;
         mActions = actions;
         mEnableLegacyMask = enableLegacyMask;
-        mBoomPage = contentView;
         mBoomTable = contentView.findViewById(R.id.boom_table);
         mBoomConent = (SwipeSelectView) contentView.findViewById(R.id.boom_content);
         mSelectionRegion = contentView.findViewById(R.id.boom_selection_region);
@@ -158,17 +155,7 @@ public class BoomChipPage {
                 + Math.round(5f * resources.getDisplayMetrics().density);
         mLayout = new BoomWordsLayout(mContext);
         mBoomConent.setBoomPage(this);
-        mDismissClickListener = new View.OnClickListener() {
-            @Override
-            public void onClick(View v) {
-                mActions.dismiss();
-            }
-        };
-        mBoomPage.setOnClickListener(mDismissClickListener);
-        mBoomTable.setOnClickListener(mDismissClickListener);
-        mScroller.setOnClickListener(mDismissClickListener);
-        mBoomConent.setOnClickListener(mDismissClickListener);
-        mCancel.setOnClickListener(mDismissClickListener);
+        mCancel.setOnClickListener(v -> mActions.dismiss());
         mBoomActionHandler = new BoomActionHandler(this);
         mScroller.setOnScrollChangeListener(new View.OnScrollChangeListener() {
             @Override
@@ -487,10 +474,6 @@ public class BoomChipPage {
             mBoomConent.getChildAt(i).animate().cancel();
         }
         mScroller.animate().cancel();
-        mBoomPage.setOnClickListener(null);
-        mBoomTable.setOnClickListener(null);
-        mScroller.setOnClickListener(null);
-        mBoomConent.setOnClickListener(null);
         mCancel.setOnClickListener(null);
         mScroller.setOnScrollChangeListener(null);
         mScroller.setOnEdgeDragListener(null);

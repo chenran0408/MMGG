@@ -55,7 +55,9 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
+import java.util.concurrent.LinkedBlockingQueue;
+import java.util.concurrent.ThreadPoolExecutor;
+import java.util.concurrent.TimeUnit;
 
 /** Runtime launcher surface for targets that do not fit in the configured fan. */
 final class MoreAppsOverlayController {
@@ -77,16 +79,14 @@ final class MoreAppsOverlayController {
     private final Handler handler;
     private final WindowManager windowManager;
     private final Runnable visibilityChanged;
-    private final ExecutorService loader = Executors.newSingleThreadExecutor(r -> {
-        Thread thread = new Thread(r, "MoreAppsCatalog");
-        thread.setPriority(Thread.NORM_PRIORITY - 1);
-        return thread;
-    });
+    private final ExecutorService loader = serialWorker("MoreAppsCatalog");
+    private final ExecutorService iconLoader = serialWorker("MoreAppsIcons");
     private volatile List<Entry> cachedEntries;
     private final Set<String> changedPackages = new LinkedHashSet<>();
     private final Set<Entry> visibleIconRequests = new LinkedHashSet<>();
     private final Runnable loadIcons = this::loadRequestedIcons;
-    private boolean activityCatalogReady; // Accessed only by the catalog loader.
+    private volatile boolean activityCatalogFailed;
+    private volatile boolean shortcutCatalogFailed;
     private boolean shortcutCatalogChanged;
     private boolean loading;
     private boolean iconLoadScheduled;
@@ -129,6 +129,14 @@ final class MoreAppsOverlayController {
 
     private final ContentObserver catalogChanges;
 
+    private static ExecutorService serialWorker(String name) {
+        return new ThreadPoolExecutor(0, 1, 30L, TimeUnit.SECONDS, new LinkedBlockingQueue<>(), task -> {
+            Thread thread = new Thread(task, name);
+            thread.setPriority(Thread.NORM_PRIORITY - 1);
+            return thread;
+        });
+    }
+
     MoreAppsOverlayController(Context context, Handler handler, Runnable visibilityChanged) {
         this.context = context;
         this.handler = handler;
@@ -144,6 +152,7 @@ final class MoreAppsOverlayController {
         filter.addAction(Intent.ACTION_PACKAGE_ADDED);
         filter.addAction(Intent.ACTION_PACKAGE_REMOVED);
         filter.addAction(Intent.ACTION_PACKAGE_REPLACED);
+        filter.addAction(Intent.ACTION_PACKAGE_CHANGED);
         filter.addDataScheme("package");
         try { context.registerReceiver(packageChanges, filter, Context.RECEIVER_NOT_EXPORTED); }
         catch (Throwable error) { Log.e("Cannot observe app catalog changes", error); }
@@ -355,7 +364,8 @@ final class MoreAppsOverlayController {
                 applyFilters();
                 Log.i("More-apps panel opened cache=hit elapsed="
                         + (android.os.SystemClock.elapsedRealtime() - start) + "ms");
-                if (!changedPackages.isEmpty() || shortcutCatalogChanged) loadEntriesAsync();
+                if (activityCatalogFailed || shortcutCatalogFailed
+                        || !changedPackages.isEmpty() || shortcutCatalogChanged) loadEntriesAsync();
             } else {
                 applyFilters();
                 loadEntriesAsync();
@@ -452,7 +462,7 @@ final class MoreAppsOverlayController {
     private List<Entry> loadEntries(List<Entry> previous, Set<String> changedPackages,
                                     boolean refreshShortcutCatalog,
                                     java.util.function.Consumer<List<Entry>> onAppsReady) {
-        android.content.pm.LauncherApps apps;
+        android.content.pm.LauncherApps apps = null;
         ArrayList<Entry> out = new ArrayList<>();
         Map<String, Entry> oldByKey = new HashMap<>();
         if (previous != null) {
@@ -461,11 +471,8 @@ final class MoreAppsOverlayController {
         Set<String> seen = new LinkedHashSet<>();
         try {
             apps = context.getSystemService(android.content.pm.LauncherApps.class);
-            if (apps == null) {
-                activityCatalogReady = false;
-                return previous == null ? Collections.emptyList() : previous;
-            }
-            if (previous == null || !activityCatalogReady) {
+            if (apps == null) throw new IllegalStateException("LauncherApps unavailable");
+            if (previous == null || activityCatalogFailed) {
                 appendActivities(apps.getActivityList(null, Process.myUserHandle()), out, seen);
             } else {
                 for (Entry entry : previous) {
@@ -478,17 +485,17 @@ final class MoreAppsOverlayController {
                     appendActivities(apps.getActivityList(pkg, Process.myUserHandle()), out, seen);
                 }
             }
-            activityCatalogReady = true;
+            activityCatalogFailed = false;
         } catch (RuntimeException error) {
-            // The next refresh must re-read packages whose last change could not be applied.
-            activityCatalogReady = false;
+            activityCatalogFailed = true;
             Log.e("Cannot read runtime launcher activities", error);
-            return previous == null ? Collections.emptyList() : previous;
+            restoreSource(previous, out, seen, 0, entry -> !entry.shortcut);
         }
 
         // The default category can be searched before the shortcut service returns.
         if (previous == null) onAppsReady.accept(sortedEntries(out));
-        int activityCount = out.size();
+        int sourceStart = out.size();
+        boolean systemShortcutsFailed = false;
         try {
             android.content.pm.LauncherApps.ShortcutQuery query =
                     new android.content.pm.LauncherApps.ShortcutQuery().setQueryFlags(
@@ -496,14 +503,16 @@ final class MoreAppsOverlayController {
                                     | android.content.pm.LauncherApps.ShortcutQuery.FLAG_MATCH_MANIFEST
                                     | android.content.pm.LauncherApps.ShortcutQuery.FLAG_MATCH_PINNED
                                     | android.content.pm.LauncherApps.ShortcutQuery.FLAG_MATCH_CACHED);
-            List<android.content.pm.ShortcutInfo> shortcuts = apps.getShortcuts(query,
+            List<android.content.pm.ShortcutInfo> shortcuts = apps == null ? null : apps.getShortcuts(query,
                     Process.myUserHandle());
-            if (shortcuts != null) for (android.content.pm.ShortcutInfo info : shortcuts) {
+            if (shortcuts == null) throw new IllegalStateException("System shortcut directory unavailable");
+            for (android.content.pm.ShortcutInfo info : shortcuts) {
                 if (info == null || !info.isEnabled()) continue;
                 String key = info.getPackage() + "/" + info.getId();
                 if (!seen.add(key)) continue;
                 Entry cached = oldByKey.get(key);
-                if (cached != null && !changedPackages.contains(info.getPackage())) {
+                if (cached != null && !cached.target.isLauncherShortcut()
+                        && !changedPackages.contains(info.getPackage())) {
                     out.add(cached);
                     continue;
                 }
@@ -513,10 +522,19 @@ final class MoreAppsOverlayController {
                 out.add(entry(key, name, true, null, target,
                         new IconRequest(null, info, null, null, 0)));
             }
+        } catch (RuntimeException error) {
+            systemShortcutsFailed = true;
+            Log.e("Cannot read runtime system shortcuts", error);
+            restoreSource(previous, out, seen, sourceStart,
+                    entry -> entry.shortcut && !entry.target.isLauncherShortcut());
+        }
+
+        sourceStart = out.size();
+        try {
             Bundle catalog = context.getContentResolver().call(
                     ConfigContract.URI, "get_catalog", null, null);
-            String raw = catalog == null ? null
-                    : catalog.getString(ConfigContract.KEY_SHORTCUT_CATALOG);
+            if (catalog == null) throw new IllegalStateException("Desktop shortcut directory unavailable");
+            String raw = catalog.getString(ConfigContract.KEY_SHORTCUT_CATALOG);
             if (raw != null && !raw.isEmpty()) {
                 JSONArray items = new JSONArray(raw);
                 for (int i = 0; i < items.length(); i++) {
@@ -528,7 +546,7 @@ final class MoreAppsOverlayController {
                     String key = pkg + "/" + id;
                     if (pkg.isEmpty() || id.isEmpty() || intentUri.isEmpty() || !seen.add(key)) continue;
                     Entry cached = oldByKey.get(key);
-                    if (cached != null && !changedPackages.contains(pkg)
+                    if (cached != null && cached.target.isLauncherShortcut() && !changedPackages.contains(pkg)
                             && !refreshShortcutCatalog) {
                         out.add(cached);
                         continue;
@@ -541,14 +559,24 @@ final class MoreAppsOverlayController {
                             new IconRequest(null, null, pkg, id, userId)));
                 }
             }
-        } catch (Throwable error) {
-            Log.e("Cannot read runtime shortcuts", error);
-            if (previous != null) {
-                out.subList(activityCount, out.size()).clear();
-                for (Entry entry : previous) if (entry.shortcut) out.add(entry);
-            }
+            shortcutCatalogFailed = systemShortcutsFailed;
+        } catch (RuntimeException | org.json.JSONException error) {
+            shortcutCatalogFailed = true;
+            Log.e("Cannot read runtime desktop shortcuts", error);
+            restoreSource(previous, out, seen, sourceStart, entry -> entry.target.isLauncherShortcut());
         }
         return sortedEntries(out);
+    }
+
+    private static void restoreSource(List<Entry> previous, List<Entry> out, Set<String> seen,
+                                      int sourceStart, java.util.function.Predicate<Entry> fromSource) {
+        out.subList(sourceStart, out.size()).clear();
+        seen.clear();
+        for (Entry entry : out) seen.add(entry.key);
+        if (previous == null) return;
+        for (Entry entry : previous) {
+            if (fromSource.test(entry) && seen.add(entry.key)) out.add(entry);
+        }
     }
 
     private void appendActivities(List<android.content.pm.LauncherActivityInfo> activities,
@@ -613,7 +641,7 @@ final class MoreAppsOverlayController {
         if (batch.isEmpty()) return;
 
         iconLoadRunning = true;
-        loader.execute(() -> {
+        iconLoader.execute(() -> {
             android.content.pm.LauncherApps apps = context.getSystemService(android.content.pm.LauncherApps.class);
             List<LoadedIcon> loaded = new ArrayList<>(batch.size());
             for (Entry entry : batch) {
@@ -717,6 +745,8 @@ final class MoreAppsOverlayController {
         if (noResults) {
             empty.setText(cachedEntries == null ? "正在加载应用…"
                     : mode == MODE_SHORTCUTS && loadingShortcuts ? "正在加载快捷方式…"
+                    : mode == MODE_ALL && activityCatalogFailed ? "应用列表读取失败，重新打开可重试"
+                    : mode == MODE_SHORTCUTS && shortcutCatalogFailed ? "快捷方式未完整载入，重新打开可重试"
                     : results.pendingColors()
                             ? "正在识别图标颜色…" : "没有匹配结果");
         }

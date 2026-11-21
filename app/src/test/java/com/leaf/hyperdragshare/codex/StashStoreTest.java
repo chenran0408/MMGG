@@ -272,6 +272,16 @@ public final class StashStoreTest {
     }
 
     @Test
+    public void repeatedTextDeliveryKeepsTheFirstShareAndAllowsANewShare() throws IOException {
+        String id = java.util.UUID.randomUUID().toString();
+        assertEquals(1, store.importText("same text", id));
+        assertEquals(0, store.importText("same text", id));
+        assertEquals(1, store.listEntries().size());
+        assertEquals(1, store.importText("same text", java.util.UUID.randomUUID().toString()));
+        assertEquals(2, store.listEntries().size());
+    }
+
+    @Test
     public void imageBatchSurvivesReopenWithItsOriginalOrderAndIndependentImports() throws IOException {
         File first = new File(context.getCacheDir(), "batch-first.png");
         File second = new File(context.getCacheDir(), "batch-second.png");

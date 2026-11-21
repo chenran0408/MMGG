@@ -87,15 +87,22 @@ final class MiniFreeformQuickMenuController {
         String prefix = enlarged ? "large_" : "small_";
         int id = target.taskId();
         ImageView audio = action("", null);
-        boolean muted = mutedState.getAsBoolean();
+        boolean canMute = toggleMute != null;
+        boolean muted = canMute && mutedState.getAsBoolean();
         updateMuteIcon(audio, prefix, muted);
-        audio.setOnClickListener(v -> {
-            if (!isCurrent(mask)) return;
-            if (toggleMute.getAsBoolean()) {
-                v.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP);
-                updateMuteIcon(audio, prefix, mutedState.getAsBoolean());
-            }
-        });
+        if (canMute) {
+            audio.setOnClickListener(v -> {
+                if (!isCurrent(mask)) return;
+                if (toggleMute.getAsBoolean()) {
+                    v.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP);
+                    updateMuteIcon(audio, prefix, mutedState.getAsBoolean());
+                }
+            });
+        } else {
+            audio.setEnabled(false);
+            audio.setAlpha(.45f);
+            audio.setContentDescription("无法单独静音此应用");
+        }
         buttons.addView(audio, new LinearLayout.LayoutParams(size, size));
         ImageView resize = action(enlarged ? "恢复原尺寸" : "放大",
                 enlarged ? "large_scale_min" : "small_scale_max");
@@ -134,7 +141,7 @@ final class MiniFreeformQuickMenuController {
                 }
             };
             session = new Session(mask, release, ticker);
-            mask.postDelayed(ticker, 400L);
+            if (canMute) mask.postDelayed(ticker, 400L);
         } catch (ReflectiveOperationException | RuntimeException | LinkageError error) {
             Log.e("Cannot mount menu on mini task=" + id, error);
             return false;

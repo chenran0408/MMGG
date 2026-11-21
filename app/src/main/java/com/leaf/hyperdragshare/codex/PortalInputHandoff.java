@@ -16,13 +16,14 @@ final class PortalInputHandoff {
 
     boolean acceptFallback(int action, long downTime, boolean rootReady) {
         if (action != MotionEvent.ACTION_DOWN) return fallbackDownTime == downTime;
-        if (rootReady || downTime <= fallbackDownTime) return false;
+        // After a missing UP, Root may already have ignored the next DOWN. Finish it on the fallback.
+        if (!shouldListen(rootReady) || downTime <= fallbackDownTime) return false;
         fallbackDownTime = downTime;
         return true;
     }
 
-    boolean missedFallbackEnd(long nextDownTime, boolean rootReady) {
-        return rootReady && fallbackActive() && nextDownTime > fallbackDownTime;
+    boolean missedFallbackEnd(long nextDownTime) {
+        return fallbackActive() && nextDownTime > fallbackDownTime;
     }
 
     void finishFallback() {

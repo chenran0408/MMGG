@@ -126,7 +126,8 @@ object ImageOcrOverlay {
     private fun open(context: Context, uri: Uri, qr: Boolean, owner: android.view.View?,
         onResult: ((String?) -> Unit)? = null, pressConfirmedAt: Long = 0L,
         operation: String = "-"): Boolean {
-        if (!Settings.canDrawOverlays(context) && ForegroundActivity.resumed() == null) {
+        val canOverlay = Settings.canDrawOverlays(context)
+        if (!canOverlay && ForegroundActivity.resumed() == null) {
             main.post {
                 android.widget.Toast.makeText(context.applicationContext, "请先在模块设置中允许悬浮窗权限",
                     android.widget.Toast.LENGTH_LONG).show()
@@ -146,7 +147,8 @@ object ImageOcrOverlay {
                 onResult?.invoke(null)
                 return@post
             }
-            val host = ForegroundActivity.resumed()
+            // The stash keeps its overlay open for Back. An Activity dialog would sit underneath it.
+            val host = if (onResult != null && canOverlay) null else ForegroundActivity.resumed()
             val job = Job(app, uri, qr, owner, onResult, host, operation = operation)
             active = job
             val shown = job.window.show(pressConfirmedAt)

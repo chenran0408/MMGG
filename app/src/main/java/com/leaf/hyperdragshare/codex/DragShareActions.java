@@ -59,8 +59,7 @@ final class DragShareActions {
             return;
         }
         if (target.isSaveToLocal()) {
-            boolean hasSourceMedia = payload.encodedImage != null || payload.mediaUri != null;
-            saveImageLocally(payload.bitmap, stagedUri, payload.mimeType(), hasSourceMedia, operation);
+            saveImageLocally(payload.bitmap, stagedUri, payload.mimeType(), payload.hasSourceFile(), operation);
             return;
         }
         if (target.isCopyToClipboard()) {
@@ -184,22 +183,21 @@ final class DragShareActions {
 
     private void saveImageLocally(Bitmap bitmap, Uri stagedImage, String mimeType,
             boolean hasSourceMedia, String operation) {
-        if ((!hasSourceMedia || stagedImage == null) && (bitmap == null || bitmap.isRecycled())) {
-            OperationTrace.event(operation, "local_save", "rejected_bitmap_unavailable", stagedImage);
+        if (stagedImage == null && (hasSourceMedia || bitmap == null || bitmap.isRecycled())) {
+            OperationTrace.event(operation, "local_save",
+                    hasSourceMedia ? "rejected_source_unavailable" : "rejected_bitmap_unavailable", stagedImage);
             showToast("保存图片失败");
             return;
         }
         Thread worker = new Thread(() -> {
             try {
-                if (hasSourceMedia && stagedImage != null) {
+                if (stagedImage != null) {
                     LocalImageSaver.save(context, stagedImage, mimeType);
-                    OperationTrace.event(operation, "local_save", "completed_source", stagedImage);
-                    log("saved original image source");
                 } else {
                     LocalImageSaver.save(context, bitmap);
-                    OperationTrace.event(operation, "local_save", "completed_preview_png");
-                    log("saved image preview as PNG");
                 }
+                OperationTrace.event(operation, "local_save",
+                        hasSourceMedia ? "completed_source" : "completed_preview_png", stagedImage);
                 traceAccessibility("local save succeeded");
                 mainHandler.post(() -> showToast("已保存到本地", Toast.LENGTH_LONG));
             } catch (Throwable error) {

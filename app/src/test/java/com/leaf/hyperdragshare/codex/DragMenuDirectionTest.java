@@ -14,6 +14,29 @@ import static org.junit.Assert.assertTrue;
 @RunWith(RobolectricTestRunner.class)
 @Config(manifest = Config.NONE, sdk = 35)
 public final class DragMenuDirectionTest {
+    @Test public void circleFollowsTheFirstEdgeAcrossItsFullTriggerBand() throws Exception {
+        var context = RuntimeEnvironment.getApplication();
+        DragShareController controller = new DragShareController(context);
+        float density = context.getResources().getDisplayMetrics().density;
+        Bundle values = new Bundle();
+        values.putInt("ui_style", DragShareSettings.STYLE_CIRCLE);
+        field("settings").set(controller, DragShareSettings.fromBundle(values));
+        field("screenWidth").setInt(controller, Math.round(400 * density));
+        field("screenHeight").setInt(controller, Math.round(800 * density));
+        field("configuredSimpleMenuPosition").setInt(controller, DragShareSettings.SIMPLE_MENU_POSITION_DRAG_EDGE);
+        field("simpleMenuPosition").setInt(controller, DragShareSettings.SIMPLE_MENU_POSITION_BOTTOM);
+        var update = DragShareController.class.getDeclaredMethod("updateGestureMenuPosition", float.class, float.class);
+        update.setAccessible(true);
+        try {
+            update.invoke(controller, 78 * density, 400 * density);
+            assertEquals(DragShareSettings.SIMPLE_MENU_POSITION_BOTTOM, field("simpleMenuPosition").getInt(controller));
+            update.invoke(controller, 74 * density, 400 * density);
+            assertEquals(DragShareSettings.SIMPLE_MENU_POSITION_LEFT, field("simpleMenuPosition").getInt(controller));
+        } finally {
+            controller.destroy();
+        }
+    }
+
     @Test public void nearHandMovesToDraggedSideBeforeTargetsFinishLoading() throws Exception {
         DragShareController controller = new DragShareController(RuntimeEnvironment.getApplication());
         var update = DragShareController.class.getDeclaredMethod("updateGestureMenuPosition", float.class, float.class);

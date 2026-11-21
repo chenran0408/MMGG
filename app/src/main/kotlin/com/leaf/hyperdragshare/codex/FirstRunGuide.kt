@@ -53,11 +53,11 @@ internal fun FirstRunGuide(
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
             Text(
-                text = "在 LSPosed 启用模块和推荐作用域，授权 Root 后重启。可在运行诊断检查状态。",
+                text = "在 LSPosed 启用模块和推荐作用域，分别给 MMGG 和小米传送门授予 Root 权限，再重启。可在运行诊断检查授权。",
                 color = MiuixTheme.colorScheme.onSurface,
             )
             Text(
-                text = "单指长按后拖拽文字或图片。双指长按打开分词，可选词、复制或搜索。",
+                text = "单指按住文字或图片，看到预览就拖动，未拖就松手会取消。双指按到设定时长即打开分词，图片先识字。",
                 color = MiuixTheme.colorScheme.onSurface,
             )
             Text(

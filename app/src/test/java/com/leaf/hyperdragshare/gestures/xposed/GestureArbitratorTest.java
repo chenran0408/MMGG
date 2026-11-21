@@ -37,6 +37,38 @@ public class GestureArbitratorTest {
     }
 
     @Test
+    public void slightInwardStartCanDevelopIntoDiagonalAtEitherCorner() {
+        for (GestureGeometry.Corner corner : GestureGeometry.Corner.values()) {
+            GestureArbitrator arbitrator = new GestureArbitrator();
+            int inward = corner == GestureGeometry.Corner.LEFT ? 1 : -1;
+            assertEquals(GestureArbitrator.Decision.PENDING,
+                    arbitrator.update(corner, 60, 100, 60 + inward, 89, 10));
+            assertEquals(GestureArbitrator.Decision.PENDING,
+                    arbitrator.earlyClaim(corner, 60, 100, 60 + inward, 89, 2));
+            assertEquals(GestureArbitrator.Decision.FAN,
+                    arbitrator.update(corner, 60, 100, 60 + 6 * inward, 84, 10));
+        }
+    }
+
+    @Test
+    public void sustainedNearlyVerticalSwipeYieldsAndCannotBeReclaimed() {
+        GestureArbitrator arbitrator = new GestureArbitrator();
+        assertEquals(GestureArbitrator.Decision.PENDING,
+                arbitrator.update(GestureGeometry.Corner.LEFT, 0, 100, 1, 81, 10));
+        assertEquals(GestureArbitrator.Decision.CANCELLED,
+                arbitrator.update(GestureGeometry.Corner.LEFT, 0, 100, 1, 80, 10));
+        assertEquals(GestureArbitrator.Decision.CANCELLED,
+                arbitrator.update(GestureGeometry.Corner.LEFT, 0, 100, 18, 66, 10));
+    }
+
+    @Test
+    public void nearlyHorizontalSwipeStillYieldsAtFirstDecisionDistance() {
+        GestureArbitrator arbitrator = new GestureArbitrator();
+        assertEquals(GestureArbitrator.Decision.CANCELLED,
+                arbitrator.update(GestureGeometry.Corner.LEFT, 0, 100, 14, 99, 10));
+    }
+
+    @Test
     public void acceptsInwardDiagonalAcrossTheFanSweep() {
         GestureArbitrator arbitrator = new GestureArbitrator();
         assertEquals(GestureArbitrator.Decision.FAN,

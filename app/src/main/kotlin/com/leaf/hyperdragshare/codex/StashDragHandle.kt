@@ -19,8 +19,9 @@ import android.widget.Toast
 import java.io.File
 import java.io.IOException
 import androidx.compose.foundation.interaction.MutableInteractionSource
-import androidx.compose.foundation.interaction.collectIsPressedAsState
-import androidx.compose.runtime.getValue
+import androidx.compose.foundation.interaction.Interaction
+import androidx.compose.foundation.interaction.PressInteraction
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
@@ -34,6 +35,24 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.platform.LocalView
 import top.yukonga.miuix.kmp.theme.MiuixTheme
+
+/** A completed preparation may start a drag only for the press that requested it. */
+internal class StashDragPress {
+    private var current: PressInteraction.Press? = null
+
+    fun dragPermission(): (() -> Boolean)? {
+        val owner = current ?: return null
+        return { current === owner }
+    }
+
+    fun observe(event: Interaction) {
+        when (event) {
+            is PressInteraction.Press -> current = event
+            is PressInteraction.Release -> if (current === event.press) current = null
+            is PressInteraction.Cancel -> if (current === event.press) current = null
+        }
+    }
+}
 
 /** Click to inspect; hold the content itself to take it to another application. */
 @Composable
@@ -50,20 +69,23 @@ internal fun StashDraggableContent(
     val foreground = MiuixTheme.colorScheme.onSurface.toArgb()
     val background = MiuixTheme.colorScheme.surfaceContainer.toArgb()
     val interaction = remember { MutableInteractionSource() }
-    val pressed by interaction.collectIsPressedAsState()
-    val held = rememberUpdatedState(pressed)
+    val held = remember { StashDragPress() }
+    LaunchedEffect(interaction) { interaction.interactions.collect(held::observe) }
     val currentEntries = rememberUpdatedState(entries)
     val scope = rememberCoroutineScope()
     Box(modifier.combinedClickable(interactionSource = interaction, enabled = enabled, onClick = onClick,
         onLongClickLabel = if (entries.size > 1) "拖出所选 ${entries.size} 项" else "拖出内容", onLongClick = if (draggable) ({
-            scope.launch { startStashDrag(view, currentEntries.value, foreground, background, startDrag) { held.value } }
+            held.dragPermission()?.let { isHeld ->
+                val requested = currentEntries.value
+                scope.launch { startStashDrag(view, requested, foreground, background, startDrag, isHeld) }
+            }
         }) else null)) { content() }
 }
 
-private suspend fun startStashDrag(view: View, entries: List<StashStore.Entry>, foreground: Int,
+internal suspend fun startStashDrag(view: View, entries: List<StashStore.Entry>, foreground: Int,
     background: Int, startDrag: (View, ClipData, View.DragShadowBuilder, Int) -> Boolean,
     isHeld: () -> Boolean) {
-    if (entries.isEmpty()) return
+    if (entries.isEmpty() || !isHeld()) return
     val hasImages = entries.any { it.kind == StashStore.KIND_IMAGE }
     if (hasImages && entries.any { it.kind == StashStore.KIND_TEXT }) {
         Toast.makeText(view.context, "文字和图片请分别选取后拖出", Toast.LENGTH_LONG).show()
@@ -92,9 +114,7 @@ private suspend fun startStashDrag(view: View, entries: List<StashStore.Entry>, 
             val prepared = withContext(Dispatchers.IO) {
                 StashStore(view.context.applicationContext).use { store ->
                     val files = entries.map { store.openImage(it.id) }
-                    val uris = entries.zip(files).map { (entry, file) ->
-                        StashDragImageCache.uri(view.context.applicationContext, entry, file)
-                    }
+                    val clip = imageClipForStash(view.context.applicationContext, store, entries, files)
                     val thumbnail = try {
                         decodeDragThumbnail(files.first())
                     } catch (error: IOException) {
@@ -104,12 +124,14 @@ private suspend fun startStashDrag(view: View, entries: List<StashStore.Entry>, 
                         DragShareLog.w("DragShare/Stash", "Permission denied decoding optional drag thumbnail error=" + error.javaClass.simpleName)
                         null
                     }
-                    uris to thumbnail
+                    clip to thumbnail
                 }
             }
             thumbnail = prepared.second
-            val clip = clipForStash(entries, prepared.first)
-            prepared.first.forEach { uri -> OperationTrace.event(operation, "asset_ready", "available", uri) }
+            val clip = prepared.first
+            for (index in 0 until clip.itemCount) {
+                OperationTrace.event(operation, "asset_ready", "available", clip.getItemAt(index).uri)
+            }
             clip
         }
         val clip = StashDragContract.mark(content)
@@ -140,11 +162,11 @@ private suspend fun startStashDrag(view: View, entries: List<StashStore.Entry>, 
     } catch (error: IOException) {
         OperationTrace.event(operation, "drag_prepare", "failed")
         DragShareLog.w("DragShare/Stash", "Unable to prepare drag image error=" + error.javaClass.simpleName)
-        Toast.makeText(view.context, "无法准备拖放图片：${error.message}", Toast.LENGTH_LONG).show()
+        if (isHeld()) Toast.makeText(view.context, "无法准备拖放图片：${error.message}", Toast.LENGTH_LONG).show()
     } catch (error: SecurityException) {
         OperationTrace.event(operation, "drag_prepare", "failed")
         DragShareLog.w("DragShare/Stash", "drag permission denied error=" + error.javaClass.simpleName)
-        Toast.makeText(view.context, "系统拒绝拖出内容：${error.message}", Toast.LENGTH_LONG).show()
+        if (isHeld()) Toast.makeText(view.context, "系统拒绝拖出内容：${error.message}", Toast.LENGTH_LONG).show()
     }
 }
 
@@ -199,6 +221,13 @@ private fun imagePreview(context: Context, bitmap: Bitmap, count: Int, density: 
         layout(0, 0, measuredWidth, measuredHeight)
     }
     return frame
+}
+
+internal fun imageClipForStash(context: Context, store: StashStore, entries: List<StashStore.Entry>,
+    files: List<File>): ClipData {
+    val typed = entries.zip(files) { entry, file -> store.resolveDragImage(entry, file) }
+    val uris = typed.zip(files) { entry, file -> StashDragImageCache.uri(context, entry, file) }
+    return clipForStash(typed, uris)
 }
 
 internal fun clipForStash(entries: List<StashStore.Entry>, imageUris: List<Uri> = emptyList()): ClipData {

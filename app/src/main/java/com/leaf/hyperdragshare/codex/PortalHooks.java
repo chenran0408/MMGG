@@ -97,7 +97,7 @@ final class PortalHooks {
                             portalContext = context;
                             observeOverlayTouchRegions(context);
                             registerSettingsObserver(context);
-                            applyPortalRuntime();
+                            applyPortalRuntime(false);
                             activationReported = reportPortalActivation(context);
                             log("application input initialized; foreground service startup reported separately");
                         } catch (RuntimeException | LinkageError error) {
@@ -216,7 +216,7 @@ final class PortalHooks {
                         xposedBridgeVersion);
                 activationReported = reportPortalActivation(context);
                 registerSettingsObserver(context);
-                applyPortalRuntime();
+                applyPortalRuntime(true);
                 hookCallbackFromService(param.thisObject);
             }
         });
@@ -293,7 +293,7 @@ final class PortalHooks {
                 }
                 Context context = ((Context) param.thisObject).getApplicationContext();
                 DragShareSettings settings = DragShareSettings.readFromProvider(context);
-                applyPortalRuntime();
+                applyPortalRuntime(false);
                 DragShareController current = controller;
                 if (current != null) {
                     String methodName = param.method.getName();
@@ -585,7 +585,7 @@ final class PortalHooks {
         return source != null && source.isReady();
     }
 
-    private static synchronized void applyPortalRuntime() {
+    private static synchronized void applyPortalRuntime(boolean retryFailedInput) {
         Context context = portalContext;
         ClassLoader classLoader = portalClassLoader;
         if (context == null || classLoader == null) {
@@ -602,6 +602,7 @@ final class PortalHooks {
         }
         if (controller != null) {
             configureThumbCapture(context, settings);
+            if (retryFailedInput && rootGateway != null) rootGateway.retryFailedInput();
             return;
         }
         hostCancelIgnoredLogged = false;
@@ -655,7 +656,7 @@ final class PortalHooks {
         ContentObserver observer = new ContentObserver(new Handler(Looper.getMainLooper())) {
             @Override
             public void onChange(boolean selfChange) {
-                applyPortalRuntime();
+                applyPortalRuntime(true);
             }
         };
         try {
@@ -746,11 +747,16 @@ final class PortalHooks {
         boolean rootReady = hasReadyRootSource();
         int action = event.getActionMasked();
         long downTime = event.getDownTime();
-        if (action == MotionEvent.ACTION_DOWN && inputHandoff.missedFallbackEnd(downTime, rootReady)) {
-            deliverMotion(event, MotionEvent.ACTION_CANCEL);
-            inputHandoff.finishFallback();
-            syncFallbackMotion(rootReady);
-            return;
+        if (action == MotionEvent.ACTION_DOWN) {
+            boolean missedEnd = inputHandoff.missedFallbackEnd(downTime);
+            if (missedEnd) deliverMotion(event, MotionEvent.ACTION_CANCEL);
+            if (OverlayTouchRegions.contains(event.getRawX(), event.getRawY())) {
+                if (missedEnd) {
+                    inputHandoff.finishFallback();
+                    syncFallbackMotion(rootReady);
+                }
+                return;
+            }
         }
         if (!inputHandoff.acceptFallback(action, downTime, rootReady)) return;
         deliverMotion(event, action);
@@ -775,7 +781,7 @@ final class PortalHooks {
                     action == MotionEvent.ACTION_UP || action == MotionEvent.ACTION_CANCEL
                             ? PortalHooks::replayDeferredHostCalls : null);
         }
-        if (press == null) return;
+        if (press == null || (current != null && current.hasInteractivePendingImagePreview())) return;
         int pointerCount = event.getPointerCount();
         if ((action == MotionEvent.ACTION_DOWN || action == MotionEvent.ACTION_MOVE) && pointerCount == 1) {
             press.onPointerEvent(action, x, y, time);

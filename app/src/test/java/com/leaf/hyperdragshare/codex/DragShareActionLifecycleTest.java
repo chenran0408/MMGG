@@ -8,9 +8,12 @@ import static org.junit.Assert.assertSame;
 import static org.junit.Assert.assertTrue;
 
 import android.content.Context;
+import android.content.pm.ProviderInfo;
 import android.graphics.Bitmap;
 import android.net.Uri;
+import android.provider.MediaStore;
 import android.view.View;
+import android.webkit.MimeTypeMap;
 
 import org.junit.Before;
 import org.junit.Test;
@@ -19,16 +22,23 @@ import org.robolectric.RobolectricTestRunner;
 import org.robolectric.RuntimeEnvironment;
 import org.robolectric.annotation.Config;
 import org.robolectric.annotation.Implementation;
-import org.robolectric.annotation.LooperMode;
 import org.robolectric.annotation.Implements;
-import org.robolectric.shadows.ShadowLooper;
+import org.robolectric.annotation.LooperMode;
+import org.robolectric.shadow.api.Shadow;
+import org.robolectric.shadows.ShadowContentResolver;
 import org.robolectric.shadows.ShadowLog;
+import org.robolectric.shadows.ShadowLooper;
+import org.robolectric.shadows.ShadowMimeTypeMap;
 
+import java.io.File;
+import java.io.IOException;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
-import java.io.IOException;
+import java.nio.file.Files;
 import java.util.ArrayList;
+import java.util.Base64;
 import java.util.List;
+import java.util.concurrent.TimeUnit;
 
 @RunWith(RobolectricTestRunner.class)
 @Config(manifest = Config.NONE, shadows = {
@@ -38,6 +48,8 @@ import java.util.List;
 }, instrumentedPackages = "com.leaf.hyperdragshare.codex")
 @LooperMode(LooperMode.Mode.PAUSED)
 public final class DragShareActionLifecycleTest {
+    private static final byte[] ORIGINAL_GIF = Base64.getDecoder().decode(
+            "R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7");
     private DragShareController controller;
 
     @Before public void resetShadows() {
@@ -111,6 +123,132 @@ public final class DragShareActionLifecycleTest {
         assertFalse(bitmap.isRecycled());
         request.callback.onComplete(null);
         assertTrue(ImageStagingShadow.revokedUris.isEmpty());
+        controller.destroy();
+        idleMain();
+    }
+
+    private StashDragImageCacheTest.FakeDownloadsProvider installSaveDestination(String extension, String mime) {
+        Context app = RuntimeEnvironment.getApplication();
+        ShadowMimeTypeMap types = Shadow.extract(MimeTypeMap.getSingleton());
+        types.addExtensionMimeTypeMapping(extension, mime);
+        StashDragImageCacheTest.FakeDownloadsProvider media = new StashDragImageCacheTest.FakeDownloadsProvider();
+        ProviderInfo info = new ProviderInfo();
+        info.authority = MediaStore.AUTHORITY;
+        media.attachInfo(app, info);
+        ShadowContentResolver.registerProviderInternal(info.authority, media);
+        return media;
+    }
+
+    @Test public void fastSaveWaitsForOriginalAndPublishesItsExactGifOnce() throws Exception {
+        Context app = RuntimeEnvironment.getApplication();
+        var media = installSaveDestination("gif", "image/gif");
+        File staged = new File(app.getCacheDir(), "captured.gif");
+        Files.write(staged.toPath(), ORIGINAL_GIF);
+        try {
+            CapturedContent payload = CapturedContent.referencedMediaImage(EncodedMedia.decode(ORIGINAL_GIF),
+                    bitmap(), "test.app", null);
+            Object session = startImageGesture(payload, 111L);
+            ImageStagingClient.Callback callback = onlyStagingCallback();
+            ShareTarget save = ShareTarget.saveToLocal(null);
+            set(controller, "selectedTarget", save);
+            invoke(controller, "finishGestureOnMain", new Class<?>[]{boolean.class}, true);
+            assertSame(save, get(session, "pendingTarget"));
+            assertEquals(0, media.insertCount);
+
+            callback.onStaged(Uri.fromFile(staged));
+            callback.onStaged(Uri.fromFile(staged));
+            idleMain();
+            assertTrue(media.published.await(3, TimeUnit.SECONDS));
+            assertNull(get(session, "pendingTarget"));
+            assertEquals(1, media.insertCount);
+            assertEquals("image/gif", media.inserted.getAsString(MediaStore.MediaColumns.MIME_TYPE));
+            assertTrue(media.inserted.getAsString(MediaStore.MediaColumns.DISPLAY_NAME).endsWith(".gif"));
+            org.junit.Assert.assertArrayEquals(ORIGINAL_GIF, Files.readAllBytes(media.row(1).file.toPath()));
+        } finally {
+            controller.destroy();
+            idleMain();
+            media.clearRows();
+            Files.deleteIfExists(staged.toPath());
+        }
+    }
+
+    @Test public void preparedPreviewSavesTheExistingPngWithoutReencoding() throws Exception {
+        checkPreviewPngReuse(true);
+    }
+
+    @Test public void fastPreviewSaveUsesThePendingPngWithoutReencoding() throws Exception {
+        checkPreviewPngReuse(false);
+    }
+
+    private void checkPreviewPngReuse(boolean preparedBeforeDrop) throws Exception {
+        byte[] stagedPng = Base64.getDecoder().decode(
+                "iVBORw0KGgoAAAANSUhEUgAAAAMAAAADCAYAAABWKLW/AAAAMklEQVR4AQEnANj/AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAACcAAQoCwnQAAAAASUVORK5CYII=");
+        var media = installSaveDestination("png", "image/png");
+        File file = File.createTempFile("staged-", ".png", RuntimeEnvironment.getApplication().getCacheDir());
+        Files.write(file.toPath(), stagedPng);
+        try {
+            Object session = startImageGesture(CapturedContent.image(bitmap(), "test.app", null, true), 113L);
+            ImageStagingClient.Callback callback = onlyStagingCallback();
+            if (preparedBeforeDrop) {
+                callback.onStaged(Uri.fromFile(file));
+                idleMain();
+            }
+            ShareTarget save = ShareTarget.saveToLocal(null);
+            set(controller, "selectedTarget", save);
+            invoke(controller, "finishGestureOnMain", new Class<?>[]{boolean.class}, true);
+            if (!preparedBeforeDrop) {
+                assertSame(save, get(session, "pendingTarget"));
+                assertEquals(0, media.insertCount);
+                callback.onStaged(Uri.fromFile(file));
+                idleMain();
+            }
+            assertTrue(media.published.await(3, TimeUnit.SECONDS));
+            assertEquals(1, media.insertCount);
+            assertEquals("image/png", media.inserted.getAsString(MediaStore.MediaColumns.MIME_TYPE));
+            org.junit.Assert.assertArrayEquals(stagedPng, Files.readAllBytes(media.row(1).file.toPath()));
+        } finally {
+            controller.destroy();
+            idleMain();
+            media.clearRows();
+            Files.deleteIfExists(file.toPath());
+        }
+    }
+
+    @Test public void previewSaveAfterStageFailurePreservesPixels() throws Exception {
+        var media = installSaveDestination("png", "image/png");
+        Bitmap preview = bitmap();
+        preview.setPixel(0, 0, android.graphics.Color.MAGENTA);
+        try {
+            Object session = startImageGesture(CapturedContent.image(preview, "test.app", null, true), 114L);
+            set(controller, "selectedTarget", ShareTarget.saveToLocal(null));
+            invoke(controller, "finishGestureOnMain", new Class<?>[]{boolean.class}, true);
+            onlyStagingCallback().onFailure(new IOException("staging unavailable"));
+            idleMain();
+            assertTrue(media.published.await(3, TimeUnit.SECONDS));
+            assertEquals(1, media.insertCount);
+            byte[] encoded = Files.readAllBytes(media.row(1).file.toPath());
+            Bitmap saved = android.graphics.BitmapFactory.decodeByteArray(encoded, 0, encoded.length);
+            assertNotNull(saved);
+            assertEquals(android.graphics.Color.MAGENTA, saved.getPixel(0, 0));
+            saved.recycle();
+        } finally {
+            controller.destroy();
+            idleMain();
+            media.clearRows();
+        }
+    }
+
+    @Test public void failedOriginalStageAfterLocalDropDoesNotSaveThePreview() throws Exception {
+        CapturedContent original = CapturedContent.referencedMediaImage(EncodedMedia.decode(ORIGINAL_GIF),
+                bitmap(), "test.app", null);
+        Object session = startImageGesture(original, 112L);
+        set(controller, "selectedTarget", ShareTarget.saveToLocal(null));
+        invoke(controller, "finishGestureOnMain", new Class<?>[]{boolean.class}, true);
+        onlyStagingCallback().onFailure(new IOException("write failed"));
+        idleMain();
+        assertNull(get(session, "pendingTarget"));
+        assertTrue(DragShareToastShadow.messages.contains("图片准备失败，请重新拖拽"));
+        assertFalse(DragShareToastShadow.messages.contains("已保存到本地"));
         controller.destroy();
         idleMain();
     }
@@ -215,6 +353,23 @@ public final class DragShareActionLifecycleTest {
         assertTrue(ClipboardWriterShadow.requests.isEmpty());
     }
 
+    @Test public void chosenImageStillReachesReceiverIfWindowClosesWhileStaging() throws Exception {
+        Object accepted = startImageGesture(CapturedContent.image(bitmap(), "source", null, true), 311L);
+        ImageStagingClient.Callback stage = onlyStagingCallback();
+        set(controller, "selectedTarget", ShareTarget.copyImageToClipboard(null));
+        invoke(controller, "finishGestureOnMain", new Class<?>[]{boolean.class}, true);
+        controller.destroy();
+        idleMain();
+        assertFalse((boolean) get(accepted, "cancelled"));
+
+        Uri source = Uri.parse("content://com.leaf.hyperdragshare.codex.share/shared/queued");
+        stage.onStaged(source);
+        stage.onStaged(source);
+        idleMain();
+        assertEquals(1, ClipboardWriterShadow.requests.size());
+        assertEquals(source, ClipboardWriterShadow.requests.get(0).uri);
+    }
+
     private Object startImageGesture(CapturedContent payload, long downTime) throws Exception {
         set(controller, "rootDownTime", downTime);
         invoke(controller, "showOnMain",
@@ -278,9 +433,10 @@ public final class DragShareActionLifecycleTest {
         static final List<Uri> revokedUris = new ArrayList<>();
 
         @Implementation
-        protected static void stage(Context context, Bitmap bitmap,
-                                    ImageStagingClient.Callback callback) {
+        protected static java.util.concurrent.Future<?> stage(Context context, CapturedContent payload,
+                                                              ImageStagingClient.Callback callback) {
             callbacks.add(callback);
+            return null;
         }
 
         @Implementation

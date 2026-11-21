@@ -23,6 +23,28 @@ import org.robolectric.util.ReflectionHelpers;
 @RunWith(RobolectricTestRunner.class)
 @Config(sdk = 34)
 public class ShortcutCatalogRefreshTest {
+    @Test public void removedShortcutNotifiesOnceAndAWorkingDesktopShortcutStaysSilent() {
+        var app = RuntimeEnvironment.getApplication();
+        var launched = new AtomicInteger();
+        var host = new android.content.ContextWrapper(app) {
+            @Override public void startActivity(android.content.Intent intent, android.os.Bundle options) {
+                if ("removed".equals(intent.getAction())) throw new android.content.ActivityNotFoundException();
+                launched.incrementAndGet();
+            }
+        };
+        int before = org.robolectric.shadows.ShadowToast.shownToastCount();
+        for (String action : new String[]{"removed", "working"}) {
+            var launch = new android.content.Intent(action).setPackage("example.app");
+            var request = new android.content.Intent(ShortcutHostRuntime.ACTION_START_LAUNCHER_SHORTCUT)
+                    .putExtra(ShortcutHostRuntime.EXTRA_PACKAGE, "example.app")
+                    .putExtra(ShortcutHostRuntime.EXTRA_INTENT_URI, launch.toUri(0));
+            ShortcutHostRuntime.startLauncherShortcut(host, request);
+        }
+        assertEquals(1, launched.get());
+        assertEquals(before + 1, org.robolectric.shadows.ShadowToast.shownToastCount());
+        assertEquals("快捷方式不可用", org.robolectric.shadows.ShadowToast.getTextOfLatestToast());
+    }
+
     @Test public void refreshRequestsDoNotLookLikePublishedUpdates() {
         var context = RuntimeEnvironment.getApplication();
         var resolver = context.getContentResolver();

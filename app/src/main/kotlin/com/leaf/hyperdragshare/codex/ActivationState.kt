@@ -24,6 +24,7 @@ internal fun ModuleActivation.RootAccessOutcome.evidence(): ActivationEvidence =
 }
 
 internal fun ModuleActivation.ReportedStatus.evidence(): ActivationEvidence = when (this) {
+    ModuleActivation.ReportedStatus.CHECKING -> ActivationEvidence.CHECKING
     ModuleActivation.ReportedStatus.READY -> ActivationEvidence.READY
     ModuleActivation.ReportedStatus.UNAVAILABLE -> ActivationEvidence.UNAVAILABLE
     ModuleActivation.ReportedStatus.UNKNOWN -> ActivationEvidence.UNKNOWN

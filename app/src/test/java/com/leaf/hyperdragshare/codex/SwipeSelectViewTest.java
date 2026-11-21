@@ -4,10 +4,12 @@ import static org.junit.Assert.*;
 
 import android.content.Context;
 import android.app.Activity;
+import android.graphics.Rect;
 import android.os.SystemClock;
 import android.view.LayoutInflater;
 import android.view.MotionEvent;
 import android.view.View;
+import android.view.ViewGroup;
 import android.view.ViewConfiguration;
 import android.widget.LinearLayout;
 import org.junit.Test;
@@ -35,12 +37,13 @@ public class SwipeSelectViewTest {
     private String dragged;
     private boolean accepted = true;
     private boolean cancelDuringDrag;
+    private int dismissals;
 
     private void open() {
         activity = Robolectric.buildActivity(Activity.class).setup();
         root = LayoutInflater.from(context).inflate(R.layout.boom_activity_layout, null, false);
         page = new BoomChipPage(context, root, false, new BoomChipPage.Actions() {
-            public void dismiss() { }
+            public void dismiss() { dismissals++; }
             public void copy(String text) { }
             public void search(String text, int type) { }
             public void share(String text) { }
@@ -74,6 +77,36 @@ public class SwipeSelectViewTest {
         MotionEvent event = MotionEvent.obtain(now, now, action, x, y, 0);
         words.onTouchEvent(event);
         event.recycle();
+    }
+
+    @Test public void tappingBlankSpaceAfterLastChipKeepsTheSelectionAndPanelOpen() {
+        open();
+        layoutWords();
+        touch(MotionEvent.ACTION_DOWN, 0);
+        touch(MotionEvent.ACTION_UP, 0);
+        assertEquals("甲", page.selectedTextOrOriginal());
+
+        LinearLayout row = (LinearLayout) words.getChildAt(0);
+        View last = row.getChildAt(row.getChildCount() - 1);
+        int endOfChips = row.getLeft() + last.getRight();
+        assertTrue("fixture needs blank space after the last chip", endOfChips < words.getWidth() - 1);
+        Rect bounds = new Rect(0, 0, words.getWidth(), words.getHeight());
+        ((ViewGroup) root).offsetDescendantRectToMyCoords(words, bounds);
+        float x = bounds.left + (endOfChips + words.getWidth()) / 2f;
+        float y = bounds.top + row.getTop() + row.getHeight() / 2f;
+        long down = SystemClock.uptimeMillis();
+        for (int action : new int[]{MotionEvent.ACTION_DOWN, MotionEvent.ACTION_UP}) {
+            MotionEvent event = MotionEvent.obtain(down, down, action, x, y, 0);
+            root.dispatchTouchEvent(event);
+            event.recycle();
+        }
+        ShadowLooper.shadowMainLooper().idle();
+
+        assertEquals(0, dismissals);
+        assertEquals("甲", page.selectedTextOrOriginal());
+        touch(MotionEvent.ACTION_DOWN, 1);
+        touch(MotionEvent.ACTION_UP, 1);
+        assertEquals("甲乙", page.selectedTextOrOriginal());
     }
 
     @Test public void selectedWordsDoNotStartGlobalDragFromChipBody() {
