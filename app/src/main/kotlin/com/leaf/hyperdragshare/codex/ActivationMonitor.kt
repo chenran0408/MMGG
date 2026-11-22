@@ -48,6 +48,11 @@ internal data class ActivationSnapshot(
     val portalEnabled: Boolean? = true,
     val pendingPortalEnabled: Boolean? = null,
 ) {
+    val portalRootDaemonUnreachable: Boolean
+        get() = portalEnabled == true && injection == ActivationEvidence.READY &&
+                rootInput == ActivationEvidence.UNAVAILABLE &&
+                ModuleActivation.isRootDaemonConnectionError(rootInputError)
+
     val portalFeature: ActivationState
         get() = activationFeatureState(
             enabled = portalEnabled == true,

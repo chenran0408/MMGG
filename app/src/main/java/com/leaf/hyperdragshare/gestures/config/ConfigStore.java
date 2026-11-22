@@ -19,6 +19,7 @@ import java.util.Map;
 
 public final class ConfigStore {
     private static final String KEY_DOUBLE_PIN_MIGRATED = "double_pin_migrated_v1";
+    private static final String KEY_OUTSIDE_OPT_IN_MIGRATED = "outside_opt_in_migrated_v1";
     private static final String KEY_ORIENTATION_BEHAVIOR_MIGRATED =
             "orientation_behavior_migrated_v1";
     private static final String KEY_HONEYCOMB_BACKGROUND_V2_MIGRATED =
@@ -40,6 +41,7 @@ public final class ConfigStore {
         uiHandler = new Handler(Looper.getMainLooper());
         flushPendingWrites = this::flushPendingWritesNow;
         seedDefaultsIfNeeded(this.context, preferences);
+        migrateOutsideOptInIfNeeded(preferences);
         migrateUnifiedActionsIfNeeded(preferences);
         migrateDoubleTapPinIfNeeded(preferences);
         migrateSelectedAppNameIfNeeded(preferences);
@@ -84,7 +86,7 @@ public final class ConfigStore {
                 AppTarget target = value instanceof JSONObject
                         ? AppTarget.fromJson((JSONObject) value)
                         : new AppTarget(array.optString(i, ""));
-                if (target != null && (target.isMoreApps() || target.isShortcut() || target.componentName() != null)
+                if (target != null && (target.isBuiltIn() || target.isShortcut() || target.componentName() != null)
                         && !result.contains(target)) {
                     result.add(target);
                 }
@@ -114,7 +116,7 @@ public final class ConfigStore {
                     array.length()); i++) {
                 JSONObject value = array.optJSONObject(i);
                 AppTarget target = AppTarget.fromJson(value);
-                if (target != null && (target.isMoreApps() || target.isShortcut() || target.componentName() != null)
+                if (target != null && (target.isBuiltIn() || target.isShortcut() || target.componentName() != null)
                         && !result.contains(target)) result.add(target);
             }
         } catch (Exception ignored) { }
@@ -125,7 +127,7 @@ public final class ConfigStore {
         JSONArray array = new JSONArray();
         for (AppTarget target : targets) {
             if (array.length() >= ConfigContract.MAX_HONEYCOMB_MAX_TARGETS) break;
-            if (target != null && (target.isMoreApps() || target.isShortcut() || target.componentName() != null)) {
+            if (target != null && (target.isBuiltIn() || target.isShortcut() || target.componentName() != null)) {
                 array.put(target.toJson());
             }
         }
@@ -961,6 +963,34 @@ public final class ConfigStore {
             }
         }
         return result;
+    }
+
+    @SuppressLint("ApplySharedPref")
+    static void migrateOutsideOptInIfNeeded(SharedPreferences preferences) {
+        if (preferences.getBoolean(KEY_OUTSIDE_OPT_IN_MIGRATED, false)) return;
+        SharedPreferences.Editor editor = preferences.edit().putBoolean(KEY_OUTSIDE_OPT_IN_MIGRATED, true);
+        if (preferences.getBoolean(ConfigContract.KEY_OUTSIDE_ENABLED, true)) {
+            int single = preferences.getInt(ConfigContract.KEY_OUTSIDE_SINGLE_ACTION,
+                    preferences.getInt("lower_single_action", ConfigContract.ACTION_CLOSE));
+            int doubleTap = preferences.getInt(ConfigContract.KEY_OUTSIDE_DOUBLE_ACTION,
+                    preferences.getInt("lower_double_action", ConfigContract.ACTION_PIN));
+            boolean previousDefaults = single == ConfigContract.ACTION_CLOSE
+                    && doubleTap == ConfigContract.ACTION_PIN
+                    && preferences.getInt(ConfigContract.KEY_OUTSIDE_LONG_ACTION, ConfigContract.ACTION_NONE)
+                       == ConfigContract.ACTION_NONE
+                    && preferences.getInt(ConfigContract.KEY_OUTSIDE_TAP_WINDOW_MS,
+                            ConfigContract.DEFAULT_OUTSIDE_TAP_WINDOW_MS) == ConfigContract.DEFAULT_OUTSIDE_TAP_WINDOW_MS
+                    && preferences.getBoolean(ConfigContract.KEY_OUTSIDE_PORTRAIT_ENABLED, true)
+                    && preferences.getBoolean(ConfigContract.KEY_OUTSIDE_LANDSCAPE_ENABLED, true);
+            if (previousDefaults) {
+                editor.putBoolean(ConfigContract.KEY_OUTSIDE_ENABLED, ConfigContract.DEFAULT_OUTSIDE_ENABLED)
+                        .putInt(ConfigContract.KEY_OUTSIDE_SINGLE_ACTION, ConfigContract.DEFAULT_OUTSIDE_SINGLE_ACTION);
+            } else if (!preferences.contains(ConfigContract.KEY_OUTSIDE_ENABLED)) {
+                // Customized actions previously worked without writing the master switch.
+                editor.putBoolean(ConfigContract.KEY_OUTSIDE_ENABLED, true);
+            }
+        }
+        editor.commit();
     }
 
     @SuppressLint("ApplySharedPref")

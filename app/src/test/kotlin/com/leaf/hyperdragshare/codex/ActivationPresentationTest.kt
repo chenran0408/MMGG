@@ -114,6 +114,41 @@ class ActivationPresentationTest {
     }
 
     @Test
+    fun portalDaemonFailureExplainsConnectionInsteadOfRequestingAuthorization() {
+        for (exit in listOf(133, 13)) {
+            val failed = snapshot().copy(
+                portalRoot = ActivationEvidence.UNKNOWN,
+                rootInput = ActivationEvidence.UNAVAILABLE,
+                rootInputError = "触摸设备探测退出码=$exit：Cannot connect to daemon: Permission denied (os error 13)",
+            )
+            val presentation = activationPresentation(failed, false, true, true)
+            assertEquals("已授权", presentation.rootRows.toMap()["MMGG"])
+            assertEquals("小米传送门连不上 Root 守护进程", presentation.homeTitle)
+            assertEquals("连不上 Root 守护进程", presentation.rootRows.toMap()["小米传送门"])
+            assertFalse(presentation.portalNeedsReload)
+
+            val recovered = activationPresentation(failed.copy(
+                portalRoot = ActivationEvidence.READY,
+                rootInput = ActivationEvidence.READY,
+                rootInputError = "",
+            ), false, true, true)
+            assertEquals("已授权", recovered.rootRows.toMap()["小米传送门"])
+            assertEquals(ActivationState.NORMAL, recovered.overallState)
+        }
+    }
+
+    @Test
+    fun permissionErrorFromInputDeviceDoesNotImplyDaemonFailure() {
+        val presentation = activationPresentation(snapshot().copy(
+            portalRoot = ActivationEvidence.UNKNOWN,
+            rootInput = ActivationEvidence.UNAVAILABLE,
+            rootInputError = "getevent 退出码=13：could not open /dev/input/event4: Permission denied",
+        ), false, true, true)
+        assertEquals("检查 Root 授权", presentation.homeTitle)
+        assertTrue(presentation.portalNeedsReload)
+    }
+
+    @Test
     fun twoUnconfirmedRootsExplainSeparateGrantsAndCheckingClearsOldWarnings() {
         val both = snapshot().copy(root = ActivationEvidence.UNKNOWN, portalRoot = ActivationEvidence.UNKNOWN)
         val result = activationPresentation(both, false, true, true)

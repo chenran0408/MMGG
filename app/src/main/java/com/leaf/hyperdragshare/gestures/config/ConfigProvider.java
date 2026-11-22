@@ -1,8 +1,10 @@
 package com.leaf.hyperdragshare.gestures.config;
 
 import android.content.ContentProvider;
+import android.app.PendingIntent;
 import android.content.ContentValues;
 import android.content.Context;
+import android.content.Intent;
 import android.content.SharedPreferences;
 import android.content.pm.ApplicationInfo;
 import android.content.pm.PackageManager;
@@ -32,6 +34,7 @@ import java.util.Set;
 
 import com.leaf.hyperdragshare.codex.DragShareSettings;
 import com.leaf.hyperdragshare.codex.GameCapturePolicy;
+import com.leaf.hyperdragshare.codex.ScreenOcrActivity;
 
 public final class ConfigProvider extends ContentProvider {
     private static final String TAG = "HyperDragShareConfig";
@@ -50,6 +53,18 @@ public final class ConfigProvider extends ContentProvider {
             return OverlayTouchRegions.read();
         }
         enforceCaller();
+        if (ConfigContract.METHOD_GET_SCREEN_OCR_ENTRY.equals(method)) {
+            if (Binder.getCallingUid() != Process.myUid() && !"com.android.systemui".equals(getCallingPackage())) {
+                throw new SecurityException("Only SystemUI can request the gesture OCR entry");
+            }
+            Intent intent = new Intent(context, ScreenOcrActivity.class)
+                    .setAction("com.leaf.hyperdragshare.codex.SCREEN_OCR")
+                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TOP);
+            Bundle out = new Bundle();
+            out.putParcelable(ConfigContract.KEY_SCREEN_OCR_ENTRY,
+                    PendingIntent.getActivity(context, 0, intent, PendingIntent.FLAG_IMMUTABLE));
+            return out;
+        }
         SharedPreferences prefs = context.getSharedPreferences(ConfigContract.PREFS, Context.MODE_PRIVATE);
         if ("get_catalog".equals(method)) {
             Bundle out = new Bundle();
@@ -61,6 +76,7 @@ public final class ConfigProvider extends ContentProvider {
         }
         if ("get".equals(method)) {
             ConfigStore.seedDefaultsIfNeeded(context, prefs);
+            ConfigStore.migrateOutsideOptInIfNeeded(prefs);
             ConfigStore.migrateUnifiedActionsIfNeeded(prefs);
             ConfigStore.migrateDoubleTapPinIfNeeded(prefs);
             ConfigStore.migrateSelectedAppNameIfNeeded(prefs);
@@ -269,8 +285,7 @@ public final class ConfigProvider extends ContentProvider {
                     ConfigContract.DEFAULT_OUTSIDE_ENABLED));
             out.putBoolean(ConfigContract.KEY_OUTSIDE_PORTRAIT_ENABLED,
                     prefs.getBoolean(ConfigContract.KEY_OUTSIDE_PORTRAIT_ENABLED,
-                            prefs.getBoolean(ConfigContract.KEY_OUTSIDE_ENABLED,
-                                    ConfigContract.DEFAULT_OUTSIDE_PORTRAIT_ENABLED)));
+                            ConfigContract.DEFAULT_OUTSIDE_PORTRAIT_ENABLED));
             out.putBoolean(ConfigContract.KEY_OUTSIDE_LANDSCAPE_ENABLED,
                     prefs.getBoolean(ConfigContract.KEY_OUTSIDE_LANDSCAPE_ENABLED,
                             ConfigContract.DEFAULT_OUTSIDE_LANDSCAPE_ENABLED));

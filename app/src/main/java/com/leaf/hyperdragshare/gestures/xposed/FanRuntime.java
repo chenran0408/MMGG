@@ -4,6 +4,8 @@ import com.leaf.hyperdragshare.codex.HookFeatureFlags;
 
 import android.app.KeyguardManager;
 import android.app.ActivityManager;
+import android.app.ActivityOptions;
+import android.app.PendingIntent;
 import android.content.BroadcastReceiver;
 import android.content.ComponentCallbacks;
 import android.content.ComponentName;
@@ -16,6 +18,7 @@ import android.graphics.Insets;
 import android.graphics.Rect;
 import android.net.Uri;
 import android.os.Bundle;
+import android.os.Build;
 import android.os.Handler;
 import android.widget.Toast;
 import android.os.HandlerThread;
@@ -302,13 +305,16 @@ final class FanRuntime {
             }
         });
         try {
-            IntentFilter lifecycleFilter = new IntentFilter(Intent.ACTION_USER_UNLOCKED);
-            lifecycleFilter.addAction(Intent.ACTION_USER_PRESENT);
-            lifecycleFilter.addAction(Intent.ACTION_SCREEN_ON);
-            lifecycleFilter.addAction(Intent.ACTION_SCREEN_OFF);
-            lifecycleFilter.addAction(Intent.ACTION_WALLPAPER_CHANGED);
+            context.registerReceiver(new BroadcastReceiver() {
+                @Override public void onReceive(Context receiverContext, Intent intent) {
+                    resetFan(false);
+                    overlay.removeNow();
+                    honeycombOverlay.removeNow();
+                    moreAppsOverlay.removeNow();
+                }
+            }, new IntentFilter(Intent.ACTION_SCREEN_OFF), null, mainHandler, Context.RECEIVER_NOT_EXPORTED);
         } catch (Throwable error) {
-            Log.e("Cannot register user-unlocked configuration reload", error);
+            Log.e("Cannot register screen-off overlay cleanup", error);
         }
         Context callbackContext = this.context;
         if (callbackContext != null)
@@ -1059,23 +1065,27 @@ final class FanRuntime {
                 updateSelection(x, y, width, height, selectionRadius, iconDiameter(selectionRadius));
                 if (selected >= 0 && selected < activeTargets.size()) {
                     RuntimeTarget target = activeTargets.get(selected);
-                    overlay.confirmAndHide(selected);
+                    if (target.isRegionOcr()) {
+                        launchScreenOcr();
+                        return;
+                    }
                     if (target.isMoreApps()) {
                         outsideCapture.remove();
                         outsideGestures.clearAll();
                         resetFan(false);
                         final GestureConfig launchConfig = config;
                         final boolean fullscreenLaunch = launchConfig.bottomFullscreenFor(isLandscape());
-                        moreAppsOverlay.show(moreTarget -> {
+                        overlay.removeNowThen(() -> moreAppsOverlay.show(moreTarget -> {
                             if (fullscreenLaunch) {
                                 launchFullscreenTarget(moreTarget, false);
                             } else {
                                 launchFreeformTarget(moreTarget, launchConfig);
                                 refreshOutsideCaptureAfterLaunch();
                             }
-                        }, launchConfig.moreAppsEnhanced);
+                        }, launchConfig.moreAppsEnhanced));
                         return;
                     }
+                    overlay.confirmAndHide(selected);
                     boolean fullscreen = config.bottomFullscreenFor(isLandscape());
                     if (fullscreen) {
                         launchFullscreenTarget(target, false);
@@ -1156,19 +1166,23 @@ final class FanRuntime {
 
             @Override
             public void onLaunch(RuntimeTarget target) {
+                if (target.isRegionOcr()) {
+                    launchScreenOcr();
+                    return;
+                }
                 if (target.isMoreApps()) {
                     resetFan(false);
                     final GestureConfig launchConfig = config;
                     final boolean freeformLaunch = launchConfig.bottomHoneycombFreeformFor(isLandscape());
                     final boolean centeredFullscreen = launchConfig.honeycombCenteredSystemAnimation;
-                    moreAppsOverlay.show(moreTarget -> {
+                    overlay.removeNowThen(() -> moreAppsOverlay.show(moreTarget -> {
                         if (freeformLaunch) {
                             launchFreeformTarget(moreTarget, launchConfig);
                             refreshOutsideCaptureAfterLaunch();
                         } else {
                             launchFullscreenTarget(moreTarget, centeredFullscreen);
                         }
-                    }, launchConfig.moreAppsEnhanced);
+                    }, launchConfig.moreAppsEnhanced));
                     return;
                 }
                 if (config.bottomHoneycombFreeformFor(isLandscape())) {
@@ -1208,6 +1222,35 @@ final class FanRuntime {
         if (!freeform.launch(target, launchConfig, this::refreshOutsideCapture)) {
             Toast.makeText(context, "无法以小窗打开 " + target.label, Toast.LENGTH_SHORT).show();
         }
+    }
+
+    private void launchScreenOcr() {
+        outsideCapture.remove();
+        outsideGestures.clearAll();
+        resetFan(false);
+        // Finish window removal on its owner thread before starting screen capture.
+        overlay.removeNowThen(() -> configHandler.post(() -> {
+            if (!displayInteractiveUnlocked()) return;
+            try {
+                Bundle reply = context.getContentResolver().call(ConfigContract.URI,
+                        ConfigContract.METHOD_GET_SCREEN_OCR_ENTRY, null, null);
+                PendingIntent entry = reply == null ? null : reply.getParcelable(
+                        ConfigContract.KEY_SCREEN_OCR_ENTRY, PendingIntent.class);
+                if (entry == null) throw new IllegalStateException("Screen OCR activity entry unavailable");
+                Bundle options = null;
+                if (Build.VERSION.SDK_INT >= 34) {
+                    options = ActivityOptions.makeBasic().setPendingIntentBackgroundActivityStartMode(
+                            ActivityOptions.MODE_BACKGROUND_ACTIVITY_START_ALLOWED).toBundle();
+                }
+                entry.send(context, 0, null, null, null, null, options);
+            } catch (PendingIntent.CanceledException | RuntimeException error) {
+                Log.e("Cannot open screen OCR from the corner gesture", error);
+                mainHandler.post(() -> {
+                    refreshOutsideCapture();
+                    Toast.makeText(context, "无法打开全屏识字", Toast.LENGTH_SHORT).show();
+                });
+            }
+        }));
     }
 
     private void launchFullscreenTarget(RuntimeTarget target, boolean centeredSystemAnimation) {

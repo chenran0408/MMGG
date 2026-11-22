@@ -504,6 +504,11 @@ final class ModuleActivation {
                 ? preferences.getString(EXTRA_ROOT_INPUT_ERROR, "") : "";
     }
 
+    static boolean isRootDaemonConnectionError(String detail) {
+        // An exit code or EACCES alone can also come from a command run after connecting.
+        return detail.contains("Cannot connect to daemon:");
+    }
+
     /** Start the host's existing foreground service without opening an Activity. */
     static boolean requestPortalRuntimeStart(Context context) {
         RootProcessKeepAlive.Result keepAlive = RootProcessKeepAlive.ensureLocked(context);

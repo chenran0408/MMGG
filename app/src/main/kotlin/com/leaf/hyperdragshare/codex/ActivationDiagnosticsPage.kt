@@ -89,7 +89,7 @@ internal fun ActivationDiagnosticsPage(
                 }
             }
             item("diagnostics-root") {
-                SimpleDiagnosticSection("Root 授权", presentation.rootRows)
+                SimpleDiagnosticSection("Root 状态", presentation.rootRows)
             }
             item("diagnostics-permissions") {
                 if (missingPermissions.isNotEmpty()) {

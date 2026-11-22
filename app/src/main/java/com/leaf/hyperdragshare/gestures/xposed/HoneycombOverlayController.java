@@ -78,17 +78,19 @@ final class HoneycombOverlayController {
                 forceBrowseMode,
                 new HoneycombOverlayView.Listener() {
             @Override public void onLaunch(RuntimeTarget target) {
+                if (view != foreground) return;
                 removeNow();
                 listener.onLaunch(target);
             }
 
             @Override public void onClosed() {
+                if (view != foreground) return;
                 removeNow();
                 listener.onClosed();
             }
 
             @Override public void onSelectionChanged(RuntimeTarget target) {
-                listener.onSelectionChanged(target);
+                if (view == foreground) listener.onSelectionChanged(target);
             }
 
         });

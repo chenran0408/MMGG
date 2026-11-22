@@ -3,6 +3,7 @@ package com.leaf.hyperdragshare.gestures.xposed;
 import android.os.Bundle;
 
 import com.leaf.hyperdragshare.gestures.config.ConfigContract;
+import com.leaf.hyperdragshare.gestures.config.AppTarget;
 import com.leaf.hyperdragshare.gestures.config.FanRowAllocation;
 
 import org.json.JSONArray;
@@ -162,6 +163,14 @@ final class GestureConfig {
                     "", "更多应用", "", 0);
         }
 
+        static TargetSpec regionOcr() {
+            return new TargetSpec("", AppTarget.REGION_OCR_PACKAGE, "", AppTarget.REGION_OCR_LABEL, "", 0);
+        }
+
+        boolean isRegionOcr() {
+            return AppTarget.REGION_OCR_PACKAGE.equals(packageName) && shortcutId.isEmpty() && component.isEmpty();
+        }
+
         boolean isShortcut() { return !packageName.isEmpty() && !shortcutId.isEmpty(); }
         boolean isMoreApps() {
             return com.leaf.hyperdragshare.gestures.config.AppTarget.MORE_APPS_PACKAGE.equals(packageName)
@@ -287,39 +296,8 @@ final class GestureConfig {
 
     static GestureConfig from(Bundle bundle) {
         if (bundle == null) return defaults();
-        ArrayList<TargetSpec> targets = new ArrayList<>();
-        try {
-            JSONArray array = new JSONArray(bundle.getString(ConfigContract.KEY_COMPONENTS, "[]"));
-            for (int i = 0; i < Math.min(ConfigContract.MAX_FAN_MAX_TARGETS,
-                    array.length()); i++) {
-                Object raw = array.opt(i);
-                TargetSpec target = null;
-                if (raw instanceof JSONObject) {
-                    JSONObject object = (JSONObject) raw;
-                    String type = object.optString("type");
-                    if ("more_apps".equals(type)) {
-                        target = TargetSpec.moreApps();
-                    } else if ("shortcut".equals(type) || "launcher_shortcut".equals(type)) {
-                        String packageName = object.optString("package");
-                        String shortcutId = object.optString("id");
-                        if (!packageName.isEmpty() && !shortcutId.isEmpty()) {
-                            target = "launcher_shortcut".equals(type)
-                                    ? TargetSpec.launcherShortcut(packageName, shortcutId,
-                                    object.optString("label"), object.optString("intent"),
-                                    object.optInt("userId", 0))
-                                    : new TargetSpec("", packageName, shortcutId, object.optString("label"),
-                                    "", Math.max(0, object.optInt("userId", 0)));
-                        }
-                    } else {
-                        target = validActivity(object.optString("component"),
-                                object.optInt("userId", 0));
-                    }
-                } else {
-                    target = validActivity(array.optString(i), 0);
-                }
-                if (target != null && !containsTarget(targets, target)) targets.add(target);
-            }
-        } catch (Exception ignored) {}
+        ArrayList<TargetSpec> targets = parseTargets(bundle.getString(ConfigContract.KEY_COMPONENTS, "[]"),
+                ConfigContract.MAX_FAN_MAX_TARGETS);
         ArrayList<TargetSpec> honeycombTargets = parseTargets(bundle.getString(
                 ConfigContract.KEY_HONEYCOMB_COMPONENTS, "[]"), 60);
         GestureConfig result = new GestureConfig(
@@ -490,8 +468,8 @@ final class GestureConfig {
                 ConfigContract.DEFAULT_LANDSCAPE_POSITION_Y), 0, 100);
         ArrayList<String> positionOwners = new ArrayList<>();
         for (TargetSpec target : honeycombTargets) {
-            positionOwners.add(target.isMoreApps()
-                    ? com.leaf.hyperdragshare.gestures.config.AppTarget.MORE_APPS_POSITION_ID
+            positionOwners.add(target.isMoreApps() ? AppTarget.MORE_APPS_POSITION_ID
+                    : target.isRegionOcr() ? AppTarget.REGION_OCR_POSITION_ID
                     : com.leaf.hyperdragshare.gestures.config.HoneycombPositions.identity(
                     target.component, target.packageName, target.shortcutId,
                     target.shortcutIntentUri, target.userId));
@@ -684,6 +662,8 @@ final class GestureConfig {
                     String type = object.optString("type");
                     if ("more_apps".equals(type)) {
                         target = TargetSpec.moreApps();
+                    } else if (AppTarget.REGION_OCR_TYPE.equals(type)) {
+                        target = TargetSpec.regionOcr();
                     } else if ("shortcut".equals(type) || "launcher_shortcut".equals(type)) {
                         String packageName = object.optString("package");
                         String shortcutId = object.optString("id");

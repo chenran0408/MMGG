@@ -48,7 +48,12 @@ final class ScopeRestart {
                         return true;
                     }
                     String failure = ModuleActivation.rootInputError(context);
-                    if (!failure.isEmpty()) throw new IOException("Root 输入未恢复：" + failure);
+                    if (!failure.isEmpty()) {
+                        if (ModuleActivation.isRootDaemonConnectionError(failure)) {
+                            throw new IOException("小米传送门连不上 Root 守护进程。请检查手机上已安装的 Root 版本，或导出诊断 ZIP。");
+                        }
+                        throw new IOException("Root 输入未恢复：" + failure);
+                    }
                     if (readerRequired) {
                         failure = ModuleActivation.pressReaderError(context);
                         if (!failure.isEmpty()) throw new IOException("按压取词未恢复：" + failure);

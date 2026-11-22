@@ -17,6 +17,9 @@ public final class ConfigContract {
     /** Ephemeral touch bounds for live module-owned floating windows. */
     public static final Uri OVERLAY_TOUCH_URI = Uri.parse("content://" + AUTHORITY + "/overlay-touch");
     public static final String METHOD_GET_OVERLAY_TOUCH = "get_overlay_touch_regions";
+    // Keep the wire names while SystemUI may still be running the previous build.
+    public static final String METHOD_GET_SCREEN_OCR_ENTRY = "get_region_ocr_entry";
+    public static final String KEY_SCREEN_OCR_ENTRY = "region_ocr_entry";
     public static final String KEY_OVERLAY_TOUCH_OWNER = "overlay_touch_owner";
     public static final String KEY_OVERLAY_TOUCH_RECTS = "overlay_touch_rects";
     public static final String PREFS = "fan_config";
@@ -330,11 +333,11 @@ public final class ConfigContract {
     public static final int DEFAULT_LANDSCAPE_HEIGHT_PERCENT = 85;
     public static final int DEFAULT_LANDSCAPE_POSITION_X = 20;
     public static final int DEFAULT_LANDSCAPE_POSITION_Y = 50;
-    public static final int DEFAULT_OUTSIDE_SINGLE_ACTION = 1;
-    public static final int DEFAULT_OUTSIDE_DOUBLE_ACTION = 2;
-    public static final int DEFAULT_OUTSIDE_LONG_ACTION = 0;
+    public static final int DEFAULT_OUTSIDE_SINGLE_ACTION = ACTION_NONE;
+    public static final int DEFAULT_OUTSIDE_DOUBLE_ACTION = ACTION_PIN;
+    public static final int DEFAULT_OUTSIDE_LONG_ACTION = ACTION_NONE;
     public static final int DEFAULT_OUTSIDE_TAP_WINDOW_MS = 180;
-    public static final boolean DEFAULT_OUTSIDE_ENABLED = true;
+    public static final boolean DEFAULT_OUTSIDE_ENABLED = false;
     public static final boolean DEFAULT_OUTSIDE_PORTRAIT_ENABLED = true;
     public static final boolean DEFAULT_OUTSIDE_LANDSCAPE_ENABLED = true;
     public static final String KEY_NOTIFICATION_FREEFORM_ENABLED = "notification_freeform_enabled";

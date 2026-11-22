@@ -71,7 +71,40 @@ public class ConfigUpgradePreservationTest {
         assertEquals(true, data.get(ConfigContract.KEY_BOTTOM_RIGHT_ENABLED));
     }
 
+    @Test public void upgradeDisablesOldOutsideDefaultButDoesNotUndoLaterOptIn() {
+        for (boolean storedDefaults : new boolean[]{false, true}) {
+            Map<String, Object> data = new HashMap<>();
+            if (storedDefaults) {
+                data.put(ConfigContract.KEY_OUTSIDE_ENABLED, true);
+                data.put(ConfigContract.KEY_OUTSIDE_SINGLE_ACTION, ConfigContract.ACTION_CLOSE);
+                data.put(ConfigContract.KEY_OUTSIDE_DOUBLE_ACTION, ConfigContract.ACTION_PIN);
+            }
+            SharedPreferences prefs = preferences(data);
+            migrate(prefs);
+            assertEquals(false, data.get(ConfigContract.KEY_OUTSIDE_ENABLED));
+            assertEquals(ConfigContract.ACTION_NONE, data.get(ConfigContract.KEY_OUTSIDE_SINGLE_ACTION));
+
+            prefs.edit().putBoolean(ConfigContract.KEY_OUTSIDE_ENABLED, true)
+                    .putInt(ConfigContract.KEY_OUTSIDE_SINGLE_ACTION, ConfigContract.ACTION_CLOSE).commit();
+            migrate(prefs);
+            assertEquals(true, data.get(ConfigContract.KEY_OUTSIDE_ENABLED));
+            assertEquals(ConfigContract.ACTION_CLOSE, data.get(ConfigContract.KEY_OUTSIDE_SINGLE_ACTION));
+        }
+    }
+
+    @Test public void customizedOutsideGestureKeepsItsImplicitlyEnabledState() {
+        Map<String, Object> data = new HashMap<>();
+        data.put(ConfigContract.KEY_OUTSIDE_DOUBLE_ACTION, ConfigContract.ACTION_FULLSCREEN);
+        data.put(ConfigContract.KEY_OUTSIDE_SINGLE_ACTION, ConfigContract.ACTION_CLOSE);
+        SharedPreferences prefs = preferences(data);
+        migrate(prefs);
+        assertEquals(true, data.get(ConfigContract.KEY_OUTSIDE_ENABLED));
+        assertEquals(ConfigContract.ACTION_CLOSE, data.get(ConfigContract.KEY_OUTSIDE_SINGLE_ACTION));
+        assertEquals(ConfigContract.ACTION_FULLSCREEN, data.get(ConfigContract.KEY_OUTSIDE_DOUBLE_ACTION));
+    }
+
     private static void migrate(SharedPreferences prefs) {
+        ConfigStore.migrateOutsideOptInIfNeeded(prefs);
         ConfigStore.migrateUnifiedActionsIfNeeded(prefs);
         ConfigStore.migrateDoubleTapPinIfNeeded(prefs);
         ConfigStore.migrateSelectedAppNameIfNeeded(prefs);

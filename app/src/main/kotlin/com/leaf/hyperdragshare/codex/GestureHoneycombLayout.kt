@@ -579,7 +579,12 @@ private suspend fun readHoneycombLayout(
     return HoneycombLayoutState(positions, cells, iconSize, spacing)
 }
 
-private fun resolveHoneycombCell(context: Context, target: AppTarget): Pair<String, Bitmap?> {
+internal fun resolveHoneycombCell(context: Context, target: AppTarget): Pair<String, Bitmap?> {
+    if (target.isBuiltIn) {
+        return target.shortcutLabel to drawableToHoneycombBitmap(
+            checkNotNull(context.getDrawable(target.builtInIconResource())),
+        )
+    }
     val manager = context.packageManager
     return if (target.isShortcut) {
         val label = target.shortcutLabel.ifBlank { target.packageName() }

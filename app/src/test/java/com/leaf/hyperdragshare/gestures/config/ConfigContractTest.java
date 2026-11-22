@@ -62,7 +62,8 @@ public final class ConfigContractTest {
         assertEquals(85, ConfigContract.DEFAULT_WIDTH_PERCENT);
         assertEquals(65, ConfigContract.DEFAULT_HEIGHT_PERCENT);
         assertEquals(180, ConfigContract.DEFAULT_OUTSIDE_TAP_WINDOW_MS);
-        assertEquals(true, ConfigContract.DEFAULT_OUTSIDE_ENABLED);
+        assertEquals(false, ConfigContract.DEFAULT_OUTSIDE_ENABLED);
+        assertEquals(ConfigContract.ACTION_NONE, ConfigContract.DEFAULT_OUTSIDE_SINGLE_ACTION);
         assertEquals(true, ConfigContract.DEFAULT_CUSTOM_WINDOW_PORTRAIT_ENABLED);
         assertEquals(true, ConfigContract.DEFAULT_CUSTOM_WINDOW_LANDSCAPE_ENABLED);
         assertEquals(true, ConfigContract.DEFAULT_PORTRAIT_PROPORTIONAL_SIZE_ENABLED);

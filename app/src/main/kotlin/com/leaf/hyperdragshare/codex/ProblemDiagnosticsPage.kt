@@ -335,6 +335,7 @@ internal fun diagnosticStateSummary(snapshot: ActivationSnapshot?): String = bui
     append("; portal_service=").append(snapshot?.portalService ?: ActivationEvidence.CHECKING)
     append("; portal_root=").append(snapshot?.portalRoot ?: ActivationEvidence.CHECKING)
     append("; root_input=").append(snapshot?.rootInput ?: ActivationEvidence.CHECKING)
+    if (snapshot?.portalRootDaemonUnreachable == true) append("; portal_root_daemon=unreachable")
     append("; press_reader=").append(snapshot?.pressReader ?: ActivationEvidence.CHECKING)
     append("; overlay=").append(snapshot?.overlayPermission ?: ActivationEvidence.CHECKING)
 }

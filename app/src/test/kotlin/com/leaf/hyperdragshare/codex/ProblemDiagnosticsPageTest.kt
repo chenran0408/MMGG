@@ -146,5 +146,14 @@ class ProblemDiagnosticsPageTest {
         assertFalse(summary.contains("private raw failure"))
         assertFalse(summary.contains("private component details"))
         assertTrue(summary.contains("overall=${snapshot.overallState}"))
+
+        val failure = "退出码=133：Cannot connect to daemon: Permission denied (os error 13)"
+        val failed = diagnosticStateSummary(snapshot.copy(
+            injection = ActivationEvidence.READY,
+            rootInput = ActivationEvidence.UNAVAILABLE,
+            rootInputError = failure,
+        ))
+        assertTrue(failed.contains("portal_root_daemon=unreachable"))
+        assertFalse(failed.contains(failure))
     }
 }

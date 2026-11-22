@@ -680,11 +680,9 @@ private suspend fun loadPickerRows(context: Context, store: ConfigStore): List<G
     val pm = context.packageManager
     val rows = LinkedHashMap<String, GestureTargetRow>()
     val iconSizePx = (44f * context.resources.displayMetrics.density).roundToInt().coerceAtLeast(1)
-    val moreApps = AppTarget.moreApps()
-    rows[targetKey(moreApps)] = GestureTargetRow(
-        moreApps, "更多应用", "打开可搜索的完整应用目录",
-        drawableToBitmap(context.getDrawable(android.R.drawable.ic_menu_more)!!, iconSizePx),
-    )
+    listOf(AppTarget.moreApps(), AppTarget.regionOcr()).forEach { target ->
+        rows[targetKey(target)] = builtInRow(context, target, iconSizePx)
+    }
     @Suppress("DEPRECATION")
     val launcherActivities = pm.queryIntentActivities(
         Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER), 0,
@@ -779,12 +777,7 @@ private fun loadSavedTargetRows(
     appendShortcuts(context, store, shortcuts, iconSizePx)
     return targets.map { target ->
         shortcuts[targetKey(target)]?.let { return@map it }
-        if (target.isMoreApps) {
-            return@map GestureTargetRow(
-                target, "更多应用", "打开可搜索的完整应用目录",
-                drawableToBitmap(context.getDrawable(android.R.drawable.ic_menu_more)!!, iconSizePx),
-            )
-        }
+        if (target.isBuiltIn) return@map builtInRow(context, target, iconSizePx)
         val component = target.componentName()
         val packageName = target.packageName()
         val label: String
@@ -873,10 +866,19 @@ private fun mergeRows(rows: List<GestureTargetRow>, targets: List<AppTarget>): L
     return targets.map { target -> byKey[targetKey(target)] ?: fallbackRow(target) }
 }
 
+private fun builtInRow(context: Context, target: AppTarget, iconSizePx: Int): GestureTargetRow {
+    val icon = target.builtInIconResource()
+    return fallbackRow(target).copy(icon = drawableToBitmap(context.getDrawable(icon)!!, iconSizePx))
+}
+
 private fun fallbackRow(target: AppTarget) = GestureTargetRow(
     target,
-    if (target.isMoreApps) "更多应用" else target.shortcutLabel.ifBlank { target.packageName() },
-    if (target.isMoreApps) "打开可搜索的完整应用目录" else targetSummary(target),
+    target.shortcutLabel.ifBlank { target.packageName() },
+    when {
+        target.isMoreApps -> "打开可搜索的完整应用目录"
+        target.isRegionOcr -> "识别当前屏幕上的文字"
+        else -> targetSummary(target)
+    },
     null,
 )
 

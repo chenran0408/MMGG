@@ -38,6 +38,31 @@ import org.robolectric.annotation.LooperMode;
 @Config(manifest = Config.NONE, sdk = 35)
 @LooperMode(LooperMode.Mode.PAUSED)
 public final class HoneycombOverlayControllerTest {
+    @Test public void lateDismissalCannotCloseAReplacementHoneycomb() throws Exception {
+        Context base = RuntimeEnvironment.getApplication();
+        TrackingWindowManager tracking = new TrackingWindowManager(base.getSystemService(WindowManager.class));
+        HoneycombOverlayController controller = new HoneycombOverlayController(
+                new WindowManagerContext(base, tracking.proxy), new Handler(Looper.getMainLooper()));
+        GestureConfig config = GestureConfig.from(new Bundle());
+        List<RuntimeTarget> targets = List.of(new RuntimeTarget("pkg", "shortcut", "", "Target",
+                new ColorDrawable(Color.RED), 0));
+        List<String> events = new ArrayList<>();
+        HoneycombOverlayController.Listener listener = new HoneycombOverlayController.Listener() {
+            @Override public void onLaunch(RuntimeTarget ignored) { events.add("launch"); }
+            @Override public void onClosed() { events.add("closed"); }
+        };
+        assertTrue(controller.show(targets, GestureGeometry.Corner.LEFT, 100f, 100f, config, listener));
+        HoneycombOverlayView.Listener oldCallbacks = (HoneycombOverlayView.Listener)
+                field(field(controller, "view"), "listener");
+        assertTrue(controller.show(targets, GestureGeometry.Corner.LEFT, 100f, 100f, config, listener));
+
+        oldCallbacks.onClosed();
+        assertTrue(controller.isVisible());
+        assertEquals(1, tracking.removedViews);
+        assertTrue(events.isEmpty());
+        controller.removeNow();
+    }
+
     @Test public void liveBlurRemainsAppliedWhileOverlayMoves() throws Exception {
         Context base = RuntimeEnvironment.getApplication();
         WindowManager delegate = base.getSystemService(WindowManager.class);

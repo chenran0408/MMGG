@@ -46,7 +46,7 @@ final class FanOverlayController {
                               int layoutMode, int outerCapacity, int middleCapacity,
                               int innerCapacity, boolean forceCircularIcons) {
         runOnMain(() -> {
-            removeNow();
+            if (!removeOnMain()) return;
             FanOverlayView fanView = new FanOverlayView(context);
             fanView.configure(targets, corner, radius, iconDiameter, showNames, showBackdrop,
                     animationsEnabled, animationSpeed, revealAmount, rotationDegrees,
@@ -133,13 +133,25 @@ final class FanOverlayController {
                     && ((FanOverlayView) target).playDismissal()) {
                 duration = ((FanOverlayView) target).dismissalDurationMs();
             }
-            target.animate().alpha(0f).setDuration(duration).withEndAction(() -> {
-                if (view == target) removeNow();
-            }).start();
+            target.animate().alpha(0f).setDuration(duration).start();
+            // Window removal must still run if another update cancels the animation.
+            mainHandler.postDelayed(() -> {
+                if (view == target) removeOnMain();
+            }, duration);
         });
     }
 
     void removeNow() {
+        runOnMain(this::removeOnMain);
+    }
+
+    void removeNowThen(Runnable afterRemoval) {
+        runOnMain(() -> {
+            if (removeOnMain()) afterRemoval.run();
+        });
+    }
+
+    private boolean removeOnMain() {
         opacityUpdates.reset();
         if (attached && view != null) {
             try {
@@ -147,10 +159,12 @@ final class FanOverlayController {
                 windowManager.removeViewImmediate(view);
             } catch (Throwable error) {
                 Log.e("Cannot remove fan overlay", error);
+                return false;
             }
         }
         attached = false;
         view = null;
+        return true;
     }
 
     private WindowManager.LayoutParams params(int type, boolean touchable) {

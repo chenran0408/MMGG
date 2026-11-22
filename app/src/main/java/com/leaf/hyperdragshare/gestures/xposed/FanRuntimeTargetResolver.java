@@ -4,7 +4,9 @@ import android.content.ComponentName;
 import android.content.Context;
 import android.content.pm.ActivityInfo;
 import android.content.pm.PackageManager;
+import android.graphics.drawable.Drawable;
 
+import com.leaf.hyperdragshare.codex.BuildConfig;
 import com.leaf.hyperdragshare.gestures.config.AppTarget;
 import com.leaf.hyperdragshare.gestures.config.ShortcutIconLoader;
 
@@ -70,6 +72,9 @@ final class FanRuntimeTargetResolver {
             return RuntimeTarget.moreApps("更多应用",
                     context.getDrawable(android.R.drawable.ic_menu_more));
         }
+        if (target.isRegionOcr()) {
+            return RuntimeTarget.regionOcr(loadRegionOcrIcon());
+        }
         if (target.isShortcut()) {
             return new RuntimeTarget(target.packageName, target.shortcutId,
                     target.shortcutIntentUri,
@@ -119,6 +124,8 @@ final class FanRuntimeTargetResolver {
         if (target.isMoreApps()) {
             resolved = RuntimeTarget.moreApps("更多应用",
                     context.getDrawable(android.R.drawable.ic_menu_more));
+        } else if (target.isRegionOcr()) {
+            resolved = RuntimeTarget.regionOcr(loadRegionOcrIcon());
         } else if (target.isShortcut()) {
             resolved = new RuntimeTarget(target.shortcutPackage, target.shortcutId,
                     target.shortcutIntentUri,
@@ -140,6 +147,13 @@ final class FanRuntimeTargetResolver {
         }
         cache.put(key, resolved);
         return resolved;
+    }
+
+    private Drawable loadRegionOcrIcon() throws PackageManager.NameNotFoundException {
+        // The live fan runs in SystemUI, whose resource table does not contain module drawables.
+        Context module = BuildConfig.APPLICATION_ID.equals(context.getPackageName())
+                ? context : context.createPackageContext(BuildConfig.APPLICATION_ID, 0);
+        return module.getDrawable(AppTarget.REGION_OCR_ICON);
     }
 
     static final class ResolvedTargets {

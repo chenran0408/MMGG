@@ -413,7 +413,7 @@ internal fun gestureSettingEntries(
     slider("横屏垂直位置", C.KEY_LANDSCAPE_POSITION_Y, 0, 100, "%")
     slider("横屏原生缩放", C.KEY_LANDSCAPE_NATIVE_SCALE_PERCENT, C.MIN_NATIVE_WINDOW_SCALE_PERCENT, C.MAX_NATIVE_WINDOW_SCALE_PERCENT, "%")
     currentGroup = "窗外操作"
-    bool("启用窗外点击", "允许点击小窗外区域执行动作", C.KEY_OUTSIDE_ENABLED, C.DEFAULT_OUTSIDE_ENABLED)
+    bool("启用窗外点击", "开启后可用窗外单击、双击或长按控制小窗", C.KEY_OUTSIDE_ENABLED, C.DEFAULT_OUTSIDE_ENABLED)
     bool("竖屏窗外点击", "竖屏时生效", C.KEY_OUTSIDE_PORTRAIT_ENABLED, C.DEFAULT_OUTSIDE_PORTRAIT_ENABLED)
     bool("横屏窗外点击", "横屏时生效", C.KEY_OUTSIDE_LANDSCAPE_ENABLED, C.DEFAULT_OUTSIDE_LANDSCAPE_ENABLED)
     chooser("窗外单击", listOf("无操作", "关闭小窗", "挂起到右上角", "全屏", "小窗贴边"), C.KEY_OUTSIDE_SINGLE_ACTION, C.DEFAULT_OUTSIDE_SINGLE_ACTION)

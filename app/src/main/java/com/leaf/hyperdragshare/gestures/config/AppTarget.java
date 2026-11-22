@@ -1,6 +1,7 @@
 package com.leaf.hyperdragshare.gestures.config;
 
 import android.content.ComponentName;
+import com.leaf.hyperdragshare.codex.R;
 
 import org.json.JSONObject;
 
@@ -9,6 +10,12 @@ import java.util.Objects;
 public final class AppTarget {
     public static final String MORE_APPS_PACKAGE = "com.leaf.hyperdragshare.more_apps";
     public static final String MORE_APPS_POSITION_ID = "[\"more_apps\"]";
+    public static final String REGION_OCR_TYPE = "region_ocr";
+    public static final String REGION_OCR_PACKAGE = "com.leaf.hyperdragshare.region_ocr";
+    public static final String REGION_OCR_POSITION_ID = "[\"region_ocr\"]";
+    // Keep the old stored target ID and position identity when its action changes.
+    public static final String REGION_OCR_LABEL = "全屏识字";
+    public static final int REGION_OCR_ICON = R.drawable.ic_region_ocr_target;
     public final String component;
     public final String shortcutPackage;
     public final String shortcutId;
@@ -57,6 +64,22 @@ public final class AppTarget {
         return new AppTarget(MORE_APPS_PACKAGE, "", "更多应用", "", 0);
     }
 
+    public static AppTarget regionOcr() {
+        return new AppTarget(REGION_OCR_PACKAGE, "", REGION_OCR_LABEL, "", 0);
+    }
+
+    public boolean isRegionOcr() {
+        return REGION_OCR_PACKAGE.equals(shortcutPackage) && shortcutId.isEmpty() && component.isEmpty();
+    }
+
+    public boolean isBuiltIn() {
+        return isMoreApps() || isRegionOcr();
+    }
+
+    public int builtInIconResource() {
+        return isRegionOcr() ? REGION_OCR_ICON : android.R.drawable.ic_menu_more;
+    }
+
     public boolean isShortcut() {
         return !shortcutPackage.isEmpty() && !shortcutId.isEmpty();
     }
@@ -76,13 +99,14 @@ public final class AppTarget {
     }
 
     public String packageName() {
-        if (isShortcut() || isMoreApps()) return shortcutPackage;
+        if (isShortcut() || isBuiltIn()) return shortcutPackage;
         ComponentName name = componentName();
         return name == null ? "" : name.getPackageName();
     }
 
     public String positionIdentity() {
         if (isMoreApps()) return MORE_APPS_POSITION_ID;
+        if (isRegionOcr()) return REGION_OCR_POSITION_ID;
         return HoneycombPositions.identity(component, shortcutPackage, shortcutId,
                 shortcutIntentUri, userId);
     }
@@ -93,6 +117,9 @@ public final class AppTarget {
             if (isMoreApps()) {
                 out.put("type", "more_apps");
                 out.put("label", "更多应用");
+            } else if (isRegionOcr()) {
+                out.put("type", REGION_OCR_TYPE);
+                out.put("label", REGION_OCR_LABEL);
             } else if (isShortcut()) {
                 out.put("userId", userId);
                 out.put("type", "shortcut");
@@ -117,6 +144,7 @@ public final class AppTarget {
         if (value == null) return null;
         String type = value.optString("type");
         if ("more_apps".equals(type)) return moreApps();
+        if (REGION_OCR_TYPE.equals(type)) return regionOcr();
         if ("shortcut".equals(type) || "launcher_shortcut".equals(type)) {
             AppTarget target = "launcher_shortcut".equals(type)
                     ? launcherShortcut(value.optString("package"), value.optString("id"),

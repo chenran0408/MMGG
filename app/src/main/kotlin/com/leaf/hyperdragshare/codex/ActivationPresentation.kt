@@ -37,9 +37,10 @@ internal fun activationPresentation(
     val moduleRoot = result?.root ?: ActivationEvidence.CHECKING
     val portalConnected = result?.injection == ActivationEvidence.READY
     val portalRoot = result?.portalRoot?.takeIf { includePortal && portalInstalled != false && portalConnected }
+    val portalRootDaemonUnreachable = portalInstalled != false && result?.portalRootDaemonUnreachable == true
     val rootChecks = buildList {
         if (moduleRoot.needsRootCheck()) add("MMGG")
-        if (portalRoot?.needsRootCheck() == true) add("小米传送门")
+        if (!portalRootDaemonUnreachable && portalRoot?.needsRootCheck() == true) add("小米传送门")
     }
     val rootRows = buildList {
         if (moduleRoot != ActivationEvidence.NOT_APPLICABLE) add("MMGG" to rootDetail(moduleRoot))
@@ -47,6 +48,7 @@ internal fun activationPresentation(
             result == null -> "正在检查"
             portalInstalled == false -> "未安装，无法检查授权"
             !portalConnected -> "尚未连接。请核对 LSPosed 作用域，连接后单独检查传送门的授权"
+            portalRootDaemonUnreachable -> "连不上 Root 守护进程"
             else -> rootDetail(result.portalRoot)
         })
         if (result != null && result.portalEnabled == null && portalInstalled != false) {
@@ -58,14 +60,17 @@ internal fun activationPresentation(
     val pendingSummary = result?.pendingPortalEnabled?.let {
         if (it) "已保存，软重启 Android 后启用传送门与大爆炸" else "已保存，软重启 Android 后关闭传送门与大爆炸"
     }
-    val homeTitle = if (rootChecks.isNotEmpty()) "检查 Root 授权" else if (pendingSummary != null) {
-        "传送门更改待生效"
-    } else when (state) {
-        ActivationState.CHECKING -> "正在检查运行状态"
-        ActivationState.NORMAL -> "运行状态正常"
-        ActivationState.NEEDS_ACTION -> "有功能需要处理"
-        ActivationState.UNKNOWN -> "部分状态待确认"
-        ActivationState.NOT_APPLICABLE -> "运行状态"
+    val homeTitle = when {
+        rootChecks.isNotEmpty() -> "检查 Root 授权"
+        pendingSummary != null -> "传送门更改待生效"
+        portalRootDaemonUnreachable -> "小米传送门连不上 Root 守护进程"
+        else -> when (state) {
+            ActivationState.CHECKING -> "正在检查运行状态"
+            ActivationState.NORMAL -> "运行状态正常"
+            ActivationState.NEEDS_ACTION -> "有功能需要处理"
+            ActivationState.UNKNOWN -> "部分状态待确认"
+            ActivationState.NOT_APPLICABLE -> "运行状态"
+        }
     }
     val homeSummary = when {
         rootChecks.size == 2 -> "请在 Root 管理器中分别核对 MMGG 和小米传送门的授权"
@@ -73,6 +78,7 @@ internal fun activationPresentation(
             "请先在 Root 管理器中核对 MMGG 的授权，小米传送门连接后单独检查"
         rootChecks.isNotEmpty() -> "请打开 Root 管理器，核对「${rootChecks.single()}」的授权"
         pendingSummary != null -> pendingSummary
+        portalRootDaemonUnreachable -> "请检查手机上已安装的 Root 版本，或导出诊断 ZIP"
         waitingForPortal -> if (portalInstalled == false) "小米传送门未安装"
             else "等待小米传送门连接后检查其 Root 授权"
         state == ActivationState.NEEDS_ACTION -> buildList {
@@ -90,7 +96,7 @@ internal fun activationPresentation(
         if (includePortal && portalInstalled == false) add("小米传送门" to "取词和相关拖拽功能需要此组件。")
         if (aicrInstalled == false) add("小米澎湃 AI 引擎" to "系统识字和 AI 识别功能需要此组件。")
     }
-    val portalNeedsReload = result != null && pendingSummary == null && includePortal && (result.injection == ActivationEvidence.UNAVAILABLE
+    val portalNeedsReload = result != null && pendingSummary == null && includePortal && !portalRootDaemonUnreachable && (result.injection == ActivationEvidence.UNAVAILABLE
         || result.portalService == ActivationEvidence.UNAVAILABLE
         || result.rootInput == ActivationEvidence.UNAVAILABLE
         || (result.thumbTriggerEnabled && result.pressReader == ActivationEvidence.UNAVAILABLE))
@@ -108,7 +114,7 @@ internal fun activationPresentation(
     val diagnosticsTitle = when {
         checking || snapshot == null -> "正在检查"
         moduleRoot == ActivationEvidence.UNAVAILABLE || portalRoot == ActivationEvidence.UNAVAILABLE || missingPermissions.isNotEmpty()
-            || missingSoftware.isNotEmpty() || portalNeedsReload || pendingSummary != null -> "有项目需要处理"
+            || missingSoftware.isNotEmpty() || portalNeedsReload || portalRootDaemonUnreachable || pendingSummary != null -> "有项目需要处理"
         hasUnknown -> "部分状态暂时无法确认"
         state == ActivationState.CHECKING -> "正在检查"
         else -> "已检查项目正常"

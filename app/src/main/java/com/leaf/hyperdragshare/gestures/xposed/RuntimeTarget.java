@@ -2,6 +2,7 @@ package com.leaf.hyperdragshare.gestures.xposed;
 
 import android.content.ComponentName;
 import android.graphics.drawable.Drawable;
+import com.leaf.hyperdragshare.gestures.config.AppTarget;
 
 final class RuntimeTarget {
     static final String MORE_APPS_PACKAGE = "com.leaf.hyperdragshare.more_apps";
@@ -12,7 +13,6 @@ final class RuntimeTarget {
     final String label;
     final Drawable icon;
     final int userId;
-    final boolean moreApps;
 
     RuntimeTarget(ComponentName component, String label, Drawable icon) {
         this(component, label, icon, 0);
@@ -26,7 +26,6 @@ final class RuntimeTarget {
         this.label = label;
         this.icon = icon;
         this.userId = Math.max(0, userId);
-        this.moreApps = false;
     }
 
     RuntimeTarget(String packageName, String shortcutId, String label, Drawable icon) {
@@ -42,28 +41,21 @@ final class RuntimeTarget {
         this.label = label;
         this.icon = icon;
         this.userId = Math.max(0, userId);
-        this.moreApps = false;
-    }
-
-    private RuntimeTarget(String label, Drawable icon) {
-        this.component = null;
-        this.packageName = MORE_APPS_PACKAGE;
-        this.shortcutId = "";
-        this.shortcutIntentUri = "";
-        this.label = label;
-        this.icon = icon;
-        this.userId = 0;
-        this.moreApps = true;
     }
 
     static RuntimeTarget moreApps(String label, Drawable icon) {
-        return new RuntimeTarget(label, icon);
+        return new RuntimeTarget(MORE_APPS_PACKAGE, "", label, icon);
+    }
+
+    static RuntimeTarget regionOcr(Drawable icon) {
+        return new RuntimeTarget(AppTarget.REGION_OCR_PACKAGE, "", AppTarget.REGION_OCR_LABEL, icon);
     }
 
     String positionIdentity() {
         if (isMoreApps()) {
-            return com.leaf.hyperdragshare.gestures.config.AppTarget.MORE_APPS_POSITION_ID;
+            return AppTarget.MORE_APPS_POSITION_ID;
         }
+        if (isRegionOcr()) return AppTarget.REGION_OCR_POSITION_ID;
         return com.leaf.hyperdragshare.gestures.config.HoneycombPositions.identity(
                 component == null ? "" : component.flattenToString(), packageName,
                 shortcutId, shortcutIntentUri, userId);
@@ -71,5 +63,8 @@ final class RuntimeTarget {
 
     boolean isShortcut() { return !shortcutId.isEmpty(); }
     boolean isLauncherShortcut() { return isShortcut() && !shortcutIntentUri.isEmpty(); }
-    boolean isMoreApps() { return moreApps; }
+    boolean isMoreApps() { return component == null && !isShortcut() && MORE_APPS_PACKAGE.equals(packageName); }
+    boolean isRegionOcr() {
+        return component == null && !isShortcut() && AppTarget.REGION_OCR_PACKAGE.equals(packageName);
+    }
 }
