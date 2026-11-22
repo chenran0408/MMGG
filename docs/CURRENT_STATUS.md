@@ -1,16 +1,22 @@
 # MMGG 当前状态与接手入口
 
-核对日期：2026-11-21。历史批次见 `docs/archive/2026-10-30/CURRENT_STATUS_2026-10-30_before_compaction.md`，任务级证据保留在各任务目录。
+核对日期：2026-11-22。历史批次见 `docs/archive/2026-10-30/CURRENT_STATUS_2026-10-30_before_compaction.md`，任务级证据保留在各任务目录。
 
 ## 工作线
 
 - 开发线：`beta`，工作树 `D:/CODEX/Tasks/2026-10-22/new-chat-3/work/HyperDragShare`。
-- 稳定线：`repair-from-189`，工作树 `D:/CODEX/Tasks/2026-10-20/new-chat-2/work/HyperDragShare`；本轮未修改，当前稳定工作树干净。
+- 稳定线：`repair-from-189`，工作树 `D:/CODEX/Tasks/2026-10-20/new-chat-2/work/HyperDragShare`（旧路径已不存在）；2.0.1 正式维护工作树为 `D:/CODEX/Tasks/2026-11-22/mmgg-2.0.1/work/MMGG`。
 - 远程维护策略：GitHub 用户仓库只维护 Beta 与正式线；`upstream` 仅作原作者参考，不向其推送。
 - Candidate A/B：继续作为冻结验证证据，不作为当前开发基线。
 - 历史Beta43分支和候选tag已推送GitHub；本轮Beta49至Beta53候选仅本地交付，未推送或创建在线Release。
 
 ## 当前代码事实
+
+### 2026-11-22 正式版 2.0.1
+
+- 合入 Beta74 的触摸设备探测修复：一次性枚举等待进程自然退出，不再受持续监听的标准输入监督影响。保留持续监听的原有监督逻辑。此修复覆盖已复现的退出码 143；另一个 `133 / Cannot connect to daemon: Permission denied` 的报告尚需故障设备诊断。
+- 正式版版本码 318。Android 14 模拟器分别从签名相同的 2.0.0（316）和 Beta74（317）覆盖安装最终 APK，保留应用 UID、抽查的手势设置及中转站图文和图片原始字节。HyperOS 故障设备仍待验证。
+- 1,063 项全量单测通过，Debug Lint 0 错误，Debug 与 R8 正式构建成功。正式 APK 的 v2 签名与两个旧包一致。SHA-256：`38eb4e27ada5c22a0700268d3e1a5a0ba3ffbe00293e17abfe8515e423d57d86`。发布标签 `v2.0.1`。
 
 ### 2026-11-21 正式版 2.0.0
 
