@@ -402,26 +402,30 @@ final class RootTouchSource {
     }
 
     private String rootText(Run run, String command) throws IOException, InterruptedException {
-        Process process = startProcess(run, supervise(command + " </dev/null"));
-        StringBuilder errors = drainErrors(process);
+        // This probe finishes on its own. Some su implementations expose stdin EOF
+        // before the command runs, which would make the reader's watchdog kill it.
+        Process process = startProcess(run, command + " </dev/null");
         try {
-            String text = readWithDeadline(() -> {
-                try (InputStream input = process.getInputStream()) {
-                    return new String(input.readAllBytes(), StandardCharsets.UTF_8);
-                }
-            });
-            checkRunning(run);
-            if (run.release(process)) {
-                int exit = endProcess(process);
-                if (exit != 0) {
-                    throw new IOException(command + " 退出码=" + exit + "：" + errorText(errors));
-                }
-            }
+            String text = readProbeResult(process, drainErrors(process));
             checkRunning(run);
             return text;
         } finally {
             if (run.release(process)) endProcess(process);
         }
+    }
+
+    static String readProbeResult(Process process, StringBuilder errors)
+            throws IOException, InterruptedException {
+        return readWithDeadline(() -> {
+            try (InputStream input = process.getInputStream()) {
+                String text = new String(input.readAllBytes(), StandardCharsets.UTF_8);
+                int exit = process.waitFor();
+                if (exit != 0) {
+                    throw new IOException("触摸设备探测退出码=" + exit + "：" + errorText(errors));
+                }
+                return text;
+            }
+        });
     }
 
     private static <T> T readWithDeadline(Callable<T> read)

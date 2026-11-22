@@ -4,6 +4,7 @@ import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertSame;
+import static org.junit.Assert.assertThrows;
 import static org.junit.Assert.assertTrue;
 
 import android.content.Context;
@@ -14,8 +15,10 @@ import android.view.Surface;
 
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
+import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
+import java.nio.charset.StandardCharsets;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.ArrayList;
@@ -320,6 +323,24 @@ public final class RootTouchSourceTest {
     }
 
     @Test
+    public void probeWaitsForNaturalExitBeforeClosingStdin() throws Exception {
+        ProbeProcess process = new ProbeProcess(0);
+        assertEquals(ProbeProcess.INVENTORY,
+                RootTouchSource.readProbeResult(process, new StringBuilder()));
+        assertTrue(process.waited);
+        assertFalse(process.stdinClosed);
+    }
+
+    @Test
+    public void failedProbeDoesNotTreatPartialInventoryAsSuccess() {
+        ProbeProcess process = new ProbeProcess(143);
+        IOException error = assertThrows(IOException.class,
+                () -> RootTouchSource.readProbeResult(process, new StringBuilder()));
+        assertTrue(error.getMessage().contains("143"));
+        assertFalse(process.stdinClosed);
+    }
+
+    @Test
     public void selectsRangesForTheDiscoveredTouchDeviceOnly() {
         String ranges = ""
                 + "add device 1: /dev/input/event0\n"
@@ -382,6 +403,44 @@ public final class RootTouchSourceTest {
         assertEquals(0, RootTouchSource.endProcess(process));
         assertTrue(process.stdinClosed);
         assertFalse(process.destroyed);
+    }
+
+    private static final class ProbeProcess extends Process {
+        static final String INVENTORY = "HDS_INPUT_INVENTORY\nHDS_INPUT_RANGES\n";
+        final int status;
+        boolean stdinClosed;
+        boolean waited;
+
+        ProbeProcess(int status) { this.status = status; }
+
+        @Override public InputStream getInputStream() {
+            return new ByteArrayInputStream(INVENTORY.getBytes(StandardCharsets.UTF_8));
+        }
+
+        @Override public InputStream getErrorStream() {
+            return new ByteArrayInputStream(new byte[0]);
+        }
+
+        @Override public OutputStream getOutputStream() {
+            return new ByteArrayOutputStream() {
+                @Override public void close() { stdinClosed = true; }
+            };
+        }
+
+        @Override public int waitFor() {
+            assertFalse("Closing stdin first can terminate the Root command", stdinClosed);
+            waited = true;
+            return status;
+        }
+
+        @Override public int exitValue() {
+            if (!waited) throw new IllegalThreadStateException();
+            return status;
+        }
+
+        @Override public void destroy() {
+            throw new AssertionError("Do not terminate a completed probe");
+        }
     }
 
     private static final class FakeProcess extends Process {
