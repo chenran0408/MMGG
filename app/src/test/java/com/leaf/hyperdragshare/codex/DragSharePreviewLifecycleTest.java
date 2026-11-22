@@ -6,11 +6,15 @@ import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertTrue;
 
+import android.content.Context;
+import android.content.ContextWrapper;
 import android.graphics.Bitmap;
+import android.graphics.Point;
 import android.net.Uri;
 import android.view.MotionEvent;
 import android.view.View;
 import android.view.ViewTreeObserver;
+import android.view.WindowManager;
 
 import org.junit.Test;
 import org.junit.runner.RunWith;
@@ -18,10 +22,15 @@ import org.robolectric.RobolectricTestRunner;
 import org.robolectric.RuntimeEnvironment;
 import org.robolectric.annotation.Config;
 import org.robolectric.annotation.LooperMode;
+import org.robolectric.shadows.ShadowChoreographer;
 import org.robolectric.shadows.ShadowLooper;
 
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
+import java.lang.reflect.Proxy;
+import java.time.Duration;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 
@@ -29,6 +38,76 @@ import java.util.concurrent.TimeUnit;
 @Config(manifest = Config.NONE)
 @LooperMode(LooperMode.Mode.PAUSED)
 public final class DragSharePreviewLifecycleTest {
+    @Test public void firstAttachUsesFinalBoundsAndMoveBurstsSubmitOnlyLatestFrame() throws Exception {
+        Context app = RuntimeEnvironment.getApplication();
+        WindowManager actual = app.getSystemService(WindowManager.class);
+        List<Point> attached = new ArrayList<>();
+        List<Point> updates = new ArrayList<>();
+        WindowManager tracking = (WindowManager) Proxy.newProxyInstance(
+                WindowManager.class.getClassLoader(), new Class<?>[]{WindowManager.class},
+                (proxy, method, args) -> {
+                    if (args != null && args.length == 2 && args[1] instanceof WindowManager.LayoutParams p
+                            && "DragShare preview".contentEquals(p.getTitle())) {
+                        if ("addView".equals(method.getName())) attached.add(new Point(p.x, p.y));
+                        if ("updateViewLayout".equals(method.getName())) updates.add(new Point(p.x, p.y));
+                    }
+                    return method.invoke(actual, args);
+                });
+        Context context = new ContextWrapper(app) {
+            @Override public Object getSystemService(String name) {
+                return WINDOW_SERVICE.equals(name) ? tracking : super.getSystemService(name);
+            }
+        };
+        DragShareController controller = new DragShareController(context, OverlayWindowPolicy.portal());
+        DragShareSettings settings = DragShareSettings.defaults().toBuilder()
+                .setUiStyle(DragShareSettings.STYLE_SIMPLE).build();
+        boolean previousPaused = ShadowChoreographer.isPaused();
+        Duration previousFrameDelay = ShadowChoreographer.getFrameDelay();
+        ShadowChoreographer.setPaused(true);
+        ShadowChoreographer.setFrameDelay(Duration.ofMillis(16));
+        try {
+            controller.acceptPointerEvent(MotionEvent.ACTION_DOWN, 160f, 400f, 100L, "root");
+            ShadowLooper.shadowMainLooper().idle();
+            controller.showPendingImagePreview(CapturedContent.text("preview", "test.app", null),
+                    160f, 400f, settings, 100L, true);
+            ShadowLooper.shadowMainLooper().idleFor(16, TimeUnit.MILLISECONDS);
+            View held = (View) get(controller, "previewView");
+            assertTrue(held.isAttachedToWindow());
+            assertEquals(1, attached.size());
+            assertTrue(attached.get(0).x > 0 && attached.get(0).y > 0);
+            assertTrue(updates.isEmpty());
+
+            // Start moving during entry. Promotion must keep the current visual state.
+            held.setAlpha(.65f);
+            held.setScaleX(.98f);
+            controller.takeoverHoldingImagePreview(170f, 410f, 100L);
+            assertSame(held, get(controller, "previewView"));
+            assertEquals(.65f, held.getAlpha(), 0f);
+            assertEquals(.98f, held.getScaleX(), 0f);
+            for (int i = 0; i < 8; i++) {
+                controller.acceptPointerEvent(MotionEvent.ACTION_MOVE, 175f + i * 6f, 410f,
+                        200L + i, "root");
+            }
+            ShadowLooper.shadowMainLooper().idle();
+            WindowManager.LayoutParams params = (WindowManager.LayoutParams) get(controller, "previewParams");
+            Point latest = new Point(params.x, params.y);
+            assertTrue(updates.isEmpty());
+            ShadowLooper.shadowMainLooper().idleFor(36, TimeUnit.MILLISECONDS);
+            assertEquals(List.of(latest), updates);
+
+            controller.acceptPointerEvent(MotionEvent.ACTION_MOVE, 160f, 400f, 250L, "root");
+            controller.acceptPointerEvent(MotionEvent.ACTION_CANCEL, 160f, 400f, 251L, "root");
+            ShadowLooper.shadowMainLooper().idleFor(36, TimeUnit.MILLISECONDS);
+            assertEquals("A cancelled session must not submit its pending layout", List.of(latest), updates);
+            assertFalse(controller.isActive());
+        } finally {
+            controller.destroy();
+            ShadowLooper.shadowMainLooper().idle();
+            ShadowChoreographer.setFrameDelay(previousFrameDelay);
+            ShadowChoreographer.setPaused(previousPaused);
+        }
+    }
+
     @Test public void heldPreviewOpensFirstTouchedEdgeWithoutAnotherMoveOrDraw() throws Exception {
         for (int edge : new int[]{DragShareSettings.SIMPLE_MENU_POSITION_LEFT,
                 DragShareSettings.SIMPLE_MENU_POSITION_RIGHT, DragShareSettings.SIMPLE_MENU_POSITION_TOP}) {

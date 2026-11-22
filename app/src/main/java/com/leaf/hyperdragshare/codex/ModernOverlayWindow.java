@@ -92,6 +92,7 @@ final class ModernOverlayWindow {
 
     void show() {
         if (!disposed && !dialog.isShowing()) {
+            dialog.getWindow().setAttributes(layoutParams);
             prepareDecorForEnter();
             dialog.show();
             updateOverlayBlurAvailability();
@@ -161,22 +162,6 @@ final class ModernOverlayWindow {
         if (decorView != null) {
             windowManager.updateViewLayout(decorView, layoutParams);
         }
-    }
-
-    /** Finishes an in-flight enter animation before the preview becomes a drag surface. */
-    void finishEnterAnimationImmediately() {
-        if (disposed) {
-            return;
-        }
-        animationGeneration++;
-        View decorView = decorView();
-        if (decorView != null) {
-            decorView.animate().cancel();
-            decorView.setAlpha(1f);
-            decorView.setScaleX(1f);
-            decorView.setScaleY(1f);
-        }
-        overlayView.setContentVisibleForWindowAnimation(true);
     }
 
     void dispose() {

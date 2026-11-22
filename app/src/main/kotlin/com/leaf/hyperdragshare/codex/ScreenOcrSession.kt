@@ -4,10 +4,12 @@ import android.app.KeyguardManager
 import android.content.Context
 import android.content.Intent
 import android.graphics.Bitmap
+import android.graphics.Rect as PixelRect
 import android.os.Handler
 import android.os.Looper
 import android.hardware.display.DisplayManager
 import android.view.Display
+import android.view.WindowInsets
 import android.view.WindowManager
 import android.widget.Toast
 import androidx.activity.compose.BackHandler
@@ -69,6 +71,8 @@ import top.yukonga.miuix.kmp.theme.ThemeController
 import java.io.IOException
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
+import kotlin.math.abs
+import kotlin.math.roundToInt
 
 internal data class ScreenOcrResultSummary(
     val lineCount: Int,
@@ -77,6 +81,28 @@ internal data class ScreenOcrResultSummary(
 
 internal fun screenOcrResultSummary(lines: List<String>): ScreenOcrResultSummary =
     ScreenOcrResultSummary(lines.size, lines.joinToString("\n"))
+
+internal fun screenOcrContentBounds(
+    bounds: PixelRect, insets: WindowInsets, imageWidth: Int, imageHeight: Int,
+): PixelRect? {
+    val status = WindowInsets.Type.statusBars()
+    if (!insets.isVisible(status)) return null
+    val bar = insets.getInsets(status)
+    val width = bounds.width()
+    val height = bounds.height()
+    if (width <= 0 || height <= 0) return null
+    val scaleX = imageWidth.toDouble() / width
+    val scaleY = imageHeight.toDouble() / height
+    // A rotation or a differently framed capture must not crop application content.
+    if (abs(width * scaleY - imageWidth) > 1.0) return null
+    val left = (bar.left * scaleX).roundToInt()
+    val top = (bar.top * scaleY).roundToInt()
+    val right = imageWidth - (bar.right * scaleX).roundToInt()
+    val bottom = imageHeight - (bar.bottom * scaleY).roundToInt()
+    if (left >= right || top >= bottom ||
+        (left == 0 && top == 0 && right == imageWidth && bottom == imageHeight)) return null
+    return PixelRect(left, top, right, bottom)
+}
 
 /** One explicit capture, region/result UI and AICR request lifetime, independent of an Activity. */
 internal class ScreenOcrSession(
@@ -127,6 +153,8 @@ internal class ScreenOcrSession(
             return
         }
         isRecognizing = true
+        val metrics = if (selectRegion) null else (hostActivity ?: overlayContext())
+            .getSystemService(WindowManager::class.java).maximumWindowMetrics
         captureExecutor.execute {
             val screenshot = try {
                 RootScreenshotter().capture()
@@ -137,8 +165,14 @@ internal class ScreenOcrSession(
                 reportFailure(R.string.screen_ocr_capture_failed, error)
                 return@execute
             }
+            val crop = metrics?.let {
+                screenOcrContentBounds(it.bounds, it.windowInsets, screenshot.width, screenshot.height)
+            }
+            val ocrBitmap = if (crop == null) screenshot else Bitmap.createBitmap(
+                screenshot, crop.left, crop.top, crop.width(), crop.height())
             main.post {
                 if (closed) {
+                    if (ocrBitmap !== screenshot) ocrBitmap.recycle()
                     screenshot.recycle()
                 } else {
                     screenshotForRegion = screenshot
@@ -146,7 +180,8 @@ internal class ScreenOcrSession(
                         isRecognizing = false
                         showRegionSelector()
                     } else {
-                        if (renderResults()) recognizeScreenshot(screenshot)
+                        if (renderResults()) recognizeScreenshot(ocrBitmap)
+                        else if (ocrBitmap !== screenshot) ocrBitmap.recycle()
                     }
                 }
             }
@@ -192,7 +227,7 @@ internal class ScreenOcrSession(
         }
         resultText = lines
         isRecognizing = false
-        if (selectRegion && openTextPanel(lines.joinToString("\n"))) {
+        if (openTextPanel(lines.joinToString("\n"))) {
             close(finishHost = false)
         } else renderResults()
     }
@@ -226,9 +261,7 @@ internal class ScreenOcrSession(
     private fun showWindow(): Boolean {
         if (closed) return false
         if (window != null) return true
-        val display = context.getSystemService(DisplayManager::class.java).getDisplay(Display.DEFAULT_DISPLAY)
-        val windowContext = hostActivity ?: context.createDisplayContext(display)
-            .createWindowContext(WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY, null)
+        val windowContext = hostActivity ?: overlayContext()
         lateinit var host: InteractiveOverlayWindow
         host = InteractiveOverlayWindow(windowContext,
             if (hostActivity != null) OverlayWindowPolicy.hosted() else OverlayWindowPolicy.application(),
@@ -245,6 +278,12 @@ internal class ScreenOcrSession(
         ) { Content() }
         window = host
         return host.show()
+    }
+
+    private fun overlayContext(): Context {
+        val display = context.getSystemService(DisplayManager::class.java).getDisplay(Display.DEFAULT_DISPLAY)
+        return context.createDisplayContext(display)
+            .createWindowContext(WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY, null)
     }
 
     @Composable

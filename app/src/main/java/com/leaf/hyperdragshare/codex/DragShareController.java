@@ -15,6 +15,7 @@ import android.os.Handler;
 import android.os.Looper;
 import android.os.SystemClock;
 import android.util.TypedValue;
+import android.view.Choreographer;
 import android.view.Gravity;
 import android.view.HapticFeedbackConstants;
 import android.view.MotionEvent;
@@ -56,6 +57,7 @@ final class DragShareController {
     private static final long MODERN_OVERLAY_EXIT_DURATION_MS = 220L;
     private static final long LINEAR_MENU_EXIT_DURATION_MS = 160L;
     private static final long PREVIEW_EXIT_DURATION_MS = 160L;
+    private static final long PREVIEW_ENTER_DURATION_MS = 140L;
     private static final int CIRCLE_EDGE_TRIGGER_DP = 76;
     private static final int CIRCLE_EDGE_SOFT_DISTANCE_DP = 180;
     private static final long CIRCLE_EDGE_OPEN_DELAY_MS = 200L;
@@ -200,6 +202,8 @@ final class DragShareController {
     private ModernPreviewOverlayView modernPreviewView;
     private ModernOverlayWindow modernPreviewWindow;
     private WindowManager.LayoutParams previewParams;
+    private boolean previewLayoutScheduled;
+    private final Choreographer.FrameCallback previewLayoutFrame = frameTimeNanos -> applyPreviewLayout();
     private int previewWidth;
     private int previewHeight;
     private boolean modernPreviewEnterStarted;
@@ -466,14 +470,13 @@ final class DragShareController {
                 } else {
                     previewView.setOnTouchListener(null);
                 }
-                if (isModernStyle()) modernPreviewWindow.show();
-                else windowManager.addView(previewView, previewParams);
                 // The bounded preview consumes only its own View stream. Root remains the
                 // sole owner of drag recognition and outside-tap cancellation.
                 float initialX = Float.isFinite(x) && x >= 0f ? x : screenWidth / 2f;
                 float initialY = Float.isFinite(y) && y >= 0f
                         ? y : Math.max(topInset + dp(80), screenHeight * 0.32f);
-                updatePreviewPosition(initialX, initialY);
+                updatePreviewPosition(initialX, initialY, false);
+                showPreviewOverlay();
                 startPreviewEnterAnimation();
                 if (whileHolding) {
                     OperationTrace.event(OperationTrace.id("press", originDownTime),
@@ -615,16 +618,10 @@ final class DragShareController {
         pendingImageOriginDownTime = -1L;
         pendingPreviewGesture.reset();
         if (previewView != null) {
-            previewView.animate().cancel();
-            previewView.setAlpha(1f);
-            previewView.setScaleX(1f);
-            previewView.setScaleY(1f);
             previewView.setOnTouchListener(null);
         }
-        if (modernPreviewWindow != null) {
-            modernPreviewWindow.finishEnterAnimationImmediately();
-        }
-        if (previewParams != null) {
+        if (previewParams != null
+                && (previewParams.flags & WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE) == 0) {
             previewParams.flags |= WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE;
             if (modernPreviewWindow != null) {
                 modernPreviewWindow.updateLayout();
@@ -936,15 +933,6 @@ final class DragShareController {
                 windowManager.addView(glowView, glowParams);
                 glowView.start();
             }
-            if (!reuseAttachedPreview) showPreviewOverlay();
-            active = true;
-            traceDiagnostic("DRAG_START", "preview_attached", "DRAGGING");
-            OperationTrace.event(operation, "show", "accepted");
-            OperationTrace.event(operation, "preview", "attached");
-            refreshStaleInputWatchdog();
-            pendingPortalHostFloatWindowSuppression = false;
-
-            traceAccessibility("overlay added kind=" + payload.kind);
             float initialX = Float.isFinite(requestedInitialX) && requestedInitialX >= 0f
                     ? requestedInitialX
                     : screenWidth / 2f;
@@ -958,7 +946,15 @@ final class DragShareController {
                     configuredSimpleMenuPosition, initialX, screenWidth);
             updateGestureMenuPosition(initialX, initialY);
             updateMenuGeometry();
-            updatePreviewPosition(initialX, initialY);
+            updatePreviewPosition(initialX, initialY, reuseAttachedPreview);
+            if (!reuseAttachedPreview) showPreviewOverlay();
+            active = true;
+            traceDiagnostic("DRAG_START", "preview_attached", "DRAGGING");
+            OperationTrace.event(operation, "show", "accepted");
+            OperationTrace.event(operation, "preview", "attached");
+            refreshStaleInputWatchdog();
+            pendingPortalHostFloatWindowSuppression = false;
+            traceAccessibility("overlay added kind=" + payload.kind);
             updatePortalPullEffect(initialX, initialY);
             if (!reuseAttachedPreview) startPreviewEnterAnimation();
 
@@ -1221,6 +1217,9 @@ final class DragShareController {
         if (isModernStyle()) {
             modernPreviewWindow.show();
         } else {
+            previewView.setAlpha(0f);
+            previewView.setScaleX(0.96f);
+            previewView.setScaleY(0.96f);
             windowManager.addView(previewView, previewParams);
         }
     }
@@ -1243,18 +1242,12 @@ final class DragShareController {
             enableModernLocalBlurAndReveal();
             return;
         }
-        if (previewView == null || !isPortalStyle()) {
-            return;
-        }
-        previewView.animate().cancel();
-        previewView.setAlpha(0f);
-        previewView.setScaleX(0.88f);
-        previewView.setScaleY(0.88f);
         previewView.animate()
-                .alpha(0.94f)
+                .alpha(isPortalStyle() ? 0.94f : 1f)
                 .scaleX(1f)
                 .scaleY(1f)
-                .setDuration(200L)
+                .setDuration(PREVIEW_ENTER_DURATION_MS)
+                .setInterpolator(new DecelerateInterpolator())
                 .start();
     }
 
@@ -2215,6 +2208,10 @@ final class DragShareController {
     }
 
     private void updatePreviewPosition(float x, float y) {
+        updatePreviewPosition(x, y, true);
+    }
+
+    private void updatePreviewPosition(float x, float y, boolean attached) {
         if (previewParams == null || previewView == null) {
             return;
         }
@@ -2253,7 +2250,7 @@ final class DragShareController {
                     topInset + dp(8),
                     Math.max(topInset + dp(8),
                             screenHeight - bottomInset - previewHeight - dp(8)));
-            updatePreviewLayoutIfPositionChanged(nextX, nextY);
+            placePreview(nextX, nextY, attached);
             return;
         }
         int margin = dp(settings.simpleMenuEdgeDistanceDp);
@@ -2278,17 +2275,26 @@ final class DragShareController {
                 Math.round(x - previewWidth / 2f), minLeft, maxLeft);
         int nextY = GestureMath.clamp(
                 Math.round(y - previewHeight - dp(20)), minTop, maxTop);
-        updatePreviewLayoutIfPositionChanged(nextX, nextY);
+        placePreview(nextX, nextY, attached);
     }
 
-    private void updatePreviewLayoutIfPositionChanged(int nextX, int nextY) {
-        if (previewParams == null || GestureMath.samePosition(
-                previewParams.x, previewParams.y, nextX, nextY)) {
-            return;
-        }
+    private void placePreview(int nextX, int nextY, boolean attached) {
+        if (GestureMath.samePosition(previewParams.x, previewParams.y, nextX, nextY)) return;
         previewParams.x = nextX;
         previewParams.y = nextY;
-        updateOverlayLayout(previewView, modernPreviewWindow, previewParams);
+        if (attached && !previewLayoutScheduled) {
+            previewLayoutScheduled = true;
+            Choreographer.getInstance().postFrameCallback(previewLayoutFrame);
+        }
+    }
+
+    private void applyPreviewLayout() {
+        previewLayoutScheduled = false;
+        try {
+            updateOverlayLayout(previewView, modernPreviewWindow, previewParams);
+        } catch (RuntimeException error) {
+            failOverlay("拖拽预览移动失败", error);
+        }
     }
 
     private void updateOverlayLayout(
@@ -2379,6 +2385,10 @@ final class DragShareController {
         traceDiagnostic("WINDOW_CLEANUP", animatePreviewExit ? "preview_exit_animation" : "remove_views",
                 active ? "DRAGGING" : "CLEANUP");
         cancelStaleInputWatchdog();
+        if (previewLayoutScheduled) {
+            Choreographer.getInstance().removeFrameCallback(previewLayoutFrame);
+            previewLayoutScheduled = false;
+        }
         cancelTargetQuery();
         cancelPreviewTargetLoad();
         cancelModernMenuDispose();
